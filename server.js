@@ -3,6 +3,7 @@ const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -76,8 +77,11 @@ function extractJson(text) {
 }
 
 async function extractPdfText(buffer) {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+  const doc = await pdfjsLib.getDocument({
+    data: new Uint8Array(buffer),
+    useSystemFonts: true,
+    disableFontFace: true,
+  }).promise;
   let text = '';
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
