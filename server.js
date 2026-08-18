@@ -17,7 +17,7 @@ if (!process.env.DEEPSEEK_API_KEY) {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 },
+  limits: { fileSize: 4 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'application/pdf' || file.originalname.toLowerCase().endsWith('.pdf')) {
       cb(null, true);
@@ -26,6 +26,19 @@ const upload = multer({
     }
   },
 });
+
+function handleUpload(req, res, next) {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'File is too large. Vercel allows files up to 4MB.' });
+      }
+      console.error('Multer upload error:', err.message);
+      return res.status(400).json({ error: `Upload error: ${err.message}` });
+    }
+    next();
+  });
+}
 
 async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3) {
   const response = await fetch(DEEPSEEK_API_URL, {
@@ -77,17 +90,19 @@ async function extractPdfText(buffer) {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.post('/api/upload', upload.single('file'), async (req, res) => {
+app.post('/api/upload', handleUpload, async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded.' });
+      console.error('Upload failed: req.file is undefined.');
+      return res.status(400).json({ error: 'No file received. Make sure you selected a PDF and that it is under 4MB.' });
     }
 
     let text;
     try {
       text = await extractPdfText(req.file.buffer);
     } catch (e) {
-      return res.status(400).json({ error: 'Could not read the PDF. Please upload a valid PDF file.' });
+      console.error('PDF parse error:', e.message);
+      return res.status(400).json({ error: 'Could not read the PDF. Please upload a valid, text-based PDF file.' });
     }
 
     text = text.replace(/\s+/g, ' ').trim();
@@ -177,6 +192,10 @@ Reply with ONLY valid JSON: {"verdict": "correct"|"partial"|"wrong", "feedback":
     res.status(500).json({ error: `Failed to grade answer: ${err.message}` });
   }
 });
+
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+app.get('/api/*', (req, res) => res.status(404).json({ error: 'Not found.' }));
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 app.listen(PORT, () => {
   console.log(`Quiz app running at http://localhost:${PORT}`);
