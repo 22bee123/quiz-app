@@ -13,6 +13,7 @@ const MAX_BACKS = 4;
 const uploadScreen = document.getElementById('upload-screen');
 const quizScreen = document.getElementById('quiz-screen');
 const resultsScreen = document.getElementById('results-screen');
+const historyScreen = document.getElementById('history-screen');
 
 const fileInput = document.getElementById('file-input');
 const dropZone = document.getElementById('drop-zone');
@@ -36,7 +37,6 @@ const authSubmit = document.getElementById('auth-submit');
 const authHint = document.getElementById('auth-hint');
 const tabSignin = document.getElementById('tab-signin');
 const tabSignup = document.getElementById('tab-signup');
-const historyCard = document.getElementById('history-card');
 const historyList = document.getElementById('history-list');
 const historyCount = document.getElementById('history-count');
 const resultsTitle = document.getElementById('results-title');
@@ -62,7 +62,7 @@ let authMode = 'signin';
 let quizLength = parseInt(localStorage.getItem('quizLength') || '10', 10);
 
 function showScreen(screen) {
-  [uploadScreen, quizScreen, resultsScreen].forEach((s) => s.classList.add('hidden'));
+  [uploadScreen, quizScreen, resultsScreen, historyScreen].forEach((s) => s.classList.add('hidden'));
   screen.classList.remove('hidden');
 }
 
@@ -556,15 +556,7 @@ function wireSidebar() {
   });
 
   navNew.addEventListener('click', resetToUpload);
-  navHistory.addEventListener('click', () => {
-    if (uploadScreen.classList.contains('hidden')) {
-      resetToUpload();
-      setTimeout(() => scrollToHistory(), 150);
-    } else {
-      scrollToHistory();
-    }
-    if (currentUser) loadHistory();
-  });
+  navHistory.addEventListener('click', showHistoryScreen);
   navSettings.addEventListener('click', openSettings);
 
   settingsClose.addEventListener('click', closeSettings);
@@ -579,8 +571,14 @@ function wireSidebar() {
   });
 }
 
-function scrollToHistory() {
-  historyCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+function showHistoryScreen() {
+  showScreen(historyScreen);
+  if (currentUser) {
+    loadHistory();
+  } else {
+    historyCount.textContent = '';
+    historyList.innerHTML = '<p class="history-empty">Sign in to see your quiz history.</p>';
+  }
 }
 
 function openSettings() {
@@ -720,12 +718,10 @@ async function loadHistory() {
 
 function renderHistory() {
   if (!historyEntries.length) {
-    historyCard.classList.remove('hidden');
     historyList.innerHTML = '<p class="history-empty">No quizzes yet. Take one to see it here!</p>';
     historyCount.textContent = '';
     return;
   }
-  historyCard.classList.remove('hidden');
   historyCount.textContent = `${historyEntries.length} attempt${historyEntries.length === 1 ? '' : 's'}`;
   historyList.innerHTML = '';
   historyEntries.forEach((entry) => {
@@ -764,7 +760,6 @@ function viewHistory(entry) {
 }
 
 function hideHistory() {
-  historyCard.classList.add('hidden');
   historyList.innerHTML = '';
   historyCount.textContent = '';
   historyEntries = [];
