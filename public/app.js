@@ -25,18 +25,15 @@ const deck = document.getElementById('deck');
 const gradingPill = document.getElementById('grading-pill');
 const gradingPillText = document.getElementById('grading-pill-text');
 
-const authModal = document.getElementById('auth-modal');
-const authBackdrop = document.getElementById('auth-backdrop');
-const authClose = document.getElementById('auth-close');
-const authTitle = document.getElementById('auth-title');
-const authForm = document.getElementById('auth-form');
-const authEmail = document.getElementById('auth-email');
-const authPassword = document.getElementById('auth-password');
-const authError = document.getElementById('auth-error');
-const authSubmit = document.getElementById('auth-submit');
-const authHint = document.getElementById('auth-hint');
-const tabSignin = document.getElementById('tab-signin');
-const tabSignup = document.getElementById('tab-signup');
+const authScreen = document.getElementById('auth-screen');
+const gateTabSignin = document.getElementById('gate-tab-signin');
+const gateTabSignup = document.getElementById('gate-tab-signup');
+const gateForm = document.getElementById('gate-form');
+const gateEmail = document.getElementById('gate-email');
+const gatePassword = document.getElementById('gate-password');
+const gateError = document.getElementById('gate-error');
+const gateSubmit = document.getElementById('gate-submit');
+const gateHint = document.getElementById('gate-hint');
 const historyList = document.getElementById('history-list');
 const historyCount = document.getElementById('history-count');
 const resultsTitle = document.getElementById('results-title');
@@ -62,7 +59,7 @@ let authMode = 'signin';
 let quizLength = parseInt(localStorage.getItem('quizLength') || '10', 10);
 
 function showScreen(screen) {
-  [uploadScreen, quizScreen, resultsScreen, historyScreen].forEach((s) => s.classList.add('hidden'));
+  [uploadScreen, quizScreen, resultsScreen, historyScreen, authScreen].forEach((s) => s.classList.add('hidden'));
   screen.classList.remove('hidden');
 }
 
@@ -511,36 +508,110 @@ function initSupabase() {
   fetch('/api/config')
     .then((res) => res.json())
     .then((cfg) => {
-      if (!cfg.authEnabled || !window.supabase) return;
+      if (!cfg.authEnabled || !window.supabase) {
+        resetToUpload();
+        return;
+      }
       supabaseClient = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
       wireAuthUI();
       supabaseClient.auth.onAuthStateChange((_event, session) => {
         currentUser = session && session.user ? session.user : null;
         updateAuthUI();
-        if (currentUser) loadHistory();
-        else hideHistory();
+        if (currentUser) {
+          loadHistory();
+          resetToUpload();
+        } else {
+          hideHistory();
+          showAuthGate();
+        }
       });
       supabaseClient.auth.getUser().then(({ data }) => {
         currentUser = data.user || null;
         updateAuthUI();
-        if (currentUser) loadHistory();
+        if (currentUser) {
+          loadHistory();
+          resetToUpload();
+        } else {
+          showAuthGate();
+        }
       });
     })
     .catch(() => {});
 }
 
+function showAuthGate() {
+  setGateMode('signin');
+  gateError.textContent = '';
+  gateHint.textContent = '';
+  showScreen(authScreen);
+}
+
 function wireAuthUI() {
   navAccount.addEventListener('click', () => {
-    if (!currentUser) openAuthModal();
+    if (!currentUser) showAuthGate();
   });
   navSignout.addEventListener('click', async () => {
     await supabaseClient.auth.signOut();
   });
-  authClose.addEventListener('click', closeAuthModal);
-  authBackdrop.addEventListener('click', closeAuthModal);
-  tabSignin.addEventListener('click', () => setAuthMode('signin'));
-  tabSignup.addEventListener('click', () => setAuthMode('signup'));
-  authForm.addEventListener('submit', handleAuthSubmit);
+  gateTabSignin.addEventListener('click', () => setGateMode('signin'));
+  gateTabSignup.addEventListener('click', () => setGateMode('signup'));
+  gateForm.addEventListener('submit', handleGateSubmit);
+}
+
+function setGateMode(mode) {
+  authMode = mode;
+  gateError.textContent = '';
+  gateHint.textContent = '';
+  document.getElementById('auth-gate-title').textContent = mode === 'signin' ? 'Sign in to continue' : 'Create your account';
+  gateSubmit.querySelector('.btn-label').textContent = mode === 'signin' ? 'Sign in' : 'Create account';
+  gateTabSignin.classList.toggle('active', mode === 'signin');
+  gateTabSignup.classList.toggle('active', mode === 'signup');
+  gatePassword.autocomplete = mode === 'signin' ? 'current-password' : 'new-password';
+}
+
+async function handleGateSubmit(e) {
+  e.preventDefault();
+  const email = gateEmail.value.trim();
+  const password = gatePassword.value;
+  gateError.textContent = '';
+  gateSubmit.disabled = true;
+  gateSubmit.querySelector('.btn-label').textContent = 'Please wait…';
+
+  try {
+    if (authMode === 'signup') {
+      const { error } = await supabaseClient.auth.signUp({ email, password });
+      if (error) throw new Error(error.message);
+      gateHint.textContent = 'Check your email to confirm your account, then sign in.';
+    } else {
+      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      if (error) throw new Error(error.message);
+    }
+  } catch (err) {
+    gateError.textContent = err.message;
+  } finally {
+    gateSubmit.disabled = false;
+    gateSubmit.querySelector('.btn-label').textContent = authMode === 'signin' ? 'Sign in' : 'Create account';
+  }
+}
+
+function requireAuth() {
+  if (currentUser) return true;
+  showAuthGate();
+  return false;
+}
+
+function updateAuthUI() {
+  if (currentUser) {
+    navAccountName.textContent = currentUser.email || 'Signed in';
+    navAccountEmail.textContent = '';
+    navAvatar.textContent = (currentUser.email || '?')[0].toUpperCase();
+    navSignout.classList.remove('hidden');
+  } else {
+    navAccountName.textContent = 'Sign in';
+    navAccountEmail.textContent = '';
+    navAvatar.textContent = '';
+    navSignout.classList.add('hidden');
+  }
 }
 
 /* ---------------- Sidebar + Settings ---------------- */
@@ -555,9 +626,15 @@ function wireSidebar() {
     localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
   });
 
-  navNew.addEventListener('click', resetToUpload);
-  navHistory.addEventListener('click', showHistoryScreen);
-  navSettings.addEventListener('click', openSettings);
+  navNew.addEventListener('click', () => {
+    if (requireAuth()) resetToUpload();
+  });
+  navHistory.addEventListener('click', () => {
+    if (requireAuth()) showHistoryScreen();
+  });
+  navSettings.addEventListener('click', () => {
+    if (requireAuth()) openSettings();
+  });
 
   settingsClose.addEventListener('click', closeSettings);
   settingsBackdrop.addEventListener('click', closeSettings);
@@ -610,69 +687,6 @@ function resetToUpload() {
   hideGradingPill();
   showScreen(uploadScreen);
   updateFlashcardCountLabel();
-}
-
-function setAuthMode(mode) {
-  authMode = mode;
-  authError.textContent = '';
-  authHint.textContent = '';
-  authTitle.textContent = mode === 'signin' ? 'Sign in' : 'Create account';
-  authSubmit.querySelector('.btn-label').textContent = mode === 'signin' ? 'Sign in' : 'Create account';
-  tabSignin.classList.toggle('active', mode === 'signin');
-  tabSignup.classList.toggle('active', mode === 'signup');
-  authPassword.autocomplete = mode === 'signin' ? 'current-password' : 'new-password';
-}
-
-function openAuthModal() {
-  setAuthMode('signin');
-  authModal.classList.remove('hidden');
-  authEmail.focus();
-}
-
-function closeAuthModal() {
-  authModal.classList.add('hidden');
-  authError.textContent = '';
-  authHint.textContent = '';
-}
-
-async function handleAuthSubmit(e) {
-  e.preventDefault();
-  const email = authEmail.value.trim();
-  const password = authPassword.value;
-  authError.textContent = '';
-  authSubmit.disabled = true;
-  authSubmit.querySelector('.btn-label').textContent = 'Please wait…';
-
-  try {
-    if (authMode === 'signup') {
-      const { error } = await supabaseClient.auth.signUp({ email, password });
-      if (error) throw new Error(error.message);
-      authHint.textContent = 'Check your email to confirm your account, then sign in.';
-    } else {
-      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
-      if (error) throw new Error(error.message);
-      closeAuthModal();
-    }
-  } catch (err) {
-    authError.textContent = err.message;
-  } finally {
-    authSubmit.disabled = false;
-    authSubmit.querySelector('.btn-label').textContent = authMode === 'signin' ? 'Sign in' : 'Create account';
-  }
-}
-
-function updateAuthUI() {
-  if (currentUser) {
-    navAccountName.textContent = currentUser.email || 'Signed in';
-    navAccountEmail.textContent = '';
-    navAvatar.textContent = (currentUser.email || '?')[0].toUpperCase();
-    navSignout.classList.remove('hidden');
-  } else {
-    navAccountName.textContent = 'Sign in';
-    navAccountEmail.textContent = '';
-    navAvatar.textContent = '';
-    navSignout.classList.add('hidden');
-  }
 }
 
 async function saveHistory(entry) {
