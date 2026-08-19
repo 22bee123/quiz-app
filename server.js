@@ -1,9 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const multer = require('multer');
-const fs = require('fs');
 const path = require('path');
-const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,31 +11,6 @@ const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
 if (!process.env.DEEPSEEK_API_KEY) {
   console.error('ERROR: DEEPSEEK_API_KEY is not set. Copy .env.example to .env and add your key.');
   process.exit(1);
-}
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 4 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf' || file.originalname.toLowerCase().endsWith('.pdf')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only PDF files are allowed.'));
-    }
-  },
-});
-
-function handleUpload(req, res, next) {
-  upload.single('file')(req, res, (err) => {
-    if (err) {
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'File is too large. Vercel allows files up to 4MB.' });
-      }
-      console.error('Multer upload error:', err.message);
-      return res.status(400).json({ error: `Upload error: ${err.message}` });
-    }
-    next();
-  });
 }
 
 async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3) {
@@ -76,40 +48,16 @@ function extractJson(text) {
   return JSON.parse(candidate.slice(start, end + 1));
 }
 
-async function extractPdfText(buffer) {
-  const doc = await pdfjsLib.getDocument({
-    data: new Uint8Array(buffer),
-    useSystemFonts: true,
-    disableFontFace: true,
-  }).promise;
-  let text = '';
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i);
-    const content = await page.getTextContent();
-    text += content.items.map((it) => it.str).join(' ') + '\n';
-  }
-  return text;
-}
-
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.post('/api/upload', handleUpload, async (req, res) => {
+app.post('/api/analyze', async (req, res) => {
   try {
-    if (!req.file) {
-      console.error('Upload failed: req.file is undefined.');
-      return res.status(400).json({ error: 'No file received. Make sure you selected a PDF and that it is under 4MB.' });
-    }
+    const text = typeof req.body.text === 'string' ? req.body.text.replace(/\s+/g, ' ').trim() : '';
 
-    let text;
-    try {
-      text = await extractPdfText(req.file.buffer);
-    } catch (e) {
-      console.error('PDF parse error:', e.message);
-      return res.status(400).json({ error: 'Could not read the PDF. Please upload a valid, text-based PDF file.' });
+    if (!text) {
+      return res.status(400).json({ error: 'No text received. The PDF could not be read in your browser.' });
     }
-
-    text = text.replace(/\s+/g, ' ').trim();
     if (text.length < 100) {
       return res.status(400).json({ error: 'The PDF appears to contain no readable text. It may be a scanned/image-based document.' });
     }
@@ -154,7 +102,7 @@ Module content:
 
     res.json({ flashcards: clean });
   } catch (err) {
-    console.error('Upload error:', err.message);
+    console.error('Analyze error:', err.message);
     res.status(500).json({ error: `Failed to generate flashcards: ${err.message}` });
   }
 });

@@ -69,16 +69,24 @@ function handleFileSelect() {
 uploadBtn.addEventListener('click', async () => {
   if (!selectedFile) return;
   uploadBtn.disabled = true;
-  setStatus(uploadStatus, 'Uploading and analyzing module... This may take a moment.', 'info');
-
-  const formData = new FormData();
-  formData.append('file', selectedFile);
+  setStatus(uploadStatus, 'Reading your PDF...', 'info');
 
   try {
-    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    const text = await extractTextFromPdf(selectedFile);
+    if (!text || text.replace(/\s+/g, ' ').trim().length < 100) {
+      throw new Error('The PDF appears to contain no readable text. It may be a scanned/image-based document.');
+    }
+
+    setStatus(uploadStatus, 'Analyzing module with AI... This may take a moment.', 'info');
+
+    const res = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
     const data = await res.json();
     if (!res.ok) {
-      throw new Error(data.error || 'Upload failed.');
+      throw new Error(data.error || 'Analysis failed.');
     }
 
     flashcards = data.flashcards;
@@ -91,6 +99,22 @@ uploadBtn.addEventListener('click', async () => {
     uploadBtn.disabled = false;
   }
 });
+
+async function extractTextFromPdf(file) {
+  const pdfjsLib = await import('/vendor/pdf.min.mjs');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.min.mjs';
+
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await pdfjsLib.getDocument({ data }).promise;
+
+  let text = '';
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map((it) => it.str).join(' ') + '\n';
+  }
+  return text;
+}
 
 /* ---------------- Deck ---------------- */
 
