@@ -1118,7 +1118,8 @@ textarea:disabled {
   margin: 12px 0 6px;
 }
 
-#auth-form input {
+#auth-form input,
+#gate-form input {
   width: 100%;
   background: #f8f7ff;
   border: 1.5px solid #e5e1f6;
@@ -1127,10 +1128,16 @@ textarea:disabled {
   padding: 12px 14px;
   font-size: 1rem;
   font-family: inherit;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
 }
 
-#auth-form input:focus {
+#auth-form input::placeholder,
+#gate-form input::placeholder {
+  color: #c2bdda;
+}
+
+#auth-form input:focus,
+#gate-form input:focus {
   outline: none;
   border-color: #7b5cff;
   background: #fff;
