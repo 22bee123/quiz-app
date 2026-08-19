@@ -15,9 +15,7 @@ body {
   color: #3d3a52;
   min-height: 100vh;
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 40px 16px 64px;
+  padding: 0;
   position: relative;
   overflow-x: hidden;
 }
@@ -48,79 +46,258 @@ body::after {
   background: rgba(255, 129, 178, 0.2);
 }
 
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 40px 20px 64px;
+}
+
 .app {
   width: 100%;
   max-width: 680px;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.9);
+  border-right: 1px solid rgba(124, 92, 255, 0.14);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  transition: width 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 50;
+}
+
+.sidebar.collapsed {
+  width: 68px;
+}
+
+.sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 18px 16px;
+}
+
+.sidebar-brand {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #2d2a3a;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.sidebar-toggle {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f1ecff;
+  border: 1px solid rgba(124, 92, 255, 0.2);
+  border-radius: 9px;
+  color: #7b5cff;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.sidebar-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sidebar-toggle:hover {
+  background: #e7deff;
+}
+
+.sidebar.collapsed .sidebar-toggle svg {
+  transform: rotate(180deg);
+}
+
+.sidebar-nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  overflow-y: auto;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 12px;
+  border: none;
+  border-radius: 11px;
+  background: transparent;
+  color: #5a5672;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-align: left;
+  transition: background 0.2s, color 0.2s;
+}
+
+.nav-item svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.nav-item:hover {
+  background: #f1ecff;
+  color: #7b5cff;
+}
+
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-label.sub {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #a09cb8;
+  margin-top: 1px;
+}
+
+.sidebar-bottom {
+  padding: 10px;
+  border-top: 1px solid rgba(124, 92, 255, 0.12);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar-bottom .nav-item {
+  flex: 1;
+}
+
+.nav-avatar {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7b5cff, #b18cff);
+  color: #fff;
+  font-weight: 800;
+  font-size: 0.95rem;
+}
+
+.nav-account-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.nav-icon-btn {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  color: #a09cb8;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.nav-icon-btn:hover {
+  background: #feecec;
+  color: #ef4444;
+}
+
+.nav-icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Collapsed state */
+.sidebar.collapsed .brand-text,
+.sidebar.collapsed .nav-label,
+.sidebar.collapsed .nav-account-text {
+  display: none;
+}
+
+.sidebar.collapsed .sidebar-top {
+  justify-content: center;
+}
+
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 11px 0;
+}
+
+.sidebar.collapsed .sidebar-bottom {
+  justify-content: center;
+}
+
+.sidebar.collapsed .nav-icon-btn {
+  display: none;
+}
+
+/* ---------- Settings options ---------- */
+.settings-options {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.settings-option {
+  padding: 12px 0;
+  border: 1.5px solid #e5e1f6;
+  border-radius: 12px;
+  background: #f8f7ff;
+  color: #5a5672;
+  font-size: 1rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.settings-option:hover {
+  border-color: #7b5cff;
+}
+
+.settings-option.active {
+  background: #7b5cff;
+  border-color: #7b5cff;
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(124, 92, 255, 0.3);
 }
 
 /* ---------- Header ---------- */
 header {
   text-align: center;
   margin-bottom: 32px;
-}
-
-.header-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.auth-area {
-  min-width: 0;
-}
-
-.auth-btn {
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: #7b5cff;
-  background: #fff;
-  border: 1.5px solid rgba(124, 92, 255, 0.3);
-  border-radius: 999px;
-  padding: 7px 16px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.auth-btn:hover {
-  background: #f1ecff;
-  border-color: #7b5cff;
-}
-
-.user-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  background: #fff;
-  border: 1px solid rgba(124, 92, 255, 0.2);
-  border-radius: 999px;
-  padding: 6px 14px;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #3d3a52;
-  max-width: 260px;
-}
-
-.user-chip #user-email {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.link-btn {
-  background: none;
-  border: none;
-  color: #a09cb8;
-  font-size: 0.8rem;
-  font-weight: 700;
-  cursor: pointer;
-  padding: 0;
-  text-decoration: underline;
-}
-
-.link-btn:hover {
-  color: #ef4444;
 }
 
 .brand-badge {
@@ -944,11 +1121,36 @@ textarea:disabled {
 }
 
 /* ---------- Responsive ---------- */
-@media (max-width: 520px) {
-  body {
-    padding: 24px 12px 40px;
+@media (max-width: 768px) {
+  .sidebar {
+    width: 68px;
   }
 
+  .sidebar .brand-text,
+  .sidebar .nav-label,
+  .sidebar .nav-account-text {
+    display: none;
+  }
+
+  .sidebar .sidebar-top {
+    justify-content: center;
+  }
+
+  .sidebar .nav-item {
+    justify-content: center;
+    padding: 11px 0;
+  }
+
+  .sidebar .nav-icon-btn {
+    display: none;
+  }
+
+  .main {
+    padding: 24px 12px 40px;
+  }
+}
+
+@media (max-width: 520px) {
   .card {
     padding: 22px;
     border-radius: 18px;
@@ -966,5 +1168,9 @@ textarea:disabled {
     flex-direction: column;
     align-items: stretch;
     gap: 10px;
+  }
+
+  .settings-options {
+    grid-template-columns: repeat(2, 1fr);
   }
 }

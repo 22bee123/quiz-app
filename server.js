@@ -54,6 +54,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.post('/api/analyze', async (req, res) => {
   try {
     const text = typeof req.body.text === 'string' ? req.body.text.replace(/\s+/g, ' ').trim() : '';
+    const count = Math.min(Math.max(parseInt(req.body.count, 10) || 10, 5), 20);
 
     if (!text) {
       return res.status(400).json({ error: 'No text received. The PDF could not be read in your browser.' });
@@ -64,7 +65,7 @@ app.post('/api/analyze', async (req, res) => {
 
     const truncatedText = text.length > 30000 ? text.slice(0, 30000) : text;
 
-    const prompt = `You are an expert quiz creator. Based ONLY on the following module content, create exactly 10 flashcards (quiz questions) that test understanding of the material.
+    const prompt = `You are an expert quiz creator. Based ONLY on the following module content, create exactly ${count} flashcards (quiz questions) that test understanding of the material.
 
 Requirements:
 - Questions must be answerable in a short phrase or 1-2 sentences (no multiple choice).
@@ -90,7 +91,7 @@ Module content:
 
     const clean = flashcards
       .filter((f) => f && typeof f.question === 'string' && typeof f.answer === 'string')
-      .slice(0, 10)
+      .slice(0, count)
       .map((f) => ({
         question: f.question.trim(),
         answer: f.answer.trim(),

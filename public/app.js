@@ -24,10 +24,6 @@ const deck = document.getElementById('deck');
 const gradingPill = document.getElementById('grading-pill');
 const gradingPillText = document.getElementById('grading-pill-text');
 
-const authBtn = document.getElementById('auth-btn');
-const userChip = document.getElementById('user-chip');
-const userEmail = document.getElementById('user-email');
-const signoutBtn = document.getElementById('signout-btn');
 const authModal = document.getElementById('auth-modal');
 const authBackdrop = document.getElementById('auth-backdrop');
 const authClose = document.getElementById('auth-close');
@@ -46,7 +42,24 @@ const historyCount = document.getElementById('history-count');
 const resultsTitle = document.getElementById('results-title');
 const resultsSaveNote = document.getElementById('results-save-note');
 
+const sidebar = document.getElementById('sidebar');
+const sidebarToggle = document.getElementById('sidebar-toggle');
+const navNew = document.getElementById('nav-new');
+const navHistory = document.getElementById('nav-history');
+const navSettings = document.getElementById('nav-settings');
+const navAccount = document.getElementById('nav-account');
+const navAvatar = document.getElementById('nav-avatar');
+const navAccountName = document.getElementById('nav-account-name');
+const navAccountEmail = document.getElementById('nav-account-email');
+const navSignout = document.getElementById('nav-signout');
+const settingsModal = document.getElementById('settings-modal');
+const settingsBackdrop = document.getElementById('settings-backdrop');
+const settingsClose = document.getElementById('settings-close');
+const settingsOptions = document.getElementById('settings-options');
+const flashcardCountLabel = document.getElementById('flashcard-count-label');
+
 let authMode = 'signin';
+let quizLength = parseInt(localStorage.getItem('quizLength') || '10', 10);
 
 function showScreen(screen) {
   [uploadScreen, quizScreen, resultsScreen].forEach((s) => s.classList.add('hidden'));
@@ -109,7 +122,7 @@ uploadBtn.addEventListener('click', async () => {
     const res = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, count: quizLength }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -490,19 +503,7 @@ function renderResults(entry) {
   window.scrollTo(0, 0);
 }
 
-document.getElementById('restart-btn').addEventListener('click', () => {
-  flashcards = [];
-  results = [];
-  gradingPromises = {};
-  currentIndex = 0;
-  deckCards = [];
-  selectedFile = null;
-  fileInput.value = '';
-  fileNameEl.textContent = '';
-  uploadBtn.disabled = true;
-  setStatus(uploadStatus, '', '');
-  showScreen(uploadScreen);
-});
+document.getElementById('restart-btn').addEventListener('click', resetToUpload);
 
 /* ---------------- Supabase Auth + History ---------------- */
 
@@ -529,15 +530,88 @@ function initSupabase() {
 }
 
 function wireAuthUI() {
-  authBtn.addEventListener('click', openAuthModal);
-  authClose.addEventListener('click', closeAuthModal);
-  authBackdrop.addEventListener('click', closeAuthModal);
-  signoutBtn.addEventListener('click', async () => {
+  navAccount.addEventListener('click', () => {
+    if (!currentUser) openAuthModal();
+  });
+  navSignout.addEventListener('click', async () => {
     await supabaseClient.auth.signOut();
   });
+  authClose.addEventListener('click', closeAuthModal);
+  authBackdrop.addEventListener('click', closeAuthModal);
   tabSignin.addEventListener('click', () => setAuthMode('signin'));
   tabSignup.addEventListener('click', () => setAuthMode('signup'));
   authForm.addEventListener('submit', handleAuthSubmit);
+}
+
+/* ---------------- Sidebar + Settings ---------------- */
+
+function wireSidebar() {
+  if (localStorage.getItem('sidebarCollapsed') === '1') {
+    sidebar.classList.add('collapsed');
+  }
+  sidebarToggle.addEventListener('click', () => {
+    const collapsed = !sidebar.classList.contains('collapsed');
+    sidebar.classList.toggle('collapsed', collapsed);
+    localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
+  });
+
+  navNew.addEventListener('click', resetToUpload);
+  navHistory.addEventListener('click', () => {
+    if (uploadScreen.classList.contains('hidden')) {
+      resetToUpload();
+      setTimeout(() => scrollToHistory(), 150);
+    } else {
+      scrollToHistory();
+    }
+    if (currentUser) loadHistory();
+  });
+  navSettings.addEventListener('click', openSettings);
+
+  settingsClose.addEventListener('click', closeSettings);
+  settingsBackdrop.addEventListener('click', closeSettings);
+  settingsOptions.querySelectorAll('.settings-option').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      quizLength = parseInt(btn.dataset.count, 10);
+      localStorage.setItem('quizLength', String(quizLength));
+      updateFlashcardCountLabel();
+      closeSettings();
+    });
+  });
+}
+
+function scrollToHistory() {
+  historyCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function openSettings() {
+  settingsOptions.querySelectorAll('.settings-option').forEach((btn) => {
+    btn.classList.toggle('active', parseInt(btn.dataset.count, 10) === quizLength);
+  });
+  settingsModal.classList.remove('hidden');
+}
+
+function closeSettings() {
+  settingsModal.classList.add('hidden');
+}
+
+function updateFlashcardCountLabel() {
+  flashcardCountLabel.textContent = quizLength;
+}
+
+function resetToUpload() {
+  flashcards = [];
+  results = [];
+  gradingPromises = {};
+  currentIndex = 0;
+  deckCards = [];
+  selectedFile = null;
+  fileInput.value = '';
+  fileNameEl.textContent = '';
+  uploadBtn.disabled = true;
+  setStatus(uploadStatus, '', '');
+  hideGradingPill();
+  showScreen(uploadScreen);
+  updateFlashcardCountLabel();
 }
 
 function setAuthMode(mode) {
@@ -591,12 +665,15 @@ async function handleAuthSubmit(e) {
 
 function updateAuthUI() {
   if (currentUser) {
-    authBtn.classList.add('hidden');
-    userChip.classList.remove('hidden');
-    userEmail.textContent = currentUser.email || 'Signed in';
+    navAccountName.textContent = currentUser.email || 'Signed in';
+    navAccountEmail.textContent = '';
+    navAvatar.textContent = (currentUser.email || '?')[0].toUpperCase();
+    navSignout.classList.remove('hidden');
   } else {
-    authBtn.classList.remove('hidden');
-    userChip.classList.add('hidden');
+    navAccountName.textContent = 'Sign in';
+    navAccountEmail.textContent = '';
+    navAvatar.textContent = '';
+    navSignout.classList.add('hidden');
   }
 }
 
@@ -700,3 +777,5 @@ function escapeHtml(str) {
 }
 
 initSupabase();
+wireSidebar();
+updateFlashcardCountLabel();
