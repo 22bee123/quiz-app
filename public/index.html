@@ -9,7 +9,16 @@
 <body>
   <div class="app">
     <header>
-      <div class="brand-badge">&#127891; AI QUIZ</div>
+      <div class="header-top">
+        <div class="brand-badge">&#127891; AI QUIZ</div>
+        <div id="auth-area" class="auth-area">
+          <button id="auth-btn" class="auth-btn hidden">Sign in</button>
+          <span id="user-chip" class="user-chip hidden">
+            <span id="user-email"></span>
+            <button id="signout-btn" class="link-btn">Sign out</button>
+          </span>
+        </div>
+      </div>
       <h1>Turn your module into a quiz</h1>
       <p>Upload your PDF, answer AI-generated flashcards, and see how well you know the material.</p>
     </header>
@@ -30,6 +39,14 @@
         </button>
         <div id="upload-status" class="status"></div>
       </div>
+
+      <div class="card history-card hidden" id="history-card">
+        <div class="history-head">
+          <h3>&#128220; Your quiz history</h3>
+          <span id="history-count" class="history-count"></span>
+        </div>
+        <div id="history-list" class="history-list"></div>
+      </div>
     </section>
 
     <!-- Quiz screen -->
@@ -48,7 +65,8 @@
       <div class="card results-card">
         <div class="results-head">
           <span class="brand-badge">&#127942; QUIZ COMPLETE</span>
-          <h2>Here's how you did</h2>
+          <h2 id="results-title">Here's how you did</h2>
+          <p id="results-save-note" class="save-note hidden">Saved to your history &#10003;</p>
         </div>
         <div class="score-circle" id="score-circle">
           <span id="score-percent"></span>
@@ -64,6 +82,33 @@
     </section>
   </div>
 
+  <!-- Auth modal -->
+  <div id="auth-modal" class="modal hidden">
+    <div class="modal-backdrop" id="auth-backdrop"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="auth-title">Sign in</h3>
+        <button id="auth-close" class="modal-close">&times;</button>
+      </div>
+      <div class="auth-tabs">
+        <button id="tab-signin" class="auth-tab active">Sign in</button>
+        <button id="tab-signup" class="auth-tab">Sign up</button>
+      </div>
+      <form id="auth-form">
+        <label class="field-label" for="auth-email">Email</label>
+        <input id="auth-email" type="email" required autocomplete="email" placeholder="you@example.com" />
+        <label class="field-label" for="auth-password">Password</label>
+        <input id="auth-password" type="password" required minlength="6" autocomplete="current-password" placeholder="At least 6 characters" />
+        <div id="auth-error" class="auth-error"></div>
+        <button type="submit" id="auth-submit" class="btn btn-primary">
+          <span class="btn-label">Sign in</span>
+        </button>
+      </form>
+      <p id="auth-hint" class="auth-hint"></p>
+    </div>
+  </div>
+
+  <script src="/vendor/supabase.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

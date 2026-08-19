@@ -4,6 +4,9 @@ let results = [];
 let gradingPromises = {};
 let deckCards = [];
 let selectedFile = null;
+let supabase = null;
+let currentUser = null;
+let historyEntries = [];
 
 const MAX_BACKS = 4;
 
@@ -20,6 +23,30 @@ const uploadStatus = document.getElementById('upload-status');
 const deck = document.getElementById('deck');
 const gradingPill = document.getElementById('grading-pill');
 const gradingPillText = document.getElementById('grading-pill-text');
+
+const authBtn = document.getElementById('auth-btn');
+const userChip = document.getElementById('user-chip');
+const userEmail = document.getElementById('user-email');
+const signoutBtn = document.getElementById('signout-btn');
+const authModal = document.getElementById('auth-modal');
+const authBackdrop = document.getElementById('auth-backdrop');
+const authClose = document.getElementById('auth-close');
+const authTitle = document.getElementById('auth-title');
+const authForm = document.getElementById('auth-form');
+const authEmail = document.getElementById('auth-email');
+const authPassword = document.getElementById('auth-password');
+const authError = document.getElementById('auth-error');
+const authSubmit = document.getElementById('auth-submit');
+const authHint = document.getElementById('auth-hint');
+const tabSignin = document.getElementById('tab-signin');
+const tabSignup = document.getElementById('tab-signup');
+const historyCard = document.getElementById('history-card');
+const historyList = document.getElementById('history-list');
+const historyCount = document.getElementById('history-count');
+const resultsTitle = document.getElementById('results-title');
+const resultsSaveNote = document.getElementById('results-save-note');
+
+let authMode = 'signin';
 
 function showScreen(screen) {
   [uploadScreen, quizScreen, resultsScreen].forEach((s) => s.classList.add('hidden'));
@@ -373,7 +400,6 @@ function finishQuiz() {
 /* ---------------- Results ---------------- */
 
 function showResults() {
-  showScreen(resultsScreen);
   const total = results.length;
   const graded = results.filter((r) => r && r.verdict !== 'ungraded');
   const correct = graded.filter((r) => r.verdict === 'correct').length;
@@ -381,6 +407,45 @@ function showResults() {
   const wrong = graded.filter((r) => r.verdict === 'wrong').length;
   const ungraded = results.filter((r) => r && r.verdict === 'ungraded').length;
   const percent = Math.round(((correct + partial * 0.5) / total) * 100);
+
+  renderResults({
+    moduleName: selectedFile ? selectedFile.name.replace(/\.pdf$/i, '') : 'Quiz',
+    total,
+    correct,
+    partial,
+    wrong,
+    ungraded,
+    percent,
+    details: results,
+  });
+
+  const note = document.getElementById('results-save-note');
+  note.classList.remove('hidden');
+
+  if (!currentUser) {
+    note.textContent = 'Sign in to save this result to your history.';
+  } else {
+    note.textContent = 'Saving to your history…';
+    saveHistory({
+      moduleName: selectedFile ? selectedFile.name.replace(/\.pdf$/i, '') : 'Quiz',
+      total,
+      correct,
+      partial,
+      wrong,
+      ungraded,
+      percent,
+      details: results,
+    }).then((ok) => {
+      note.textContent = ok ? 'Saved to your history ✓' : 'Could not save to history.';
+      if (ok) loadHistory();
+    });
+  }
+}
+
+function renderResults(entry) {
+  showScreen(resultsScreen);
+  const { total, correct, partial, wrong, ungraded, percent, details } = entry;
+  resultsTitle.textContent = 'Here\'s how you did';
 
   const circle = document.getElementById('score-circle');
   circle.style.setProperty('--score', `${percent * 3.6}deg`);
@@ -398,9 +463,9 @@ function showResults() {
     ${ungraded > 0 ? `<div class="stat stat-ungraded">Not graded: <strong>${ungraded}</strong></div>` : ''}
   `;
 
-  const details = document.getElementById('results-details');
-  details.innerHTML = '<h3>Answer Details</h3>';
-  results.forEach((r, i) => {
+  const detailsEl = document.getElementById('results-details');
+  detailsEl.innerHTML = '<h3>Answer Details</h3>';
+  details.forEach((r, i) => {
     if (!r) return;
     const verdictClass = r.verdict === 'correct' ? 'item-correct' : r.verdict === 'partial' ? 'item-partial' : r.verdict === 'wrong' ? 'item-wrong' : 'item-ungraded';
     const verdictLabel = r.verdict === 'ungraded' ? 'NOT GRADED' : r.verdict.toUpperCase();
@@ -419,7 +484,7 @@ function showResults() {
       <div class="ri-row"><span class="ri-label">Correct answer:</span> ${r.correctAnswer}</div>
       ${feedback}
     `;
-    details.appendChild(div);
+    detailsEl.appendChild(div);
   });
 
   window.scrollTo(0, 0);
@@ -438,3 +503,200 @@ document.getElementById('restart-btn').addEventListener('click', () => {
   setStatus(uploadStatus, '', '');
   showScreen(uploadScreen);
 });
+
+/* ---------------- Supabase Auth + History ---------------- */
+
+function initSupabase() {
+  fetch('/api/config')
+    .then((res) => res.json())
+    .then((cfg) => {
+      if (!cfg.authEnabled || !window.supabase) return;
+      supabase = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+      wireAuthUI();
+      supabase.auth.onAuthStateChange((_event, session) => {
+        currentUser = session && session.user ? session.user : null;
+        updateAuthUI();
+        if (currentUser) loadHistory();
+        else hideHistory();
+      });
+      supabase.auth.getUser().then(({ data }) => {
+        currentUser = data.user || null;
+        updateAuthUI();
+        if (currentUser) loadHistory();
+      });
+    })
+    .catch(() => {});
+}
+
+function wireAuthUI() {
+  authBtn.addEventListener('click', openAuthModal);
+  authClose.addEventListener('click', closeAuthModal);
+  authBackdrop.addEventListener('click', closeAuthModal);
+  signoutBtn.addEventListener('click', async () => {
+    await supabase.auth.signOut();
+  });
+  tabSignin.addEventListener('click', () => setAuthMode('signin'));
+  tabSignup.addEventListener('click', () => setAuthMode('signup'));
+  authForm.addEventListener('submit', handleAuthSubmit);
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  authError.textContent = '';
+  authHint.textContent = '';
+  authTitle.textContent = mode === 'signin' ? 'Sign in' : 'Create account';
+  authSubmit.querySelector('.btn-label').textContent = mode === 'signin' ? 'Sign in' : 'Create account';
+  tabSignin.classList.toggle('active', mode === 'signin');
+  tabSignup.classList.toggle('active', mode === 'signup');
+  authPassword.autocomplete = mode === 'signin' ? 'current-password' : 'new-password';
+}
+
+function openAuthModal() {
+  setAuthMode('signin');
+  authModal.classList.remove('hidden');
+  authEmail.focus();
+}
+
+function closeAuthModal() {
+  authModal.classList.add('hidden');
+  authError.textContent = '';
+  authHint.textContent = '';
+}
+
+async function handleAuthSubmit(e) {
+  e.preventDefault();
+  const email = authEmail.value.trim();
+  const password = authPassword.value;
+  authError.textContent = '';
+  authSubmit.disabled = true;
+  authSubmit.querySelector('.btn-label').textContent = 'Please wait…';
+
+  try {
+    if (authMode === 'signup') {
+      const { error } = await supabase.auth.signUp({ email, password });
+      if (error) throw new Error(error.message);
+      authHint.textContent = 'Check your email to confirm your account, then sign in.';
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw new Error(error.message);
+      closeAuthModal();
+    }
+  } catch (err) {
+    authError.textContent = err.message;
+  } finally {
+    authSubmit.disabled = false;
+    authSubmit.querySelector('.btn-label').textContent = authMode === 'signin' ? 'Sign in' : 'Create account';
+  }
+}
+
+function updateAuthUI() {
+  if (currentUser) {
+    authBtn.classList.add('hidden');
+    userChip.classList.remove('hidden');
+    userEmail.textContent = currentUser.email || 'Signed in';
+  } else {
+    authBtn.classList.remove('hidden');
+    userChip.classList.add('hidden');
+  }
+}
+
+async function saveHistory(entry) {
+  if (!supabase || !currentUser) return false;
+  try {
+    const { error } = await supabase.from('quiz_history').insert({
+      user_id: currentUser.id,
+      module_name: entry.moduleName,
+      total_questions: entry.total,
+      correct: entry.correct,
+      partial: entry.partial,
+      wrong: entry.wrong,
+      ungraded: entry.ungraded || 0,
+      score_percent: entry.percent,
+      details: entry.details,
+    });
+    if (error) {
+      console.error('Save history error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Save history error:', err);
+    return false;
+  }
+}
+
+async function loadHistory() {
+  if (!supabase || !currentUser) return;
+  try {
+    const { data, error } = await supabase
+      .from('quiz_history')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (error) throw error;
+    historyEntries = data || [];
+    renderHistory();
+  } catch (err) {
+    console.error('Load history error:', err.message);
+  }
+}
+
+function renderHistory() {
+  if (!historyEntries.length) {
+    historyCard.classList.remove('hidden');
+    historyList.innerHTML = '<p class="history-empty">No quizzes yet. Take one to see it here!</p>';
+    historyCount.textContent = '';
+    return;
+  }
+  historyCard.classList.remove('hidden');
+  historyCount.textContent = `${historyEntries.length} attempt${historyEntries.length === 1 ? '' : 's'}`;
+  historyList.innerHTML = '';
+  historyEntries.forEach((entry) => {
+    const date = new Date(entry.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const div = document.createElement('div');
+    div.className = 'history-item';
+    div.innerHTML = `
+      <div class="hi-main">
+        <span class="hi-name">${escapeHtml(entry.module_name)}</span>
+        <span class="hi-date">${date}</span>
+      </div>
+      <div class="hi-right">
+        <span class="hi-score hi-${entry.score_percent >= 75 ? 'good' : entry.score_percent >= 50 ? 'ok' : 'bad'}">${entry.score_percent}%</span>
+        <button class="view-btn" data-id="${entry.id}">View</button>
+      </div>
+    `;
+    div.querySelector('.view-btn').addEventListener('click', () => viewHistory(entry));
+    historyList.appendChild(div);
+  });
+}
+
+function viewHistory(entry) {
+  renderResults({
+    moduleName: entry.module_name,
+    total: entry.total_questions,
+    correct: entry.correct,
+    partial: entry.partial,
+    wrong: entry.wrong,
+    ungraded: entry.ungraded || 0,
+    percent: entry.score_percent,
+    details: entry.details || [],
+  });
+  const note = document.getElementById('results-save-note');
+  note.classList.add('hidden');
+  resultsTitle.textContent = `"${entry.module_name}"`;
+}
+
+function hideHistory() {
+  historyCard.classList.add('hidden');
+  historyList.innerHTML = '';
+  historyCount.textContent = '';
+  historyEntries = [];
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+initSupabase();

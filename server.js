@@ -146,6 +146,15 @@ Reply with ONLY valid JSON: {"verdict": "correct"|"partial"|"wrong", "feedback":
 });
 
 app.get('/favicon.ico', (req, res) => res.status(204).end());
+app.get('/api/config', (req, res) => {
+  const supabaseUrl = process.env.SUPABASE_URL || null;
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || null;
+  res.json({
+    authEnabled: !!(supabaseUrl && supabaseAnonKey),
+    supabaseUrl,
+    supabaseAnonKey,
+  });
+});
 app.get('/api/*', (req, res) => res.status(404).json({ error: 'Not found.' }));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
