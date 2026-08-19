@@ -4,7 +4,7 @@ let results = [];
 let gradingPromises = {};
 let deckCards = [];
 let selectedFile = null;
-let supabase = null;
+let supabaseClient = null;
 let currentUser = null;
 let historyEntries = [];
 
@@ -511,15 +511,15 @@ function initSupabase() {
     .then((res) => res.json())
     .then((cfg) => {
       if (!cfg.authEnabled || !window.supabase) return;
-      supabase = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+      supabaseClient = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
       wireAuthUI();
-      supabase.auth.onAuthStateChange((_event, session) => {
+      supabaseClient.auth.onAuthStateChange((_event, session) => {
         currentUser = session && session.user ? session.user : null;
         updateAuthUI();
         if (currentUser) loadHistory();
         else hideHistory();
       });
-      supabase.auth.getUser().then(({ data }) => {
+      supabaseClient.auth.getUser().then(({ data }) => {
         currentUser = data.user || null;
         updateAuthUI();
         if (currentUser) loadHistory();
@@ -533,7 +533,7 @@ function wireAuthUI() {
   authClose.addEventListener('click', closeAuthModal);
   authBackdrop.addEventListener('click', closeAuthModal);
   signoutBtn.addEventListener('click', async () => {
-    await supabase.auth.signOut();
+    await supabaseClient.auth.signOut();
   });
   tabSignin.addEventListener('click', () => setAuthMode('signin'));
   tabSignup.addEventListener('click', () => setAuthMode('signup'));
@@ -573,11 +573,11 @@ async function handleAuthSubmit(e) {
 
   try {
     if (authMode === 'signup') {
-      const { error } = await supabase.auth.signUp({ email, password });
+      const { error } = await supabaseClient.auth.signUp({ email, password });
       if (error) throw new Error(error.message);
       authHint.textContent = 'Check your email to confirm your account, then sign in.';
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
       if (error) throw new Error(error.message);
       closeAuthModal();
     }
@@ -601,9 +601,9 @@ function updateAuthUI() {
 }
 
 async function saveHistory(entry) {
-  if (!supabase || !currentUser) return false;
+  if (!supabaseClient || !currentUser) return false;
   try {
-    const { error } = await supabase.from('quiz_history').insert({
+    const { error } = await supabaseClient.from('quiz_history').insert({
       user_id: currentUser.id,
       module_name: entry.moduleName,
       total_questions: entry.total,
@@ -626,9 +626,9 @@ async function saveHistory(entry) {
 }
 
 async function loadHistory() {
-  if (!supabase || !currentUser) return;
+  if (!supabaseClient || !currentUser) return;
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseClient
       .from('quiz_history')
       .select('*')
       .order('created_at', { ascending: false })
