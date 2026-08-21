@@ -1215,3 +1215,173 @@ textarea:disabled {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* ============ Motion & polish ============ */
+
+/* Animated background blobs */
+body::before {
+  animation: blobFloat 18s ease-in-out infinite alternate;
+}
+
+body::after {
+  animation: blobFloat 24s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes blobFloat {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(46px, 34px) scale(1.18);
+  }
+  100% {
+    transform: translate(-24px, 26px) scale(0.94);
+  }
+}
+
+/* Gradient headline */
+header h1 {
+  background: linear-gradient(135deg, #5b3df5 0%, #a56bff 55%, #ff7ac2 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Screen transitions */
+.screen {
+  animation: screenIn 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes screenIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Card hover lift (non-deck cards only) */
+.upload-card,
+.results-card,
+.history-card,
+.auth-gate {
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s;
+}
+
+.upload-card:hover,
+.results-card:hover,
+.history-card:hover,
+.auth-gate:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 24px 60px rgba(93, 82, 179, 0.2), 0 3px 12px rgba(93, 82, 179, 0.08);
+}
+
+/* Button press + arrow nudge */
+.btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+/* Nav active state */
+.nav-item.active {
+  background: #e7deff;
+  color: #7b5cff;
+  font-weight: 700;
+}
+
+/* Confetti canvas */
+#confetti {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1500;
+}
+
+/* Answer toast */
+.toast {
+  position: fixed;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%) translateY(24px);
+  background: #2d2a3a;
+  color: #fff;
+  padding: 11px 20px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.92rem;
+  box-shadow: 0 12px 30px rgba(45, 42, 58, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2000;
+  transition: opacity 0.3s, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.toast.correct {
+  background: #16a34a;
+}
+
+.toast.partial {
+  background: #d97706;
+}
+
+.toast.wrong {
+  background: #dc2626;
+}
+
+/* Staggered result items */
+.result-item {
+  animation: itemIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes itemIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Score ring glow pulse for good scores */
+.score-circle.good {
+  box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.12), 0 12px 30px rgba(34, 197, 94, 0.25);
+}
+
+.score-circle.ok {
+  box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.12), 0 12px 30px rgba(245, 158, 11, 0.22);
+}
+
+.score-circle.bad {
+  box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.12), 0 12px 30px rgba(239, 68, 68, 0.2);
+}
+
+/* Dropzone icon gentle float */
+.drop-zone .dz-icon {
+  animation: iconFloat 3.2s ease-in-out infinite;
+}
+
+@keyframes iconFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+/* History items hover translate */
+.history-item {
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s;
+}

@@ -7,6 +7,7 @@ let selectedFile = null;
 let supabaseClient = null;
 let currentUser = null;
 let historyEntries = [];
+let authEnabled = false;
 
 const MAX_BACKS = 3;
 const FAN_OFFSET_PCT = 7;
@@ -162,6 +163,7 @@ function startQuiz() {
   uploadScreen.classList.add('hidden');
   quizScreen.classList.remove('hidden');
   hideGradingPill();
+  setActiveNav('new');
   initDeck();
 }
 
@@ -368,6 +370,9 @@ async function gradeQuestion(qi, answer) {
 
       results[qi].verdict = data.verdict;
       results[qi].feedback = data.feedback;
+      if (data.verdict === 'correct') showToast('Correct!', 'correct');
+      else if (data.verdict === 'partial') showToast('Partly correct', 'partial');
+      else showToast('Not quite', 'wrong');
       updateGradingPill();
       return;
     } catch (err) {
@@ -433,6 +438,8 @@ function showResults() {
     details: results,
   });
 
+  if (percent >= 50) launchConfetti();
+
   const note = document.getElementById('results-save-note');
   note.classList.remove('hidden');
 
@@ -466,8 +473,9 @@ function renderResults(entry) {
   circle.classList.remove('good', 'ok', 'bad');
   circle.classList.add(percent >= 75 ? 'good' : percent >= 50 ? 'ok' : 'bad');
 
-  document.getElementById('score-percent').textContent = `${percent}%`;
   document.getElementById('score-label').textContent = percent >= 75 ? 'Great job!' : percent >= 50 ? 'Keep practicing!' : 'Needs review';
+
+  animateScore(document.getElementById('score-percent'), percent);
 
   const stats = document.getElementById('score-stats');
   stats.innerHTML = `
@@ -501,6 +509,11 @@ function renderResults(entry) {
     detailsEl.appendChild(div);
   });
 
+  const items = detailsEl.querySelectorAll('.result-item');
+  items.forEach((item, i) => {
+    item.style.animationDelay = `${i * 55}ms`;
+  });
+
   window.scrollTo(0, 0);
 }
 
@@ -516,6 +529,7 @@ function initSupabase() {
         resetToUpload();
         return;
       }
+      authEnabled = true;
       supabaseClient = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
       wireAuthUI();
       supabaseClient.auth.onAuthStateChange((_event, session) => {
@@ -547,6 +561,7 @@ function showAuthGate() {
   setGateMode('signin');
   gateError.textContent = '';
   gateHint.textContent = '';
+  setActiveNav(null);
   showScreen(authScreen);
 }
 
@@ -599,7 +614,7 @@ async function handleGateSubmit(e) {
 }
 
 function requireAuth() {
-  if (currentUser) return true;
+  if (!authEnabled || currentUser) return true;
   showAuthGate();
   return false;
 }
@@ -654,6 +669,7 @@ function wireSidebar() {
 
 function showHistoryScreen() {
   showScreen(historyScreen);
+  setActiveNav('history');
   if (currentUser) {
     loadHistory();
   } else {
@@ -666,6 +682,7 @@ function openSettings() {
   settingsOptions.querySelectorAll('.settings-option').forEach((btn) => {
     btn.classList.toggle('active', parseInt(btn.dataset.count, 10) === quizLength);
   });
+  setActiveNav('settings');
   settingsModal.classList.remove('hidden');
 }
 
@@ -689,6 +706,7 @@ function resetToUpload() {
   uploadBtn.disabled = true;
   setStatus(uploadStatus, '', '');
   hideGradingPill();
+  setActiveNav('new');
   showScreen(uploadScreen);
   updateFlashcardCountLabel();
 }
@@ -792,3 +810,83 @@ function escapeHtml(str) {
 initSupabase();
 wireSidebar();
 updateFlashcardCountLabel();
+
+/* ---------------- Motion: confetti, toasts, counters ---------------- */
+
+function showToast(message, type) {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.className = 'toast show ' + (type || '');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => {
+    toast.className = 'toast';
+  }, 1800);
+}
+
+function launchConfetti(duration = 2400) {
+  const canvas = document.getElementById('confetti');
+  if (!canvas || !canvas.getContext) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+  ctx.scale(dpr, dpr);
+
+  const colors = ['#7b5cff', '#b18cff', '#ff9ad5', '#ffd166', '#4ade80', '#60a5fa', '#f472b6'];
+  const particles = [];
+  const count = 150;
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x: Math.random() * W,
+      y: -20 - Math.random() * H * 0.35,
+      w: 6 + Math.random() * 6,
+      h: 8 + Math.random() * 8,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      vy: 2 + Math.random() * 3,
+      vx: -1 + Math.random() * 2,
+      rot: Math.random() * Math.PI,
+      vr: -0.12 + Math.random() * 0.24,
+    });
+  }
+
+  const start = performance.now();
+  function frame(now) {
+    ctx.clearRect(0, 0, W, H);
+    particles.forEach((p) => {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.rot += p.vr;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    });
+    if (now - start < duration) requestAnimationFrame(frame);
+    else ctx.clearRect(0, 0, W, H);
+  }
+  requestAnimationFrame(frame);
+}
+
+function animateScore(el, target, duration = 900) {
+  if (!el) return;
+  const start = performance.now();
+  function tick(now) {
+    const p = Math.min((now - start) / duration, 1);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = Math.round(target * eased) + '%';
+    if (p < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function setActiveNav(view) {
+  [navNew, navHistory, navSettings].forEach((btn) => {
+    btn.classList.toggle('active', btn.id === 'nav-' + view);
+  });
+}
