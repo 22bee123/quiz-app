@@ -503,6 +503,7 @@ header p {
 
 .deck {
   position: relative;
+  margin-top: 96px;
   margin-bottom: 48px;
   transition: height 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -513,8 +514,8 @@ header p {
   left: 0;
   right: 0;
   padding: 28px;
-  will-change: transform, opacity;
-  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.35s ease;
+  will-change: transform, opacity, filter;
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), top 0.35s cubic-bezier(0.22, 1, 0.36, 1), filter 0.35s ease, opacity 0.35s ease;
 }
 
 .deck-card.is-front {

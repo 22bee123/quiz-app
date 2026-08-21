@@ -8,7 +8,10 @@ let supabaseClient = null;
 let currentUser = null;
 let historyEntries = [];
 
-const MAX_BACKS = 4;
+const MAX_BACKS = 3;
+const FAN_OFFSET_PCT = 7;
+const FAN_SCALE_STEP = 0.05;
+const FAN_DIM_STEP = 0.13;
 
 const uploadScreen = document.getElementById('upload-screen');
 const quizScreen = document.getElementById('quiz-screen');
@@ -228,14 +231,15 @@ function buildCard(qi) {
 function styleDeckCard(card, idx, isFront) {
   if (isFront) {
     card.style.zIndex = 100;
+    card.style.top = '0';
     card.style.transform = 'translate(0, 0) scale(1)';
+    card.style.filter = 'none';
     card.style.opacity = 1;
   } else {
-    const x = idx * 12;
-    const y = idx * 16;
-    const s = Math.max(1 - idx * 0.03, 0.82);
     card.style.zIndex = 100 - idx;
-    card.style.transform = `translate(${x}px, ${y}px) scale(${s})`;
+    card.style.top = `-${idx * FAN_OFFSET_PCT}%`;
+    card.style.transform = `scale(${Math.max(0.7, 1 - idx * FAN_SCALE_STEP)})`;
+    card.style.filter = `brightness(${Math.max(0.45, 1 - idx * FAN_DIM_STEP)})`;
     card.style.opacity = 1;
   }
 }
