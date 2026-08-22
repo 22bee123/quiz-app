@@ -157,6 +157,7 @@ app.get('/api/config', (req, res) => {
   });
 });
 app.get('/api/*', (req, res) => res.status(404).json({ error: 'Not found.' }));
+app.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 app.listen(PORT, () => {

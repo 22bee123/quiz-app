@@ -3,165 +3,198 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Quiz App</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta name="description" content="Turn any module PDF into an interactive AI quiz. Upload, answer AI-generated flashcards, get instant grading, and track your progress." />
+  <title>AI Quiz — Turn your module into a quiz</title>
+  <link rel="stylesheet" href="landing.css" />
 </head>
 <body>
-  <aside id="sidebar" class="sidebar">
-    <div class="sidebar-top">
-      <span class="sidebar-brand">&#127891; <span class="brand-text">AI Quiz</span></span>
-      <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle sidebar" title="Toggle sidebar">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-      </button>
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+
+  <nav class="lp-nav">
+    <div class="lp-nav-inner">
+      <a class="lp-logo" href="/">&#127891; AI&nbsp;Quiz</a>
+      <div class="lp-links">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#why">Why us</a>
+      </div>
+      <a class="lp-cta-btn" href="/app">Launch App &#8594;</a>
     </div>
+  </nav>
 
-    <nav class="sidebar-nav">
-      <button class="nav-item" id="nav-new" title="New Quiz">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span class="nav-label">New Quiz</span>
-      </button>
-      <button class="nav-item" id="nav-settings" title="Settings">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        <span class="nav-label">Settings</span>
-      </button>
-      <button class="nav-item" id="nav-history" title="History">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
-        <span class="nav-label">History</span>
-      </button>
-    </nav>
+  <header class="hero">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <span class="pill">&#9889; Powered by AI</span>
+        <h1>Turn any module into a quiz <span class="grad">you'll actually enjoy</span></h1>
+        <p class="hero-sub">Upload a PDF, and our AI turns it into interactive flashcards. Answer them out loud in your head or by typing, get instant AI grading, and watch your scores climb.</p>
+        <div class="hero-actions">
+          <a class="lp-cta-btn big" href="/app">Start Learning Free &#8594;</a>
+          <a class="lp-ghost" href="#features">See how it works</a>
+        </div>
+        <div class="hero-stats">
+          <div class="hs"><strong>10+</strong><span>flashcards per module</span></div>
+          <div class="hs"><strong>Instant</strong><span>AI grading</span></div>
+          <div class="hs"><strong>100%</strong><span>your history saved</span></div>
+        </div>
+      </div>
 
-    <div class="sidebar-bottom">
-      <button class="nav-item" id="nav-account" title="Account">
-        <span class="nav-avatar" id="nav-avatar"></span>
-        <span class="nav-account-text">
-          <span class="nav-label" id="nav-account-name">Sign in</span>
-          <span class="nav-label sub" id="nav-account-email"></span>
-        </span>
-      </button>
-      <button class="nav-icon-btn hidden" id="nav-signout" title="Sign out">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-      </button>
+      <div class="hero-visual">
+        <div class="deck-preview">
+          <div class="pc pc-3"></div>
+          <div class="pc pc-2"></div>
+          <div class="pc pc-1"></div>
+          <div class="pc pc-front">
+            <div class="pc-top"><span class="pc-chip">Question 3 of 10</span><span class="pc-bar"><span></span></span></div>
+            <div class="pc-q">What is the main pigment that captures light energy in plants?</div>
+            <div class="pc-input" contenteditable="false">Chlorophyll...</div>
+            <div class="pc-btn">Next Question &#8594;</div>
+          </div>
+        </div>
+        <div class="float-badge fb-1">&#127942; 90% this time!</div>
+        <div class="float-badge fb-2">&#9989; Answer graded by AI</div>
+      </div>
     </div>
-  </aside>
+  </header>
 
-  <main class="main">
-    <div class="app">
-      <header>
-        <div class="brand-badge">&#127891; AI QUIZ</div>
-        <h1>Turn your module into a quiz</h1>
-        <p>Upload your PDF, answer AI-generated flashcards, and see how well you know the material.</p>
-      </header>
+  <main>
+    <section id="features" class="section">
+      <div class="section-head">
+        <span class="pill">&#128161; Features</span>
+        <h2>Everything you need to study smarter</h2>
+        <p>Not another generic flashcard app. AI Quiz understands your actual material and grades you like a teacher would.</p>
+      </div>
 
-      <!-- Auth gate screen -->
-      <section id="auth-screen" class="screen hidden">
-        <div class="card auth-gate">
-          <div class="brand-badge">&#127891; AI QUIZ</div>
-          <h2 id="auth-gate-title">Sign in to continue</h2>
-          <p class="gate-sub">Your quizzes, results, and history are saved to your account.</p>
-          <div class="auth-tabs">
-            <button id="gate-tab-signin" class="auth-tab active">Sign in</button>
-            <button id="gate-tab-signup" class="auth-tab">Sign up</button>
-          </div>
-          <form id="gate-form">
-            <label class="field-label" for="gate-email">Email</label>
-            <input id="gate-email" type="email" required autocomplete="email" placeholder="you@example.com" />
-            <label class="field-label" for="gate-password">Password</label>
-            <input id="gate-password" type="password" required minlength="6" autocomplete="current-password" placeholder="At least 6 characters" />
-            <div id="gate-error" class="auth-error"></div>
-            <button type="submit" id="gate-submit" class="btn btn-primary">
-              <span class="btn-label">Sign in</span>
-            </button>
-          </form>
-          <p id="gate-hint" class="auth-hint"></p>
-        </div>
-      </section>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="f-icon">&#128196;</div>
+          <h3>Upload any module PDF</h3>
+          <p>Drop in your lecture notes, textbook chapter, or module file. No formatting, no setup — it just works.</p>
+        </article>
+        <article class="feature">
+          <div class="f-icon">&#129504;</div>
+          <h3>AI-generated flashcards</h3>
+          <p>Our AI reads the whole module and creates targeted questions on the key concepts, definitions, and facts.</p>
+        </article>
+        <article class="feature">
+          <div class="f-icon">&#9997;&#65039;</div>
+          <h3>Type your answers</h3>
+          <p>Real recall, not multiple choice. Type what you actually know and prove you understand the material.</p>
+        </article>
+        <article class="feature">
+          <div class="f-icon">&#127919;</div>
+          <h3>Instant AI grading</h3>
+          <p>Every answer is graded <em>correct</em>, <em>partial</em>, or <em>wrong</em> with helpful feedback — even paraphrases count.</p>
+        </article>
+        <article class="feature">
+          <div class="f-icon">&#128202;</div>
+          <h3>Detailed results</h3>
+          <p>See your score, your exact answer vs. the correct one, and AI feedback for every single question.</p>
+        </article>
+        <article class="feature">
+          <div class="f-icon">&#128220;</div>
+          <h3>Quiz history</h3>
+          <p>Every attempt is saved to your account. Revisit past quizzes anytime and watch your progress grow.</p>
+        </article>
+        <article class="feature">
+          <div class="f-icon">&#128273;</div>
+          <h3>Your own account</h3>
+          <p>Secure sign-in keeps your results private and synced — so you can study on any device.</p>
+        </article>
+        <article class="feature">
+          <div class="f-icon">&#9881;&#65039;</div>
+          <h3>Your quiz, your way</h3>
+          <p>Set the number of flashcards per quiz (5–20) so every session fits your study time.</p>
+        </article>
+      </div>
+    </section>
 
-      <!-- Upload screen -->
-      <section id="upload-screen" class="screen hidden">
-        <div class="card upload-card">
-          <label for="file-input" class="drop-zone" id="drop-zone">
-            <span class="dz-icon">&#128196;</span>
-            <span class="dz-title">Click or drag a PDF here</span>
-            <span class="dz-sub" id="upload-sub">Your module will be analyzed by AI to create <strong id="flashcard-count-label">10</strong> flashcards</span>
-          </label>
-          <input type="file" id="file-input" accept=".pdf" hidden />
-          <div id="file-name" class="file-name"></div>
-          <button id="upload-btn" class="btn btn-primary">
-            <span class="btn-label">Analyze Module &amp; Start Quiz</span>
-            <span class="btn-arrow">&#8594;</span>
-          </button>
-          <div id="upload-status" class="status"></div>
-        </div>
-      </section>
+    <section id="how" class="section alt">
+      <div class="section-head">
+        <span class="pill">&#128640; How it works</span>
+        <h2>Three steps to studying better</h2>
+      </div>
+      <div class="how-grid">
+        <article class="how-step">
+          <div class="how-num">1</div>
+          <h3>Upload your module</h3>
+          <p>Pick a PDF from your device. The AI reads it instantly.</p>
+        </article>
+        <article class="how-step">
+          <div class="how-num">2</div>
+          <h3>Answer the flashcards</h3>
+          <p>Type your answer, hit Next, and let AI grade it on the spot.</p>
+        </article>
+        <article class="how-step">
+          <div class="how-num">3</div>
+          <h3>Review &amp; improve</h3>
+          <p>See exactly what you got right or wrong, then retry until you ace it.</p>
+        </article>
+      </div>
+    </section>
 
-      <!-- History screen -->
-      <section id="history-screen" class="screen hidden">
-        <div class="card history-card">
-          <div class="history-head">
-            <h3>&#128220; Your quiz history</h3>
-            <span id="history-count" class="history-count"></span>
-          </div>
-          <div id="history-list" class="history-list"></div>
-        </div>
-      </section>
+    <section id="why" class="section">
+      <div class="section-head">
+        <span class="pill">&#10024; Why choose AI Quiz</span>
+        <h2>Made for students who want results</h2>
+      </div>
+      <div class="why-grid">
+        <article class="why">
+          <h3>&#129302; Smarter than flashcard apps</h3>
+          <p>Generic decks are the same for everyone. AI Quiz builds questions from <em>your</em> module, so you study exactly what matters.</p>
+        </article>
+        <article class="why">
+          <h3>&#128260; Active recall works</h3>
+          <p>Retrieving answers from memory is proven to beat re-reading. Every quiz is a science-backed study session.</p>
+        </article>
+        <article class="why">
+          <h3>&#128154; Fair, human-like grading</h3>
+          <p>Say it in your own words — if the meaning is right, you get the mark. No robotic keyword matching.</p>
+        </article>
+        <article class="why">
+          <h3>&#128274; Private by default</h3>
+          <p>Your account keeps your history secure. Only you can see your results.</p>
+        </article>
+        <article class="why">
+          <h3>&#128241; Works anywhere</h3>
+          <p>In the browser on your laptop, tablet, or phone. Nothing to install.</p>
+        </article>
+        <article class="why">
+          <h3>&#127881; Makes studying fun</h3>
+          <p>Satisfying card flips, live feedback, and confetti when you hit your goals — studying stops feeling like a chore.</p>
+        </article>
+      </div>
+    </section>
 
-      <!-- Quiz screen -->
-      <section id="quiz-screen" class="screen hidden">
-        <div class="grading-area">
-          <div class="grading-pill" id="grading-pill">
-            <span class="mini-spinner"></span>
-            <span id="grading-pill-text">Grading your answer…</span>
-          </div>
-        </div>
-        <div class="deck" id="deck"></div>
-      </section>
-
-      <!-- Results screen -->
-      <section id="results-screen" class="screen hidden">
-        <div class="card results-card">
-          <div class="results-head">
-            <span class="brand-badge">&#127942; QUIZ COMPLETE</span>
-            <h2 id="results-title">Here's how you did</h2>
-            <p id="results-save-note" class="save-note hidden">Saved to your history &#10003;</p>
-          </div>
-          <div class="score-circle" id="score-circle">
-            <span id="score-percent"></span>
-            <span id="score-label"></span>
-          </div>
-          <div class="score-stats" id="score-stats"></div>
-          <div id="results-details"></div>
-          <button id="restart-btn" class="btn btn-primary">
-            <span class="btn-label">Try Another Module</span>
-            <span class="btn-arrow">&#8635;</span>
-          </button>
-        </div>
-      </section>
-    </div>
+    <section class="cta">
+      <h2>Ready to turn your module into a quiz?</h2>
+      <p>Upload your first PDF and answer AI-generated flashcards in under a minute.</p>
+      <a class="lp-cta-btn big" href="/app">Start Learning Free &#8594;</a>
+    </section>
   </main>
 
-  <!-- Settings modal -->
-  <div id="settings-modal" class="modal hidden">
-    <div class="modal-backdrop" id="settings-backdrop"></div>
-    <div class="modal-card">
-      <div class="modal-head">
-        <h3>Settings</h3>
-        <button id="settings-close" class="modal-close">&times;</button>
-      </div>
-      <label class="field-label">Number of flashcards per quiz</label>
-      <div class="settings-options" id="settings-options">
-        <button class="settings-option" data-count="5">5</button>
-        <button class="settings-option" data-count="10">10</button>
-        <button class="settings-option" data-count="15">15</button>
-        <button class="settings-option" data-count="20">20</button>
-      </div>
-      <p class="auth-hint">Saved automatically.</p>
+  <footer>
+    <div class="foot-inner">
+      <div class="foot-brand">&#127891; AI Quiz</div>
+      <p>Turn any module into a quiz you'll actually enjoy.</p>
+      <p class="foot-small">&copy; <span id="year"></span> AI Quiz. All rights reserved.</p>
     </div>
-  </div>
+  </footer>
 
-  <script src="/vendor/supabase.js"></script>
-  <script src="app.js"></script>
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
 
-  <canvas id="confetti" aria-hidden="true"></canvas>
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    const revealEls = document.querySelectorAll('.feature, .how-step, .why, .cta, .section-head');
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver(
+        (entries) => entries.forEach((e) => e.isIntersecting && e.target.classList.add('revealed')),
+        { threshold: 0.12 }
+      );
+      revealEls.forEach((el) => io.observe(el));
+    } else {
+      revealEls.forEach((el) => el.classList.add('revealed'));
+    }
+  </script>
 </body>
 </html>
