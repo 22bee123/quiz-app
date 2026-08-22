@@ -61,6 +61,7 @@ const flashcardCountLabel = document.getElementById('flashcard-count-label');
 
 let authMode = 'signin';
 let quizLength = parseInt(localStorage.getItem('quizLength') || '10', 10);
+const forceGateOnLaunch = new URLSearchParams(window.location.search).get('login') === '1';
 
 function showScreen(screen) {
   [uploadScreen, quizScreen, resultsScreen, historyScreen, authScreen].forEach((s) => s.classList.add('hidden'));
@@ -532,12 +533,16 @@ function initSupabase() {
       authEnabled = true;
       supabaseClient = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
       wireAuthUI();
-      supabaseClient.auth.onAuthStateChange((_event, session) => {
+      supabaseClient.auth.onAuthStateChange((event, session) => {
         currentUser = session && session.user ? session.user : null;
         updateAuthUI();
         if (currentUser) {
           loadHistory();
-          resetToUpload();
+          if (forceGateOnLaunch && event !== 'SIGNED_IN') {
+            showGateContinue();
+          } else {
+            resetToUpload();
+          }
         } else {
           hideHistory();
           showAuthGate();
@@ -548,7 +553,8 @@ function initSupabase() {
         updateAuthUI();
         if (currentUser) {
           loadHistory();
-          resetToUpload();
+          if (forceGateOnLaunch) showGateContinue();
+          else resetToUpload();
         } else {
           showAuthGate();
         }
@@ -561,6 +567,23 @@ function showAuthGate() {
   setGateMode('signin');
   gateError.textContent = '';
   gateHint.textContent = '';
+  const cont = document.getElementById('gate-continue');
+  if (cont) cont.classList.add('hidden');
+  setActiveNav(null);
+  showScreen(authScreen);
+}
+
+function showGateContinue() {
+  setGateMode('signin');
+  gateError.textContent = '';
+  gateHint.textContent = '';
+  const cont = document.getElementById('gate-continue');
+  if (cont && currentUser) {
+    cont.classList.remove('hidden');
+    cont.innerHTML = `Signed in as <strong>${escapeHtml(currentUser.email || 'you')}</strong> &middot; <button class="link-btn" id="gate-continue-btn">Continue to app</button>`;
+    const btn = document.getElementById('gate-continue-btn');
+    if (btn) btn.addEventListener('click', resetToUpload);
+  }
   setActiveNav(null);
   showScreen(authScreen);
 }

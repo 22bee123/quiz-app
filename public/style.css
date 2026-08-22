@@ -895,6 +895,13 @@ textarea:disabled {
   margin-top: 18px;
 }
 
+.gate-continue {
+  margin-top: 14px;
+  font-size: 0.85rem;
+  color: #8a87a3;
+  text-align: center;
+}
+
 /* ---------- History ---------- */
 .history-card {
   margin-top: 20px;
