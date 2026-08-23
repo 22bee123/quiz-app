@@ -828,7 +828,9 @@ async function togglePin(entry) {
       .update({ pinned: next })
       .eq('id', entry.id);
     if (error) {
-      console.error('Pin DB sync failed (local pin kept):', error.message);
+      if (!/pinned|does not exist|schema cache|policy|permission|row-level/i.test(error.message)) {
+        console.warn('Pin DB sync failed (local pin kept):', error.message);
+      }
     } else {
       entry.pinned = next;
     }
