@@ -422,6 +422,45 @@ body::after {
   display: none;
 }
 
+/* ---------- Mobile overlay drawer ---------- */
+.sidebar-open-btn {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 1900;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid rgba(124, 92, 255, 0.2);
+  box-shadow: 0 4px 12px rgba(93, 82, 179, 0.16);
+  color: #7b5cff;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.sidebar-open-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(45, 42, 58, 0.5);
+  z-index: 1850;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s, visibility 0.25s;
+}
+
+.sidebar-backdrop.show {
+  opacity: 1;
+  visibility: visible;
+}
+
 /* ---------- Settings options ---------- */
 .settings-options {
   display: grid;
@@ -1323,28 +1362,37 @@ textarea:disabled {
 
 /* ---------- Responsive ---------- */
 @media (max-width: 768px) {
-  body {
-    flex-direction: column;
+  .sidebar-open-btn {
+    display: flex;
   }
 
-  .sidebar {
-    position: relative;
-    top: 0;
-    width: 100%;
-    height: auto;
-    border-right: none;
-    border-bottom: 1px solid rgba(124, 92, 255, 0.14);
+  .main {
+    padding: 70px 14px 40px;
   }
 
+  .main > .app {
+    max-width: 100%;
+  }
+
+  .sidebar,
   .sidebar.collapsed {
-    width: 100%;
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: min(290px, 85vw);
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+    border-right: 1px solid rgba(124, 92, 255, 0.14);
+    box-shadow: 0 12px 30px rgba(45, 42, 58, 0.2);
   }
 
-  .sidebar .sidebar-scroll,
-  .sidebar.collapsed .sidebar-scroll {
-    max-height: 32vh;
+  .sidebar.open,
+  .sidebar.collapsed.open {
+    transform: translateX(0);
   }
 
+  /* sidebar is full-width overlay; always show labels here */
   .sidebar.collapsed .brand-text,
   .sidebar.collapsed .nav-label,
   .sidebar.collapsed .nav-account-text {
@@ -1353,19 +1401,6 @@ textarea:disabled {
 
   .sidebar.collapsed .sidebar-top {
     justify-content: space-between;
-  }
-
-  .sidebar .sidebar-toggle {
-    display: flex;
-  }
-
-  .main {
-    width: 100%;
-    padding: 20px 14px 40px;
-  }
-
-  .main > .app {
-    max-width: 100%;
   }
 }
 
