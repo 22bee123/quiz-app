@@ -816,11 +816,17 @@ async function togglePin(entry) {
     if (error) {
       entry.pinned = !next;
       renderSidebarHistory();
-      showToast('Could not update pin', 'wrong');
+      console.error('Pin error:', error.message);
+      if (/pinned|does not exist|policy|permission|row-level/i.test(error.message)) {
+        showToast('Pinning needs a quick DB setup — see the SQL', 'wrong');
+      } else {
+        showToast('Could not update pin', 'wrong');
+      }
     }
   } catch (err) {
     entry.pinned = !next;
     renderSidebarHistory();
+    console.error('Pin error:', err.message);
     showToast('Could not update pin', 'wrong');
   }
 }
