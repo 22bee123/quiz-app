@@ -115,8 +115,18 @@ uploadBtn.addEventListener('click', async () => {
 
   try {
     const text = await extractTextFromPdf(selectedFile);
-    if (!text || text.replace(/\s+/g, ' ').trim().length < 100) {
-      throw new Error('The PDF appears to contain no readable text. It may be a scanned/image-based document.');
+    const hasText = text && text.replace(/\s+/g, ' ').trim().length >= 100;
+
+    let payload;
+    if (hasText) {
+      payload = { text: text.trim(), count: quizLength };
+    } else {
+      setStatus(uploadStatus, 'Scanned PDF detected — reading pages with AI vision...', 'info');
+      const images = await renderPdfImages(selectedFile);
+      if (!images.length) {
+        throw new Error('The PDF could not be read. It may be image-based or corrupted, and no pages could be extracted.');
+      }
+      payload = { images, count: quizLength };
     }
 
     setStatus(uploadStatus, 'Analyzing module with AI... This may take a moment.', 'info');
@@ -124,7 +134,7 @@ uploadBtn.addEventListener('click', async () => {
     const res = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, count: quizLength }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -156,6 +166,28 @@ async function extractTextFromPdf(file) {
     text += content.items.map((it) => it.str).join(' ') + '\n';
   }
   return text;
+}
+
+async function renderPdfImages(file, maxPages = 8) {
+  const pdfjsLib = await import('/vendor/pdf.min.mjs');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.min.mjs';
+
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await pdfjsLib.getDocument({ data }).promise;
+  const pageCount = Math.min(doc.numPages, maxPages);
+  const images = [];
+
+  for (let i = 1; i <= pageCount; i++) {
+    const page = await doc.getPage(i);
+    const viewport = page.getViewport({ scale: 1.6 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    images.push(canvas.toDataURL('image/jpeg', 0.8));
+  }
+  return images;
 }
 
 /* ---------------- Deck ---------------- */

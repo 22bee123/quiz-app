@@ -68,17 +68,21 @@ app.post('/api/analyze', async (req, res) => {
   try {
     const text = typeof req.body.text === 'string' ? req.body.text.replace(/\s+/g, ' ').trim() : '';
     const count = Math.min(Math.max(parseInt(req.body.count, 10) || 10, 5), 20);
+    const images = Array.isArray(req.body.images)
+      ? req.body.images
+          .filter((s) => typeof s === 'string' && s.startsWith('data:image/'))
+          .slice(0, 8)
+      : [];
 
-    if (!text) {
-      return res.status(400).json({ error: 'No text received. The PDF could not be read in your browser.' });
+    if (!text && images.length === 0) {
+      return res.status(400).json({ error: 'No content received. The PDF could not be read in your browser.' });
     }
-    if (text.length < 100) {
+
+    if (text && text.length < 100 && images.length === 0) {
       return res.status(400).json({ error: 'The PDF appears to contain no readable text. It may be a scanned/image-based document.' });
     }
 
-    const truncatedText = text.length > 30000 ? text.slice(0, 30000) : text;
-
-    const prompt = `You are an expert quiz creator. Based ONLY on the following module content, create exactly ${count} flashcards (quiz questions) that test understanding of the material.
+    const prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} flashcards (quiz questions) that test understanding of the material.
 
 Requirements:
 - Questions must be answerable in a short phrase or 1-2 sentences (no multiple choice).
@@ -91,11 +95,19 @@ Respond with ONLY a valid JSON array in this exact format (no extra text):
   { "question": "...", "answer": "..." },
   { "question": "...", "answer": "..." }
 ]
+${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 30000 ? text.slice(0, 30000) : text) + '"""'}`;
 
-Module content:
-"""${truncatedText}"""`;
+    let content;
+    if (images.length) {
+      content = [
+        { type: 'text', text: prompt },
+        ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+      ];
+    } else {
+      content = [{ type: 'text', text: prompt }];
+    }
 
-    const raw = await callDeepSeek([{ role: 'user', content: prompt }], 4000, 0.4);
+    const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
     const flashcards = extractJson(raw);
 
     if (!Array.isArray(flashcards) || flashcards.length === 0) {
