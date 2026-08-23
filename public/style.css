@@ -1323,8 +1323,45 @@ textarea:disabled {
 
 /* ---------- Responsive ---------- */
 @media (max-width: 768px) {
+  body {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    position: relative;
+    top: 0;
+    width: 100%;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid rgba(124, 92, 255, 0.14);
+  }
+
+  .sidebar.collapsed {
+    width: 100%;
+  }
+
+  .sidebar .sidebar-scroll,
+  .sidebar.collapsed .sidebar-scroll {
+    max-height: 32vh;
+  }
+
+  .sidebar.collapsed .brand-text,
+  .sidebar.collapsed .nav-label,
+  .sidebar.collapsed .nav-account-text {
+    display: initial;
+  }
+
+  .sidebar.collapsed .sidebar-top {
+    justify-content: space-between;
+  }
+
+  .sidebar .sidebar-toggle {
+    display: flex;
+  }
+
   .main {
-    padding: 24px 14px 40px;
+    width: 100%;
+    padding: 20px 14px 40px;
   }
 
   .main > .app {
