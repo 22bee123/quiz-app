@@ -17,7 +17,6 @@ const FAN_DIM_STEP = 0.13;
 const uploadScreen = document.getElementById('upload-screen');
 const quizScreen = document.getElementById('quiz-screen');
 const resultsScreen = document.getElementById('results-screen');
-const historyScreen = document.getElementById('history-screen');
 
 const fileInput = document.getElementById('file-input');
 const dropZone = document.getElementById('drop-zone');
@@ -38,21 +37,23 @@ const gatePassword = document.getElementById('gate-password');
 const gateError = document.getElementById('gate-error');
 const gateSubmit = document.getElementById('gate-submit');
 const gateHint = document.getElementById('gate-hint');
-const historyList = document.getElementById('history-list');
-const historyCount = document.getElementById('history-count');
 const resultsTitle = document.getElementById('results-title');
 const resultsSaveNote = document.getElementById('results-save-note');
 
 const sidebar = document.getElementById('sidebar');
 const sidebarToggle = document.getElementById('sidebar-toggle');
 const navNew = document.getElementById('nav-new');
-const navHistory = document.getElementById('nav-history');
 const navSettings = document.getElementById('nav-settings');
 const navAccount = document.getElementById('nav-account');
 const navAvatar = document.getElementById('nav-avatar');
 const navAccountName = document.getElementById('nav-account-name');
 const navAccountEmail = document.getElementById('nav-account-email');
 const navSignout = document.getElementById('nav-signout');
+const pinnedWrap = document.getElementById('pinned-wrap');
+const pinnedList = document.getElementById('pinned-list');
+const recentWrap = document.getElementById('recent-wrap');
+const recentList = document.getElementById('recent-list');
+const sidebarHistoryEmpty = document.getElementById('sidebar-history-empty');
 const settingsModal = document.getElementById('settings-modal');
 const settingsBackdrop = document.getElementById('settings-backdrop');
 const settingsClose = document.getElementById('settings-close');
@@ -63,7 +64,7 @@ let authMode = 'signin';
 let quizLength = parseInt(localStorage.getItem('quizLength') || '10', 10);
 
 function showScreen(screen) {
-  [uploadScreen, quizScreen, resultsScreen, historyScreen, authScreen].forEach((s) => s.classList.add('hidden'));
+  [uploadScreen, quizScreen, resultsScreen, authScreen].forEach((s) => s.classList.add('hidden'));
   screen.classList.remove('hidden');
 }
 
@@ -648,9 +649,6 @@ function wireSidebar() {
   navNew.addEventListener('click', () => {
     if (requireAuth()) resetToUpload();
   });
-  navHistory.addEventListener('click', () => {
-    if (requireAuth()) showHistoryScreen();
-  });
   navSettings.addEventListener('click', () => {
     if (requireAuth()) openSettings();
   });
@@ -665,17 +663,6 @@ function wireSidebar() {
       closeSettings();
     });
   });
-}
-
-function showHistoryScreen() {
-  showScreen(historyScreen);
-  setActiveNav('history');
-  if (currentUser) {
-    loadHistory();
-  } else {
-    historyCount.textContent = '';
-    historyList.innerHTML = '<p class="history-empty">Sign in to see your quiz history.</p>';
-  }
 }
 
 function openSettings() {
@@ -742,41 +729,71 @@ async function loadHistory() {
     const { data, error } = await supabaseClient
       .from('quiz_history')
       .select('*')
+      .order('pinned', { ascending: false })
       .order('created_at', { ascending: false })
-      .limit(20);
+      .limit(50);
     if (error) throw error;
     historyEntries = data || [];
-    renderHistory();
+    renderSidebarHistory();
   } catch (err) {
     console.error('Load history error:', err.message);
   }
 }
 
-function renderHistory() {
-  if (!historyEntries.length) {
-    historyList.innerHTML = '<p class="history-empty">No quizzes yet. Take one to see it here!</p>';
-    historyCount.textContent = '';
-    return;
+function renderSidebarHistory() {
+  const pinned = historyEntries.filter((e) => e.pinned);
+  const recent = historyEntries.filter((e) => !e.pinned);
+
+  pinnedWrap.classList.toggle('hidden', pinned.length === 0);
+  recentWrap.classList.toggle('hidden', recent.length === 0);
+  sidebarHistoryEmpty.classList.toggle('hidden', historyEntries.length > 0);
+
+  pinnedList.innerHTML = '';
+  recentList.innerHTML = '';
+  pinned.forEach((entry) => pinnedList.appendChild(buildSidebarHistoryItem(entry)));
+  recent.forEach((entry) => recentList.appendChild(buildSidebarHistoryItem(entry)));
+}
+
+function buildSidebarHistoryItem(entry) {
+  const date = new Date(entry.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const scoreClass = entry.score_percent >= 75 ? 'good' : entry.score_percent >= 50 ? 'ok' : 'bad';
+
+  const item = document.createElement('div');
+  item.className = 'hist-item';
+  item.innerHTML = `
+    <button class="hi-main-btn">
+      <span class="hi-name">${escapeHtml(entry.module_name)}</span>
+      <span class="hi-meta">${entry.score_percent}% &middot; ${date}</span>
+    </button>
+    <button class="pin-btn ${entry.pinned ? 'pinned' : ''}" title="${entry.pinned ? 'Unpin' : 'Pin'}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+    </button>
+  `;
+  item.querySelector('.hi-main-btn').addEventListener('click', () => viewHistory(entry));
+  item.querySelector('.pin-btn').addEventListener('click', () => togglePin(entry));
+  return item;
+}
+
+async function togglePin(entry) {
+  if (!supabaseClient || !currentUser) return;
+  const next = !entry.pinned;
+  entry.pinned = next;
+  renderSidebarHistory();
+  try {
+    const { error } = await supabaseClient
+      .from('quiz_history')
+      .update({ pinned: next })
+      .eq('id', entry.id);
+    if (error) {
+      entry.pinned = !next;
+      renderSidebarHistory();
+      showToast('Could not update pin', 'wrong');
+    }
+  } catch (err) {
+    entry.pinned = !next;
+    renderSidebarHistory();
+    showToast('Could not update pin', 'wrong');
   }
-  historyCount.textContent = `${historyEntries.length} attempt${historyEntries.length === 1 ? '' : 's'}`;
-  historyList.innerHTML = '';
-  historyEntries.forEach((entry) => {
-    const date = new Date(entry.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-    const div = document.createElement('div');
-    div.className = 'history-item';
-    div.innerHTML = `
-      <div class="hi-main">
-        <span class="hi-name">${escapeHtml(entry.module_name)}</span>
-        <span class="hi-date">${date}</span>
-      </div>
-      <div class="hi-right">
-        <span class="hi-score hi-${entry.score_percent >= 75 ? 'good' : entry.score_percent >= 50 ? 'ok' : 'bad'}">${entry.score_percent}%</span>
-        <button class="view-btn" data-id="${entry.id}">View</button>
-      </div>
-    `;
-    div.querySelector('.view-btn').addEventListener('click', () => viewHistory(entry));
-    historyList.appendChild(div);
-  });
 }
 
 function viewHistory(entry) {
@@ -796,9 +813,12 @@ function viewHistory(entry) {
 }
 
 function hideHistory() {
-  historyList.innerHTML = '';
-  historyCount.textContent = '';
   historyEntries = [];
+  pinnedWrap.classList.add('hidden');
+  recentWrap.classList.add('hidden');
+  sidebarHistoryEmpty.classList.remove('hidden');
+  pinnedList.innerHTML = '';
+  recentList.innerHTML = '';
 }
 
 function escapeHtml(str) {
@@ -886,7 +906,7 @@ function animateScore(el, target, duration = 900) {
 }
 
 function setActiveNav(view) {
-  [navNew, navHistory, navSettings].forEach((btn) => {
+  [navNew, navSettings].forEach((btn) => {
     btn.classList.toggle('active', btn.id === 'nav-' + view);
   });
 }

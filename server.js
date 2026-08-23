@@ -13,20 +13,33 @@ if (!process.env.DEEPSEEK_API_KEY) {
   process.exit(1);
 }
 
-async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3) {
-  const response = await fetch(DEEPSEEK_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
-      messages,
-      max_tokens: maxTokens,
-      temperature,
-    }),
-  });
+async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeoutMs = 50000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(DEEPSEEK_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: DEEPSEEK_MODEL,
+        messages,
+        max_tokens: maxTokens,
+        temperature,
+      }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') {
+      throw new Error('DeepSeek API timed out. Please try again.');
+    }
+    throw err;
+  }
+  clearTimeout(timer);
 
   if (!response.ok) {
     const errText = await response.text();

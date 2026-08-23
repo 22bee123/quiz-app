@@ -127,13 +127,161 @@ body::after {
   transform: rotate(180deg);
 }
 
-.sidebar-nav {
+/* New Quiz button (top) */
+.new-quiz-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: calc(100% - 20px);
+  margin: 4px 10px 8px;
+  padding: 12px;
+  border: 1.5px solid rgba(124, 92, 255, 0.3);
+  border-radius: 12px;
+  background: #fff;
+  color: #7b5cff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: all 0.2s;
+}
+
+.new-quiz-btn svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.new-quiz-btn:hover {
+  background: #f1ecff;
+  box-shadow: 0 4px 12px rgba(124, 92, 255, 0.2);
+}
+
+/* Scrollable history */
+.sidebar-scroll {
   flex: 1;
+  overflow-y: auto;
+  padding: 4px 10px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: #d9d5f0 transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: #d9d5f0;
+  border-radius: 3px;
+}
+
+.hist-section {
+  margin-bottom: 16px;
+}
+
+.hist-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a09cb8;
+  padding: 8px 8px 6px;
+}
+
+.hist-section-label svg {
+  width: 13px;
+  height: 13px;
+}
+
+.hist-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  overflow-y: auto;
+  gap: 2px;
+}
+
+.hist-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 10px;
+  transition: background 0.15s;
+}
+
+.hist-item:hover {
+  background: #f1ecff;
+}
+
+.hi-main-btn {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.hi-name {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #3d3a52;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hi-meta {
+  display: block;
+  font-size: 0.72rem;
+  color: #a09cb8;
+  margin-top: 2px;
+}
+
+.pin-btn {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #b9b3d6;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pin-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.pin-btn:hover {
+  background: #e7deff;
+  color: #7b5cff;
+}
+
+.pin-btn.pinned {
+  color: #7b5cff;
+}
+
+.pin-btn.pinned svg {
+  fill: #7b5cff;
+}
+
+.sidebar-history-empty {
+  font-size: 0.82rem;
+  color: #a09cb8;
+  text-align: center;
+  padding: 24px 8px;
 }
 
 .nav-item {
@@ -243,6 +391,17 @@ body::after {
 .sidebar.collapsed .nav-label,
 .sidebar.collapsed .nav-account-text {
   display: none;
+}
+
+.sidebar.collapsed .sidebar-scroll {
+  display: none;
+}
+
+.sidebar.collapsed .new-quiz-btn {
+  justify-content: center;
+  padding: 12px 0;
+  margin: 4px 8px 8px;
+  width: calc(100% - 16px);
 }
 
 .sidebar.collapsed .sidebar-top {
@@ -1173,8 +1332,19 @@ textarea:disabled {
     display: none;
   }
 
+  .sidebar .sidebar-scroll {
+    display: none;
+  }
+
   .sidebar .sidebar-top {
     justify-content: center;
+  }
+
+  .sidebar .new-quiz-btn {
+    justify-content: center;
+    padding: 12px 0;
+    margin: 4px 8px 8px;
+    width: calc(100% - 16px);
   }
 
   .sidebar .nav-item {
@@ -1289,6 +1459,11 @@ header h1 {
   background: #e7deff;
   color: #7b5cff;
   font-weight: 700;
+}
+
+.nav-icon-btn.active {
+  background: #e7deff;
+  color: #7b5cff;
 }
 
 /* Confetti canvas */
