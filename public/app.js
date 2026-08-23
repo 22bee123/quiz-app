@@ -7,6 +7,7 @@ let selectedFile = null;
 let supabaseClient = null;
 let currentUser = null;
 let historyEntries = [];
+let pinnedIds = new Set(JSON.parse(localStorage.getItem('pinnedIds') || '[]'));
 let authEnabled = false;
 
 const MAX_BACKS = 3;
@@ -768,10 +769,13 @@ async function loadHistory() {
   }
 }
 
+function isPinned(entry) {
+  return !!entry.pinned || pinnedIds.has(entry.id);
+}
+
 function renderSidebarHistory() {
-  const sorted = [...historyEntries].sort((a, b) => !!b.pinned - !!a.pinned);
-  const pinned = sorted.filter((e) => e.pinned);
-  const recent = sorted.filter((e) => !e.pinned);
+  const pinned = historyEntries.filter((e) => isPinned(e));
+  const recent = historyEntries.filter((e) => !isPinned(e));
 
   pinnedWrap.classList.toggle('hidden', pinned.length === 0);
   recentWrap.classList.toggle('hidden', recent.length === 0);
@@ -783,9 +787,13 @@ function renderSidebarHistory() {
   recent.forEach((entry) => recentList.appendChild(buildSidebarHistoryItem(entry)));
 }
 
+function persistPinnedIds() {
+  localStorage.setItem('pinnedIds', JSON.stringify([...pinnedIds]));
+}
+
 function buildSidebarHistoryItem(entry) {
   const date = new Date(entry.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  const scoreClass = entry.score_percent >= 75 ? 'good' : entry.score_percent >= 50 ? 'ok' : 'bad';
+  const pinned = isPinned(entry);
 
   const item = document.createElement('div');
   item.className = 'hist-item';
@@ -794,7 +802,7 @@ function buildSidebarHistoryItem(entry) {
       <span class="hi-name">${escapeHtml(entry.module_name)}</span>
       <span class="hi-meta">${entry.score_percent}% &middot; ${date}</span>
     </button>
-    <button class="pin-btn ${entry.pinned ? 'pinned' : ''}" title="${entry.pinned ? 'Unpin' : 'Pin'}">
+    <button class="pin-btn ${pinned ? 'pinned' : ''}" data-id="${entry.id}" title="${pinned ? 'Unpin' : 'Pin'}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
     </button>
   `;
@@ -804,30 +812,28 @@ function buildSidebarHistoryItem(entry) {
 }
 
 async function togglePin(entry) {
-  if (!supabaseClient || !currentUser) return;
-  const next = !entry.pinned;
-  entry.pinned = next;
+  const next = !isPinned(entry);
+
+  // Local store always works (no DB required)
+  if (next) pinnedIds.add(entry.id);
+  else pinnedIds.delete(entry.id);
+  persistPinnedIds();
   renderSidebarHistory();
+
+  // Best-effort DB sync (works once the pinned column + policy are set up)
+  if (!supabaseClient || !currentUser) return;
   try {
     const { error } = await supabaseClient
       .from('quiz_history')
       .update({ pinned: next })
       .eq('id', entry.id);
     if (error) {
-      entry.pinned = !next;
-      renderSidebarHistory();
-      console.error('Pin error:', error.message);
-      if (/pinned|does not exist|policy|permission|row-level/i.test(error.message)) {
-        showToast('Pinning needs a quick DB setup — see the SQL', 'wrong');
-      } else {
-        showToast('Could not update pin', 'wrong');
-      }
+      console.error('Pin DB sync failed (local pin kept):', error.message);
+    } else {
+      entry.pinned = next;
     }
   } catch (err) {
-    entry.pinned = !next;
-    renderSidebarHistory();
-    console.error('Pin error:', err.message);
-    showToast('Could not update pin', 'wrong');
+    console.error('Pin DB sync failed (local pin kept):', err.message);
   }
 }
 
