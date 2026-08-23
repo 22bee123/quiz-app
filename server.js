@@ -6,7 +6,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash-vision-exp';
 
 if (!process.env.DEEPSEEK_API_KEY) {
   console.error('ERROR: DEEPSEEK_API_KEY is not set. Copy .env.example to .env and add your key.');
@@ -141,7 +141,7 @@ Student's answer: ${userAnswer}
 
 Reply with ONLY valid JSON: {"verdict": "correct"|"partial"|"wrong", "feedback": "one short sentence explaining the grade"}`;
 
-    const raw = await callDeepSeek([{ role: 'user', content: prompt }], 300, 0.2);
+    const raw = await callDeepSeek([{ role: 'user', content: prompt }], 1000, 0.2);
 
     const match = raw.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('AI did not return a valid grading JSON.');
