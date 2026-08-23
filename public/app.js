@@ -371,9 +371,6 @@ async function gradeQuestion(qi, answer) {
 
       results[qi].verdict = data.verdict;
       results[qi].feedback = data.feedback;
-      if (data.verdict === 'correct') showToast('Correct!', 'correct');
-      else if (data.verdict === 'partial') showToast('Partly correct', 'partial');
-      else showToast('Not quite', 'wrong');
       updateGradingPill();
       return;
     } catch (err) {
@@ -729,7 +726,6 @@ async function loadHistory() {
     const { data, error } = await supabaseClient
       .from('quiz_history')
       .select('*')
-      .order('pinned', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(50);
     if (error) throw error;
@@ -741,8 +737,9 @@ async function loadHistory() {
 }
 
 function renderSidebarHistory() {
-  const pinned = historyEntries.filter((e) => e.pinned);
-  const recent = historyEntries.filter((e) => !e.pinned);
+  const sorted = [...historyEntries].sort((a, b) => !!b.pinned - !!a.pinned);
+  const pinned = sorted.filter((e) => e.pinned);
+  const recent = sorted.filter((e) => !e.pinned);
 
   pinnedWrap.classList.toggle('hidden', pinned.length === 0);
   recentWrap.classList.toggle('hidden', recent.length === 0);
