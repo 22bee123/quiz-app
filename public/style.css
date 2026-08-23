@@ -450,7 +450,7 @@ body::after {
   position: fixed;
   inset: 0;
   background: rgba(45, 42, 58, 0.5);
-  z-index: 1850;
+  z-index: 1700;
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.25s, visibility 0.25s;
@@ -1385,11 +1385,20 @@ textarea:disabled {
     transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
     border-right: 1px solid rgba(124, 92, 255, 0.14);
     box-shadow: 0 12px 30px rgba(45, 42, 58, 0.2);
+    z-index: 1750;
   }
 
   .sidebar.open,
   .sidebar.collapsed.open {
     transform: translateX(0);
+  }
+
+  body.sidebar-open .sidebar-open-btn {
+    display: none;
+  }
+
+  .sidebar .sidebar-toggle {
+    display: none;
   }
 
   /* sidebar is full-width overlay; always show labels here */

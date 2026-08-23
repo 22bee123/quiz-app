@@ -678,10 +678,7 @@ function wireSidebar() {
     localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
   });
 
-  sidebarOpenBtn.addEventListener('click', () => {
-    sidebar.classList.add('open');
-    sidebarBackdrop.classList.add('show');
-  });
+  sidebarOpenBtn.addEventListener('click', openMobileSidebar);
   sidebarBackdrop.addEventListener('click', closeMobileSidebar);
   sidebar.addEventListener('click', (e) => {
     if (e.target.closest('.hi-main-btn, .pin-btn')) closeMobileSidebar();
@@ -708,9 +705,16 @@ function wireSidebar() {
   });
 }
 
+function openMobileSidebar() {
+  sidebar.classList.add('open');
+  sidebarBackdrop.classList.add('show');
+  document.body.classList.add('sidebar-open');
+}
+
 function closeMobileSidebar() {
   sidebar.classList.remove('open');
   sidebarBackdrop.classList.remove('show');
+  document.body.classList.remove('sidebar-open');
 }
 
 function openSettings() {
