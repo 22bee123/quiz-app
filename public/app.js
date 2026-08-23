@@ -43,6 +43,8 @@ const resultsSaveNote = document.getElementById('results-save-note');
 
 const sidebar = document.getElementById('sidebar');
 const sidebarToggle = document.getElementById('sidebar-toggle');
+const menuBtn = document.getElementById('menu-btn');
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
 const navNew = document.getElementById('nav-new');
 const navSettings = document.getElementById('nav-settings');
 const navAccount = document.getElementById('nav-account');
@@ -676,11 +678,22 @@ function wireSidebar() {
     localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
   });
 
+  menuBtn.addEventListener('click', () => {
+    sidebar.classList.add('open');
+    sidebarBackdrop.classList.add('show');
+  });
+  sidebarBackdrop.addEventListener('click', closeSidebar);
+  sidebar.addEventListener('click', (e) => {
+    if (e.target.closest('.hi-main-btn, .pin-btn')) closeSidebar();
+  });
+
   navNew.addEventListener('click', () => {
     if (requireAuth()) resetToUpload();
+    closeSidebar();
   });
   navSettings.addEventListener('click', () => {
     if (requireAuth()) openSettings();
+    closeSidebar();
   });
 
   settingsClose.addEventListener('click', closeSettings);
@@ -693,6 +706,11 @@ function wireSidebar() {
       closeSettings();
     });
   });
+}
+
+function closeSidebar() {
+  sidebar.classList.remove('open');
+  sidebarBackdrop.classList.remove('show');
 }
 
 function openSettings() {

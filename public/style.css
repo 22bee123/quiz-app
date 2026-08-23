@@ -422,6 +422,42 @@ body::after {
   display: none;
 }
 
+/* ---------- Mobile sidebar drawer ---------- */
+.menu-btn {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 1900;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid rgba(124, 92, 255, 0.2);
+  box-shadow: 0 4px 12px rgba(93, 82, 179, 0.16);
+  color: #7b5cff;
+  font-size: 1.25rem;
+  line-height: 1;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(45, 42, 58, 0.5);
+  z-index: 1850;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s, visibility 0.25s;
+}
+
+.sidebar-backdrop.show {
+  opacity: 1;
+  visibility: visible;
+}
+
 /* ---------- Settings options ---------- */
 .settings-options {
   display: grid;
@@ -1323,42 +1359,73 @@ textarea:disabled {
 
 /* ---------- Responsive ---------- */
 @media (max-width: 768px) {
-  .sidebar {
-    width: 64px;
+  .menu-btn {
+    display: flex;
   }
 
-  .sidebar .brand-text,
-  .sidebar .nav-label,
-  .sidebar .nav-account-text {
-    display: none;
+  .sidebar,
+  .sidebar.collapsed {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: min(280px, 85vw);
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: 0 12px 30px rgba(45, 42, 58, 0.2);
   }
 
+  .sidebar.open,
+  .sidebar.collapsed.open {
+    transform: translateX(0);
+  }
+
+  /* ignore desktop icon-collapse on mobile: always show full labels */
+  .sidebar.collapsed .brand-text,
+  .sidebar.collapsed .nav-label,
+  .sidebar.collapsed .nav-account-text {
+    display: initial;
+  }
+
+  .sidebar.collapsed .sidebar-scroll,
   .sidebar .sidebar-scroll {
-    display: none;
+    display: block;
   }
 
+  .sidebar.collapsed .sidebar-top,
   .sidebar .sidebar-top {
-    justify-content: center;
+    justify-content: space-between;
   }
 
+  .sidebar.collapsed .new-quiz-btn,
   .sidebar .new-quiz-btn {
-    justify-content: center;
-    padding: 12px 0;
-    margin: 4px 8px 8px;
-    width: calc(100% - 16px);
+    justify-content: flex-start;
+    padding: 9px 12px;
+    width: calc(100% - 20px);
+    margin: 4px 10px 10px;
   }
 
+  .sidebar.collapsed .nav-item,
   .sidebar .nav-item {
-    justify-content: center;
-    padding: 11px 0;
+    justify-content: flex-start;
+    padding: 9px 10px;
   }
 
+  .sidebar.collapsed .nav-icon-btn,
   .sidebar .nav-icon-btn {
+    display: flex;
+  }
+
+  .sidebar .sidebar-toggle {
     display: none;
   }
 
   .main {
-    padding: 24px 12px 40px;
+    padding: 60px 14px 40px;
+  }
+
+  .main > .app {
+    max-width: 100%;
   }
 }
 
