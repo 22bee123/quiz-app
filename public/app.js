@@ -22,7 +22,6 @@ const quizScreen = document.getElementById('quiz-screen');
 const resultsScreen = document.getElementById('results-screen');
 
 const fileInput = document.getElementById('file-input');
-const dropZone = document.getElementById('drop-zone');
 const fileNameEl = document.getElementById('file-name');
 const uploadBtn = document.getElementById('upload-btn');
 const uploadStatus = document.getElementById('upload-status');
@@ -74,7 +73,6 @@ const settingsModal = document.getElementById('settings-modal');
 const settingsBackdrop = document.getElementById('settings-backdrop');
 const settingsClose = document.getElementById('settings-close');
 const settingsOptions = document.getElementById('settings-options');
-const flashcardCountLabel = document.getElementById('flashcard-count-label');
 
 let authMode = 'signin';
 let quizLength = parseInt(localStorage.getItem('quizLength') || '10', 10);
@@ -94,24 +92,10 @@ function setStatus(el, msg, type) {
 
 /* ---------------- Upload ---------------- */
 
-dropZone.addEventListener('click', () => fileInput.click());
+document.getElementById('action-upload').addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => {
   selectedFile = e.target.files[0] || null;
   handleFileSelect();
-});
-
-dropZone.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  dropZone.classList.add('dragging');
-});
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragging'));
-dropZone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  dropZone.classList.remove('dragging');
-  if (e.dataTransfer.files.length) {
-    selectedFile = e.dataTransfer.files[0];
-    handleFileSelect();
-  }
 });
 
 function handleFileSelect() {
@@ -127,36 +111,15 @@ function handleFileSelect() {
   setStatus(uploadStatus, '', '');
 }
 
-uploadBtn.addEventListener('click', async () => {
-  if (!selectedFile) return;
-
+async function startAnalysis(payload, moduleName) {
   if (!canGenerate()) {
-    setStatus(uploadStatus, 'No hearts left. Next heart refills in ' + heartTimerLabel() + '.', 'error');
-    return;
+    setStatus(uploadStatus, 'No hearts left. Next \u2665 in ' + heartTimerLabel() + '.', 'error');
+    return false;
   }
-
   uploadBtn.disabled = true;
-  setStatus(uploadStatus, 'Reading your PDF...', 'info');
-  savePendingDeck('generating');
-
+  setStatus(uploadStatus, 'Generating your quiz with AI...', 'info');
+  savePendingDeck('generating', moduleName);
   try {
-    const text = await extractTextFromPdf(selectedFile);
-    const hasText = text && text.replace(/\s+/g, ' ').trim().length >= 100;
-
-    let payload;
-    if (hasText) {
-      payload = { text: text.trim(), count: quizLength, mode: quizMode };
-    } else {
-      setStatus(uploadStatus, 'Scanned PDF detected — reading pages with AI vision...', 'info');
-      const images = await renderPdfImages(selectedFile);
-      if (!images.length) {
-        throw new Error('The PDF could not be read. It may be image-based or corrupted, and no pages could be extracted.');
-      }
-      payload = { images, count: quizLength, mode: quizMode };
-    }
-
-    setStatus(uploadStatus, 'Analyzing module with AI... This may take a moment.', 'info');
-
     const res = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -166,14 +129,43 @@ uploadBtn.addEventListener('click', async () => {
     if (!res.ok) {
       throw new Error(data.error || 'Analysis failed.');
     }
-
     flashcards = data.flashcards;
     results = new Array(flashcards.length).fill(null);
     gradingPromises = {};
     currentIndex = 0;
-    savePendingDeck('ready', data.flashcards);
+    savePendingDeck('ready', data.flashcards, moduleName);
     renderPendingDeck();
+    renderJumpBack();
     startQuiz();
+    return true;
+  } catch (err) {
+    setStatus(uploadStatus, err.message, 'error');
+    uploadBtn.disabled = false;
+    return false;
+  }
+}
+
+uploadBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+  uploadBtn.disabled = true;
+  setStatus(uploadStatus, 'Reading your PDF...', 'info');
+  try {
+    const text = await extractTextFromPdf(selectedFile);
+    const hasText = text && text.replace(/\s+/g, ' ').trim().length >= 100;
+    let payload;
+    if (hasText) {
+      payload = { text: text.trim(), count: quizLength, mode: quizMode };
+    } else {
+      setStatus(uploadStatus, 'Scanned PDF detected — reading pages with AI vision...', 'info');
+      const images = await renderPdfImages(selectedFile);
+      if (!images.length) {
+        throw new Error('The PDF could not be read. It may be image-based or corrupted, and no pages could be extracted.');
+      }
+      payload = { images: images, count: quizLength, mode: quizMode };
+      uploadBtn.disabled = false;
+    }
+    const done = await startAnalysis(payload, selectedFile.name.replace(/\.pdf$/i, ''));
+    if (!done && payload.images) uploadBtn.disabled = false;
   } catch (err) {
     setStatus(uploadStatus, err.message, 'error');
     uploadBtn.disabled = false;
@@ -364,18 +356,19 @@ function startQuiz() {
   attempted = [];
   renderHearts();
   setActiveNav('new');
-  deckName.textContent = selectedFile ? selectedFile.name.replace(/\.pdf$/i, '').slice(0, 40) : 'Study deck';
+  const pending = loadPendingDeck();
+  deckName.textContent = pending && pending.name ? pending.name : (selectedFile ? selectedFile.name.replace(/\.pdf$/i, '').slice(0, 40) : 'Study deck');
   renderQuestion();
 }
 
 /* ---------------- Pending deck (survives refresh / tab switch) ---------------- */
 
-function savePendingDeck(status) {
+function savePendingDeck(status, flashcardsArg, nameArg) {
   const pending = {
-    status, // 'generating' | 'ready'
-    flashcards: status === 'ready' ? flashcards : null,
+    status,
+    flashcards: status === 'ready' ? flashcardsArg : null,
     mode: quizMode,
-    name: selectedFile ? selectedFile.name.replace(/\.pdf$/i, '') : 'Study deck',
+    name: nameArg || (selectedFile ? selectedFile.name.replace(/\.pdf$/i, '') : 'Study deck'),
     savedAt: Date.now(),
   };
   localStorage.setItem('pendingDeck', JSON.stringify(pending));
@@ -926,9 +919,7 @@ function closeSettings() {
   settingsModal.classList.add('hidden');
 }
 
-function updateFlashcardCountLabel() {
-  flashcardCountLabel.textContent = quizLength;
-}
+function updateFlashcardCountLabel() {}
 
 function resetToUpload() {
   flashcards = [];
@@ -983,6 +974,7 @@ async function loadHistory() {
     if (error) throw error;
     historyEntries = data || [];
     renderSidebarHistory();
+    renderJumpBack();
   } catch (err) {
     console.error('Load history error:', err.message);
   }
@@ -1114,10 +1106,88 @@ function escapeHtml(str) {
 initSupabase();
 wireSidebar();
 wireDeck();
+wireHome();
 updateFlashcardCountLabel();
 renderHearts();
 renderPendingDeck();
+renderJumpBack();
 setInterval(renderHearts, 1000);
+
+/* ---------------- Home: action cards, study input, jump back ---------------- */
+
+function wireHome() {
+  document.getElementById('action-paste').addEventListener('click', () => {
+    document.getElementById('study-text').focus();
+  });
+  document.getElementById('action-youtube').addEventListener('click', () => {
+    document.getElementById('study-text').focus();
+    document.getElementById('study-text').placeholder = 'Paste a YouTube link...';
+  });
+  document.getElementById('study-go').addEventListener('click', submitStudyText);
+  document.getElementById('study-text').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitStudyText();
+  });
+}
+
+function submitStudyText() {
+  const val = document.getElementById('study-text').value.trim();
+  if (!val) return;
+  const name = val.length > 24 ? val.slice(0, 24) + '…' : val;
+  setStatus(uploadStatus, '', '');
+  startAnalysis({ text: val, count: quizLength, mode: quizMode }, name);
+}
+
+function renderJumpBack() {
+  const grid = document.getElementById('jump-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  const pending = loadPendingDeck();
+  if (pending && pending.status === 'ready' && pending.flashcards) {
+    grid.appendChild(buildJumpItem({
+      name: pending.name || 'Study deck',
+      meta: `${pending.flashcards.length} questions · ${pending.mode === 'choice' ? 'Multiple Choice' : 'Flashcards'}`,
+      label: 'Take',
+      onClick: startPendingDeck,
+      score: null,
+    }));
+  }
+
+  if (currentUser && historyEntries.length) {
+    historyEntries.slice(0, 6).forEach((entry) => {
+      grid.appendChild(buildJumpItem({
+        name: entry.module_name,
+        meta: `${entry.score_percent}% · ${new Date(entry.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
+        label: 'View',
+        onClick: () => viewHistory(entry),
+        score: entry.score_percent,
+      }));
+    });
+  }
+
+  if (!grid.children.length) {
+    grid.innerHTML = '<p class="jump-empty">Nothing here yet. Upload a PDF or paste some text to start!</p>';
+  }
+}
+
+function buildJumpItem({ name, meta, label, onClick, score }) {
+  const div = document.createElement('div');
+  div.className = 'jump-item';
+  const icon = score !== null
+    ? `<span class="ji-score ji-${score >= 75 ? 'good' : score >= 50 ? 'ok' : 'bad'}">${score}%</span>`
+    : `<span class="ji-score ready">READY</span>`;
+  div.innerHTML = `
+    <span class="ji-icon">&#128214;</span>
+    <span class="ji-main">
+      <span class="ji-name">${escapeHtml(name)}</span>
+      <span class="ji-meta">${escapeHtml(meta)}</span>
+    </span>
+    ${icon}
+    <button class="ji-btn">${escapeHtml(label)}</button>
+  `;
+  div.querySelector('.ji-btn').addEventListener('click', onClick);
+  return div;
+}
 
 /* ---------------- Motion: confetti, toasts, counters ---------------- */
 
