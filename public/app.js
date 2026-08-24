@@ -1,7 +1,6 @@
 let flashcards = [];
 let currentIndex = 0;
 let endless = false;
-let lives = 3;
 let attempted = [];
 let results = [];
 let gradingPromises = {};
@@ -30,7 +29,6 @@ const uploadStatus = document.getElementById('upload-status');
 
 const deckName = document.getElementById('deck-name');
 const deckCount = document.getElementById('deck-count');
-const deckLives = document.getElementById('deck-lives');
 const endlessToggle = document.getElementById('endless-toggle');
 const deckProgressFill = document.getElementById('deck-progress-fill');
 const deckCard = document.getElementById('deck-card');
@@ -131,6 +129,12 @@ function handleFileSelect() {
 
 uploadBtn.addEventListener('click', async () => {
   if (!selectedFile) return;
+
+  if (!canGenerate()) {
+    setStatus(uploadStatus, 'No hearts left. Next heart refills in ' + heartTimerLabel() + '.', 'error');
+    return;
+  }
+
   uploadBtn.disabled = true;
   setStatus(uploadStatus, 'Reading your PDF...', 'info');
 
@@ -162,6 +166,7 @@ uploadBtn.addEventListener('click', async () => {
       throw new Error(data.error || 'Analysis failed.');
     }
 
+    consumeHeart();
     flashcards = data.flashcards;
     results = new Array(flashcards.length).fill(null);
     gradingPromises = {};
@@ -227,7 +232,7 @@ function wireDeck() {
   });
 }
 
-/* ---------------- Sound + lives ---------------- */
+/* ---------------- Sound ---------------- */
 
 let audioCtx = null;
 function beep(freqs, gap, dur, type) {
@@ -256,33 +261,77 @@ function playWrong() {
   beep([220, 174.61], 0.18, 0.16, 'square');
 }
 
-function renderLives() {
-  deckLives.innerHTML = '';
-  for (let i = 0; i < 3; i++) {
-    const s = document.createElement('span');
-    s.className = 'life-heart' + (i < lives ? '' : ' lost');
-    s.textContent = '\u2665';
-    deckLives.appendChild(s);
-  }
+/* ---------------- Hearts (stamina) ---------------- */
+
+const MAX_HEARTS = 5;
+const REFILL_MS = 10 * 60 * 1000;
+let hearts = parseInt(localStorage.getItem('hearts') || String(MAX_HEARTS), 10);
+let heartRefillAt = parseInt(localStorage.getItem('heartRefillAt') || '0', 10);
+
+function saveHearts() {
+  localStorage.setItem('hearts', String(hearts));
+  localStorage.setItem('heartRefillAt', String(heartRefillAt || 0));
 }
 
-function loseLife() {
-  lives--;
-  renderLives();
-  if (lives <= 0) {
-    gameOver();
-    return true;
+function syncHearts() {
+  if (hearts > MAX_HEARTS) hearts = MAX_HEARTS;
+  if (hearts >= MAX_HEARTS) {
+    heartRefillAt = 0;
+    saveHearts();
+    return;
   }
-  return false;
-}
-
-function gameOver() {
-  for (let i = 0; i < flashcards.length; i++) {
-    if (!results[i]) {
-      results[i] = { question: flashcards[i].question, type: flashcards[i].type, options: flashcards[i].options, correctAnswer: flashcards[i].answer, userAnswer: '—', verdict: 'wrong', feedback: 'Out of lives' };
+  const now = Date.now();
+  if (!heartRefillAt) {
+    heartRefillAt = now + REFILL_MS;
+    saveHearts();
+    return;
+  }
+  if (now >= heartRefillAt) {
+    const gained = Math.floor((now - heartRefillAt) / REFILL_MS) + 1;
+    hearts = Math.min(MAX_HEARTS, hearts + gained);
+    if (hearts >= MAX_HEARTS) {
+      heartRefillAt = 0;
+    } else {
+      heartRefillAt += gained * REFILL_MS;
     }
+    saveHearts();
   }
-  finishQuiz();
+}
+
+function canGenerate() {
+  syncHearts();
+  return hearts >= 1;
+}
+
+function consumeHeart() {
+  syncHearts();
+  if (hearts <= 0) return false;
+  hearts--;
+  if (!heartRefillAt || heartRefillAt < Date.now()) heartRefillAt = Date.now() + REFILL_MS;
+  saveHearts();
+  renderHearts();
+  return true;
+}
+
+function heartTimerLabel() {
+  if (hearts >= MAX_HEARTS) return '';
+  const ms = Math.max(0, (heartRefillAt || Date.now()) - Date.now());
+  const total = Math.ceil(ms / 60000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function renderHearts() {
+  syncHearts();
+  const el = document.getElementById('hearts-display');
+  if (!el) return;
+  let heartsHtml = '';
+  for (let i = 0; i < MAX_HEARTS; i++) {
+    heartsHtml += `<span class="life-heart${i < hearts ? '' : ' lost'}">\u2665</span>`;
+  }
+  const timer = hearts < MAX_HEARTS ? `<span class="hearts-timer">next \u2665 in ${heartTimerLabel()}</span>` : '';
+  el.innerHTML = `<span class="hearts-icons">${heartsHtml}</span><span class="hearts-count">${hearts}/${MAX_HEARTS}</span>${timer}`;
 }
 
 function startQuiz() {
@@ -290,9 +339,7 @@ function startQuiz() {
   quizScreen.classList.remove('hidden');
   endless = false;
   endlessToggle.classList.remove('active');
-  lives = 3;
   attempted = [];
-  renderLives();
   setActiveNav('new');
   deckName.textContent = selectedFile ? selectedFile.name.replace(/\.pdf$/i, '').slice(0, 40) : 'Study deck';
   renderQuestion();
@@ -406,10 +453,8 @@ function chooseAnswer(btn) {
     // only the correct option is left untried -> auto-reveal
     revealCorrectChoice();
   } else {
-    const over = loseLife();
-    if (over) return;
     deckResult.classList.remove('hidden');
-    deckResult.textContent = `Not quite. ${lives} ${lives === 1 ? 'life' : 'lives'} left. Try another.`;
+    deckResult.textContent = 'Not quite. Try another option.';
     deckResult.className = 'deck-result wrong';
   }
 }
@@ -438,11 +483,6 @@ function selfMark(verdict) {
   deckResult.className = 'deck-result ' + verdict;
   markAnswered(currentIndex, verdict, verdict === 'correct' ? 'Knew it' : 'Missed it', item.answer);
   deckAnswerActions.classList.add('hidden');
-
-  if (verdict === 'wrong') {
-    const over = loseLife();
-    if (over) return;
-  }
   deckNext.disabled = false;
 }
 
@@ -891,10 +931,32 @@ function buildSidebarHistoryItem(entry) {
     <button class="pin-btn ${pinned ? 'pinned' : ''}" data-id="${entry.id}" title="${pinned ? 'Unpin' : 'Pin'}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
     </button>
+    <button class="del-btn" data-id="${entry.id}" title="Delete">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    </button>
   `;
   item.querySelector('.hi-main-btn').addEventListener('click', () => viewHistory(entry));
   item.querySelector('.pin-btn').addEventListener('click', () => togglePin(entry));
+  item.querySelector('.del-btn').addEventListener('click', () => deleteHistory(entry));
   return item;
+}
+
+async function deleteHistory(entry) {
+  if (!window.confirm('Delete this quiz from your history?')) return;
+  historyEntries = historyEntries.filter((e) => e.id !== entry.id);
+  pinnedIds.delete(entry.id);
+  persistPinnedIds();
+  renderSidebarHistory();
+  try {
+    const { error } = await supabaseClient.from('quiz_history').delete().eq('id', entry.id);
+    if (error) {
+      if (!/policy|permission|row-level|does not exist/i.test(error.message)) {
+        console.warn('Delete failed:', error.message);
+      }
+    }
+  } catch (err) {
+    console.warn('Delete failed:', err.message);
+  }
 }
 
 async function togglePin(entry) {
@@ -960,6 +1022,8 @@ initSupabase();
 wireSidebar();
 wireDeck();
 updateFlashcardCountLabel();
+renderHearts();
+setInterval(renderHearts, 15000);
 
 /* ---------------- Motion: confetti, toasts, counters ---------------- */
 
