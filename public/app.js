@@ -1,6 +1,8 @@
 let flashcards = [];
 let currentIndex = 0;
 let endless = false;
+let lives = 3;
+let attempted = [];
 let results = [];
 let gradingPromises = {};
 let deckCards = [];
@@ -28,6 +30,7 @@ const uploadStatus = document.getElementById('upload-status');
 
 const deckName = document.getElementById('deck-name');
 const deckCount = document.getElementById('deck-count');
+const deckLives = document.getElementById('deck-lives');
 const endlessToggle = document.getElementById('endless-toggle');
 const deckProgressFill = document.getElementById('deck-progress-fill');
 const deckCard = document.getElementById('deck-card');
@@ -224,11 +227,72 @@ function wireDeck() {
   });
 }
 
+/* ---------------- Sound + lives ---------------- */
+
+let audioCtx = null;
+function beep(freqs, gap, dur, type) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    freqs.forEach((f, i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = type || 'sine';
+      o.frequency.value = f;
+      o.connect(g);
+      g.connect(audioCtx.destination);
+      const t = audioCtx.currentTime + i * gap;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.22, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.start(t);
+      o.stop(t + dur + 0.02);
+    });
+  } catch (e) {}
+}
+function playCorrect() {
+  beep([523.25, 659.25, 783.99], 0.09, 0.14, 'sine');
+}
+function playWrong() {
+  beep([220, 174.61], 0.18, 0.16, 'square');
+}
+
+function renderLives() {
+  deckLives.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const s = document.createElement('span');
+    s.className = 'life-heart' + (i < lives ? '' : ' lost');
+    s.textContent = '\u2665';
+    deckLives.appendChild(s);
+  }
+}
+
+function loseLife() {
+  lives--;
+  renderLives();
+  if (lives <= 0) {
+    gameOver();
+    return true;
+  }
+  return false;
+}
+
+function gameOver() {
+  for (let i = 0; i < flashcards.length; i++) {
+    if (!results[i]) {
+      results[i] = { question: flashcards[i].question, type: flashcards[i].type, options: flashcards[i].options, correctAnswer: flashcards[i].answer, userAnswer: '—', verdict: 'wrong', feedback: 'Out of lives' };
+    }
+  }
+  finishQuiz();
+}
+
 function startQuiz() {
   uploadScreen.classList.add('hidden');
   quizScreen.classList.remove('hidden');
   endless = false;
   endlessToggle.classList.remove('active');
+  lives = 3;
+  attempted = [];
+  renderLives();
   setActiveNav('new');
   deckName.textContent = selectedFile ? selectedFile.name.replace(/\.pdf$/i, '').slice(0, 40) : 'Study deck';
   renderQuestion();
@@ -253,6 +317,7 @@ function markAnswered(index, verdict, userAnswer, correctAnswer, options) {
 function renderQuestion() {
   const item = currentItem();
   const isChoice = item.type === 'choice';
+  attempted = [];
 
   deckBadge.textContent = isChoice ? 'MULTIPLE CHOICE' : 'FLASHCARD';
   deckBadge.classList.toggle('choice', isChoice);
@@ -265,6 +330,7 @@ function renderQuestion() {
   deckAnswerActions.classList.add('hidden');
   deckResult.classList.add('hidden');
   deckResult.textContent = '';
+  deckNext.disabled = true;
 
   if (isChoice) {
     deckChoices.classList.remove('hidden');
@@ -293,16 +359,59 @@ function renderQuestion() {
   deckNext.textContent = last && !endless ? 'Finish' : 'Next ›';
 }
 
+function revealCorrectChoice() {
+  const item = currentItem();
+  deckChoices.querySelectorAll('.deck-choice').forEach((b) => {
+    if (item.options[Number(b.dataset.oi)] === item.answer) {
+      b.classList.add('correct');
+      b.classList.remove('selected', 'wrong');
+    }
+    b.disabled = true;
+  });
+  deckResult.classList.remove('hidden');
+  deckResult.textContent = `That was the last option. The correct answer is: ${item.answer}`;
+  deckResult.className = 'deck-result wrong';
+  markAnswered(currentIndex, 'wrong', 'Out of options', item.answer, item.options);
+  deckNext.disabled = false;
+}
+
 function chooseAnswer(btn) {
   const item = currentItem();
-  const isCorrect = item.options[Number(btn.dataset.oi)] === item.answer;
-  deckChoices.querySelectorAll('.deck-choice').forEach((b) => b.classList.remove('selected', 'correct', 'wrong'));
-  btn.classList.add('selected', isCorrect ? 'correct' : 'wrong');
-  deckResult.classList.remove('hidden');
-  deckResult.textContent = isCorrect ? 'Correct!' : `The correct answer is: ${item.answer}`;
-  deckResult.className = 'deck-result ' + (isCorrect ? 'correct' : 'wrong');
-  markAnswered(currentIndex, isCorrect ? 'correct' : 'wrong', item.options[Number(btn.dataset.oi)], item.answer, item.options);
-  deckNext.disabled = false;
+  const oi = Number(btn.dataset.oi);
+  const isCorrect = item.options[oi] === item.answer;
+
+  if (isCorrect) {
+    playCorrect();
+    deckChoices.querySelectorAll('.deck-choice').forEach((b) => (b.disabled = true));
+    btn.classList.add('selected', 'correct');
+    deckResult.classList.remove('hidden');
+    deckResult.textContent = 'Correct!';
+    deckResult.className = 'deck-result correct';
+    markAnswered(currentIndex, 'correct', item.options[oi], item.answer, item.options);
+    deckNext.disabled = false;
+    return;
+  }
+
+  // wrong pick
+  playWrong();
+  attempted.push(oi);
+  btn.classList.add('wrong', 'eliminated');
+  btn.disabled = true;
+
+  const remaining = item.options
+    .map((_, i) => i)
+    .filter((i) => !attempted.includes(i) && item.options[i] !== item.answer);
+
+  if (remaining.length === 0) {
+    // only the correct option is left untried -> auto-reveal
+    revealCorrectChoice();
+  } else {
+    const over = loseLife();
+    if (over) return;
+    deckResult.classList.remove('hidden');
+    deckResult.textContent = `Not quite. ${lives} ${lives === 1 ? 'life' : 'lives'} left. Try another.`;
+    deckResult.className = 'deck-result wrong';
+  }
 }
 
 function flipCard() {
@@ -322,11 +431,18 @@ function flipCard() {
 
 function selfMark(verdict) {
   const item = currentItem();
+  if (verdict === 'correct') playCorrect();
+  else playWrong();
   deckResult.classList.remove('hidden');
   deckResult.textContent = verdict === 'correct' ? 'Nice! You knew it.' : 'You missed it.';
   deckResult.className = 'deck-result ' + verdict;
   markAnswered(currentIndex, verdict, verdict === 'correct' ? 'Knew it' : 'Missed it', item.answer);
   deckAnswerActions.classList.add('hidden');
+
+  if (verdict === 'wrong') {
+    const over = loseLife();
+    if (over) return;
+  }
   deckNext.disabled = false;
 }
 

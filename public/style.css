@@ -788,6 +788,28 @@ header p {
   white-space: nowrap;
 }
 
+.deck-lives {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid rgba(239, 68, 68, 0.18);
+}
+
+.life-heart {
+  color: #ef4444;
+  font-size: 1rem;
+  line-height: 1;
+  transition: color 0.3s, transform 0.3s;
+}
+
+.life-heart.lost {
+  color: #e6e0ea;
+  transform: scale(0.9);
+}
+
 .endless-btn {
   width: 34px;
   height: 34px;
@@ -997,6 +1019,12 @@ header p {
 .deck-choice.wrong .dc-letter {
   background: #dc2626;
   color: #fff;
+}
+
+.deck-choice.eliminated {
+  opacity: 0.55;
+  text-decoration: line-through;
+  pointer-events: none;
 }
 
 .deck-result {
