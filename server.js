@@ -169,6 +169,70 @@ ${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 300
   }
 });
 
+function htmlToText(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractTitle(html) {
+  const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return m ? m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) : null;
+}
+
+app.post('/api/scrape', async (req, res) => {
+  try {
+    const rawUrl = (req.body.url || '').trim();
+    if (!/^https?:\/\//i.test(rawUrl)) {
+      return res.status(400).json({ error: 'Enter a valid http(s) URL.' });
+    }
+    let url;
+    try {
+      url = new URL(rawUrl);
+    } catch (e) {
+      return res.status(400).json({ error: 'Invalid URL.' });
+    }
+
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; QuizApp/1.0; +https://quizapp)',
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (!response.ok) {
+      return res.status(400).json({ error: `Could not fetch that page (status ${response.status}).` });
+    }
+    const contentType = response.headers.get('content-type') || '';
+    if (!/text\/html|text\/plain/i.test(contentType)) {
+      return res.status(400).json({ error: 'That link is not a readable web page.' });
+    }
+
+    const htmlText = await response.text();
+    const text = htmlToText(htmlText);
+    if (!text || text.length < 100) {
+      return res.status(400).json({ error: 'No readable text found on that page. It may be a video or image-only page.' });
+    }
+    res.json({ text, title: extractTitle(htmlText) || url.hostname });
+  } catch (err) {
+    console.error('Scrape error:', err.message);
+    return res.status(500).json({ error: 'Failed to scrape that page. Please try another link.' });
+  }
+});
+
 app.post('/api/grade', async (req, res) => {
   try {
     const { question, correctAnswer, userAnswer } = req.body;

@@ -101,23 +101,40 @@ fileInput.addEventListener('change', (e) => {
 function handleFileSelect() {
   if (!selectedFile) return;
   if (!selectedFile.name.toLowerCase().endsWith('.pdf')) {
+    revealUploadBar();
     setStatus(uploadStatus, 'Please choose a PDF file.', 'error');
     uploadBtn.disabled = true;
     fileNameEl.textContent = '';
     return;
   }
+  revealUploadBar();
   fileNameEl.textContent = selectedFile.name;
   uploadBtn.disabled = false;
-  setStatus(uploadStatus, '', '');
+  setStatus(uploadStatus, attachedFileName(selectedFile.name))
+}
+
+function attachedFileName(name) {
+  return name.length > 40 ? name.slice(0, 40) + '…' : name;
+}
+
+function revealUploadBar() {
+  const bar = document.getElementById('upload-bar');
+  if (bar) bar.classList.remove('hidden');
+}
+
+function setGeneratingStatus(msg) {
+  setStatus(uploadStatus, msg, 'loading');
 }
 
 async function startAnalysis(payload, moduleName) {
   if (!canGenerate()) {
+    revealUploadBar();
     setStatus(uploadStatus, 'No hearts left. Next \u2665 in ' + heartTimerLabel() + '.', 'error');
     return false;
   }
+  revealUploadBar();
   uploadBtn.disabled = true;
-  setStatus(uploadStatus, 'Generating your quiz with AI...', 'info');
+  setGeneratingStatus('Generating your quiz with AI\u2026');
   savePendingDeck('generating', moduleName);
   try {
     const res = await fetch('/api/analyze', {
@@ -139,6 +156,7 @@ async function startAnalysis(payload, moduleName) {
     startQuiz();
     return true;
   } catch (err) {
+    uploadBtn.disabled = false;
     setStatus(uploadStatus, err.message, 'error');
     uploadBtn.disabled = false;
     return false;
@@ -1116,15 +1134,17 @@ setInterval(renderHearts, 1000);
 /* ---------------- Home: action cards, study input, jump back ---------------- */
 
 function wireHome() {
+  const studyInput = document.getElementById('study-text');
   document.getElementById('action-paste').addEventListener('click', () => {
-    document.getElementById('study-text').focus();
+    studyInput.placeholder = 'Paste any text or a link...';
+    studyInput.focus();
   });
   document.getElementById('action-youtube').addEventListener('click', () => {
-    document.getElementById('study-text').focus();
-    document.getElementById('study-text').placeholder = 'Paste a YouTube link...';
+    studyInput.placeholder = 'Paste a YouTube or article link...';
+    studyInput.focus();
   });
   document.getElementById('study-go').addEventListener('click', submitStudyText);
-  document.getElementById('study-text').addEventListener('keydown', (e) => {
+  studyInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') submitStudyText();
   });
 }
@@ -1132,9 +1152,35 @@ function wireHome() {
 function submitStudyText() {
   const val = document.getElementById('study-text').value.trim();
   if (!val) return;
+  if (/^https?:\/\//i.test(val)) {
+    handleUrl(val);
+    return;
+  }
   const name = val.length > 24 ? val.slice(0, 24) + '…' : val;
-  setStatus(uploadStatus, '', '');
   startAnalysis({ text: val, count: quizLength, mode: quizMode }, name);
+}
+
+async function handleUrl(url) {
+  revealUploadBar();
+  setGeneratingStatus('Fetching that page and extracting its text\u2026');
+  try {
+    const res = await fetch('/api/scrape', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      uploadBtn.disabled = false;
+      setStatus(uploadStatus, data.error || 'Could not scrape that page.', 'error');
+      return;
+    }
+    const name = data.title || url;
+    await startAnalysis({ text: data.text, count: quizLength, mode: quizMode }, name);
+  } catch (err) {
+    uploadBtn.disabled = false;
+    setStatus(uploadStatus, 'Failed to fetch that page. Check the link and try again.', 'error');
+  }
 }
 
 function renderJumpBack() {
