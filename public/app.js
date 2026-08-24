@@ -1,5 +1,6 @@
 let flashcards = [];
 let currentIndex = 0;
+let endless = false;
 let results = [];
 let gradingPromises = {};
 let deckCards = [];
@@ -25,9 +26,20 @@ const fileNameEl = document.getElementById('file-name');
 const uploadBtn = document.getElementById('upload-btn');
 const uploadStatus = document.getElementById('upload-status');
 
-const deck = document.getElementById('deck');
-const gradingPill = document.getElementById('grading-pill');
-const gradingPillText = document.getElementById('grading-pill-text');
+const deckName = document.getElementById('deck-name');
+const deckCount = document.getElementById('deck-count');
+const endlessToggle = document.getElementById('endless-toggle');
+const deckProgressFill = document.getElementById('deck-progress-fill');
+const deckCard = document.getElementById('deck-card');
+const deckBadge = document.getElementById('deck-badge');
+const deckQuestion = document.getElementById('deck-question');
+const deckAnswer = document.getElementById('deck-answer');
+const deckAnswerActions = document.getElementById('deck-answer-actions');
+const deckChoices = document.getElementById('deck-choices');
+const deckResult = document.getElementById('deck-result');
+const deckPrev = document.getElementById('deck-prev');
+const deckNext = document.getElementById('deck-next');
+const deckFlip = document.getElementById('deck-flip');
 
 const authScreen = document.getElementById('auth-screen');
 const gateTabSignin = document.getElementById('gate-tab-signin');
@@ -196,260 +208,176 @@ async function renderPdfImages(file, maxPages = 8) {
   return images;
 }
 
-/* ---------------- Deck ---------------- */
+/* ---------------- Deck view ---------------- */
+
+function wireDeck() {
+  deckFlip.addEventListener('click', flipCard);
+  document.getElementById('self-yes').addEventListener('click', () => selfMark('correct'));
+  document.getElementById('self-no').addEventListener('click', () => selfMark('wrong'));
+  deckPrev.addEventListener('click', goPrev);
+  deckNext.addEventListener('click', goNext);
+  endlessToggle.addEventListener('click', () => {
+    endless = !endless;
+    endlessToggle.classList.toggle('active', endless);
+    const last = currentIndex === flashcards.length - 1;
+    deckNext.innerHTML = last && !endless ? 'Finish' : 'Next &#8250;';
+  });
+}
 
 function startQuiz() {
   uploadScreen.classList.add('hidden');
   quizScreen.classList.remove('hidden');
-  hideGradingPill();
+  endless = false;
+  endlessToggle.classList.remove('active');
   setActiveNav('new');
-  initDeck();
+  deckName.textContent = selectedFile ? selectedFile.name.replace(/\.pdf$/i, '').slice(0, 40) : 'Study deck';
+  renderQuestion();
 }
 
-function initDeck() {
-  deck.innerHTML = '';
-  deckCards = [];
-  const card = buildCard(0);
-  deckCards.push(card);
-  deck.appendChild(card);
-  card.classList.add('is-front', 'card-enter');
-  deck.style.height = card.offsetHeight + 'px';
-  enableFront();
+function currentItem() {
+  return flashcards[currentIndex];
 }
 
-function buildCard(qi) {
-  const f = flashcards[qi];
-  const card = document.createElement('div');
-  card.className = 'deck-card card is-front';
-  card.dataset.qindex = qi;
-
-  const isChoice = f.type === 'choice';
-  const answerArea = isChoice
-    ? `<div class="choice-options" data-q="${qi}">
-        ${f.options.map((_, oi) => `<button class="choice-option" data-oi="${oi}">${escapeHtml(f.options[oi])}</button>`).join('')}
-      </div>`
-    : `<div class="answer-label">Your answer</div>
-       <textarea rows="4" placeholder="Type your answer here..." spellcheck="true"></textarea>`;
-
-  card.innerHTML = `
-    <div class="quiz-top">
-      <span class="q-chip">Question ${qi + 1} of ${flashcards.length}</span>
-      <span class="progress-bar"><span class="progress-fill"></span></span>
-    </div>
-    <div class="q-number">${String(qi + 1).padStart(2, '0')}</div>
-    <h2 class="question-text"></h2>
-    ${answerArea}
-    <div class="answer-status"></div>
-    <button class="btn btn-primary">
-      <span class="btn-label">Next Question</span>
-      <span class="btn-arrow">&#8594;</span>
-    </button>
-    <div class="dots"></div>
-  `;
-
-  card.querySelector('.question-text').textContent = f.question;
-
-  const dotsEl = card.querySelector('.dots');
-  flashcards.forEach(() => {
-    const dot = document.createElement('span');
-    dot.className = 'dot';
-    dotsEl.appendChild(dot);
-  });
-
-  card.querySelector('.btn').addEventListener('click', () => submitFront(card));
-
-  if (isChoice) {
-    card.querySelectorAll('.choice-option').forEach((opt) => {
-      opt.addEventListener('click', () => {
-        card.querySelectorAll('.choice-option').forEach((o) => o.classList.remove('selected'));
-        opt.classList.add('selected');
-        card.dataset.selected = opt.dataset.oi;
-      });
-    });
-  } else {
-    card.querySelector('textarea').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-        e.preventDefault();
-        submitFront(card);
-      }
-    });
-  }
-
-  return card;
+function markAnswered(index, verdict, userAnswer, correctAnswer, options) {
+  results[index] = {
+    question: flashcards[index].question,
+    type: flashcards[index].type,
+    options,
+    correctAnswer,
+    userAnswer,
+    verdict,
+    feedback: '',
+  };
 }
 
-function enableFront() {
-  const front = deckCards[0];
-  if (!front) return;
-  const qi = currentIndex;
-  const card = flashcards[qi];
-  const isChoice = card && card.type === 'choice';
-
-  front.querySelectorAll('.choice-option').forEach((o) => o.classList.remove('selected'));
-  front.dataset.selected = '';
-  const textarea = front.querySelector('textarea');
-  if (textarea) textarea.disabled = false;
-  front.querySelector('.btn').disabled = false;
-  front.querySelector('.q-chip').textContent = `Question ${qi + 1} of ${flashcards.length}`;
-  front.querySelector('.q-number').textContent = String(qi + 1).padStart(2, '0');
-  front.querySelector('.progress-fill').style.width = `${(qi / flashcards.length) * 100}%`;
-  front.querySelectorAll('.dot').forEach((dot, i) => dot.classList.toggle('active', i === qi));
-
-  const label = front.querySelector('.btn-label');
-  label.textContent = qi === flashcards.length - 1 ? 'Finish Quiz' : 'Next Question';
-
-  const statusEl = front.querySelector('.answer-status');
-  statusEl.textContent = '';
-  statusEl.className = 'answer-status';
-
-  if (textarea) textarea.focus();
-}
-
-function advance() {
-  const front = deckCards[0];
-  if (!front) return;
-
-  const ta = front.querySelector('textarea');
-  if (ta) ta.disabled = true;
-  front.querySelector('.btn').disabled = true;
-  front.classList.add('card-leaving');
-
-  setTimeout(() => {
-    const nextIdx = currentIndex + 1;
-    if (nextIdx >= flashcards.length) return;
-    currentIndex = nextIdx;
-
-    const newCard = buildCard(currentIndex);
-    newCard.classList.add('card-enter');
-    deck.innerHTML = '';
-    deckCards = [newCard];
-    deck.appendChild(newCard);
-    deck.style.height = newCard.offsetHeight + 'px';
-    enableFront();
-  }, 240);
-}
-
-/* ---------------- Answer submission + background grading ---------------- */
-
-function submitFront(card) {
-  const qi = currentIndex;
-  const item = flashcards[qi];
-  const statusEl = card.querySelector('.answer-status');
+function renderQuestion() {
+  const item = currentItem();
   const isChoice = item.type === 'choice';
 
-  let userAnswer;
-  let verdict;
-  let feedback = '';
+  deckBadge.textContent = isChoice ? 'MULTIPLE CHOICE' : 'FLASHCARD';
+  deckBadge.classList.toggle('choice', isChoice);
+  deckQuestion.textContent = item.question;
+  deckCount.textContent = `${currentIndex + 1} of ${flashcards.length} cards`;
+  deckProgressFill.style.width = `${(currentIndex / flashcards.length) * 100}%`;
+
+  deckAnswer.classList.add('hidden');
+  deckAnswer.textContent = '';
+  deckAnswerActions.classList.add('hidden');
+  deckResult.classList.add('hidden');
+  deckResult.textContent = '';
 
   if (isChoice) {
-    const selected = card.dataset.selected;
-    if (selected === undefined || selected === '') {
-      statusEl.textContent = 'Please choose an answer.';
-      statusEl.className = 'answer-status error';
-      return;
-    }
-    userAnswer = item.options[Number(selected)];
-    verdict = userAnswer === item.answer ? 'correct' : 'wrong';
-    feedback = verdict === 'correct' ? 'Correct!' : `The correct answer is: ${item.answer}`;
+    deckChoices.classList.remove('hidden');
+    deckChoices.innerHTML = '';
+    const letters = ['A', 'B', 'C', 'D'];
+    item.options.forEach((opt, oi) => {
+      const b = document.createElement('button');
+      b.className = 'deck-choice';
+      b.dataset.oi = oi;
+      b.innerHTML = `<span class="dc-letter">${letters[oi]}</span><span class="dc-text">${escapeHtml(opt)}</span>`;
+      b.addEventListener('click', () => chooseAnswer(b));
+      deckChoices.appendChild(b);
+    });
+    deckFlip.disabled = true;
+    deckFlip.classList.add('hidden');
   } else {
-    const textarea = card.querySelector('textarea');
-    const answer = textarea.value.trim();
-    if (!answer) {
-      statusEl.textContent = 'Please type an answer first.';
-      statusEl.className = 'answer-status error';
-      return;
-    }
-    userAnswer = answer;
+    deckChoices.classList.add('hidden');
+    deckChoices.innerHTML = '';
+    deckFlip.disabled = false;
+    deckFlip.classList.remove('hidden');
+    deckFlip.textContent = 'Flip card';
   }
 
-  results[qi] = {
-    question: item.question,
-    type: item.type,
-    options: isChoice ? item.options : undefined,
-    correctAnswer: isChoice ? item.answer : item.answer,
-    userAnswer,
-    verdict: verdict || null,
-    feedback,
-  };
+  deckPrev.disabled = currentIndex === 0;
+  const last = currentIndex === flashcards.length - 1;
+  deckNext.textContent = last && !endless ? 'Finish' : 'Next ›';
+}
 
-  if (!isChoice) {
-    gradingPromises[qi] = gradeQuestion(qi, userAnswer);
+function chooseAnswer(btn) {
+  const item = currentItem();
+  const isCorrect = item.options[Number(btn.dataset.oi)] === item.answer;
+  deckChoices.querySelectorAll('.deck-choice').forEach((b) => b.classList.remove('selected', 'correct', 'wrong'));
+  btn.classList.add('selected', isCorrect ? 'correct' : 'wrong');
+  deckResult.classList.remove('hidden');
+  deckResult.textContent = isCorrect ? 'Correct!' : `The correct answer is: ${item.answer}`;
+  deckResult.className = 'deck-result ' + (isCorrect ? 'correct' : 'wrong');
+  markAnswered(currentIndex, isCorrect ? 'correct' : 'wrong', item.options[Number(btn.dataset.oi)], item.answer, item.options);
+  deckNext.disabled = false;
+}
+
+function flipCard() {
+  const item = currentItem();
+  if (item.type === 'choice') return;
+  if (deckAnswer.classList.contains('hidden')) {
+    deckAnswer.classList.remove('hidden');
+    deckAnswer.textContent = item.answer;
+    deckFlip.textContent = 'Show question';
+    deckAnswerActions.classList.remove('hidden');
   } else {
-    results[qi].verdict = verdict;
-    results[qi].feedback = feedback;
+    deckAnswer.classList.add('hidden');
+    deckFlip.textContent = 'Flip card';
+    deckAnswerActions.classList.add('hidden');
   }
-  updateGradingPill();
+}
 
-  if (qi === flashcards.length - 1) {
+function selfMark(verdict) {
+  const item = currentItem();
+  deckResult.classList.remove('hidden');
+  deckResult.textContent = verdict === 'correct' ? 'Nice! You knew it.' : 'You missed it.';
+  deckResult.className = 'deck-result ' + verdict;
+  markAnswered(currentIndex, verdict, verdict === 'correct' ? 'Knew it' : 'Missed it', item.answer);
+  deckAnswerActions.classList.add('hidden');
+  deckNext.disabled = false;
+}
+
+function goNext() {
+  const done = !!results[currentIndex];
+  if (!done) {
+    deckResult.classList.remove('hidden');
+    deckResult.textContent = currentItem().type === 'choice' ? 'Choose an answer first.' : 'Flip the card to check the answer.';
+    deckResult.className = 'deck-result wrong';
+    return;
+  }
+
+  const nextIdx = currentIndex + 1;
+  if (nextIdx < flashcards.length) {
+    currentIndex = nextIdx;
+    deckCard.classList.remove('card-enter');
+    void deckCard.offsetWidth;
+    deckCard.classList.add('card-enter');
+    renderQuestion();
+  } else if (endless) {
+    const unassessed = results.some((r) => !r);
+    if (unassessed) {
+      currentIndex = 0;
+      deckCard.classList.remove('card-enter');
+      void deckCard.offsetWidth;
+      deckCard.classList.add('card-enter');
+      renderQuestion();
+    } else {
+      finishQuiz();
+    }
+  } else {
     finishQuiz();
-    return;
-  }
-  advance();
-}
-
-async function gradeQuestion(qi, answer) {
-  const payload = {
-    question: flashcards[qi].question,
-    correctAnswer: flashcards[qi].answer,
-    userAnswer: answer,
-  };
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const res = await fetch('/api/grade', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Grading failed.');
-
-      results[qi].verdict = data.verdict;
-      results[qi].feedback = data.feedback;
-      updateGradingPill();
-      return;
-    } catch (err) {
-      if (attempt === 2) {
-        results[qi].verdict = 'ungraded';
-        results[qi].feedback = 'Grading failed. Check your connection and try again.';
-        updateGradingPill();
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
-    }
   }
 }
 
-function updateGradingPill() {
-  const pending = results.filter((r) => r && r.verdict === null);
-  if (pending.length === 0) {
-    hideGradingPill();
-    return;
-  }
-  const pendingIndex = results.findIndex((r) => r && r.verdict === null);
-  gradingPillText.textContent = `Grading answer ${pendingIndex + 1} of ${flashcards.length}…`;
-  gradingPill.classList.add('show');
+function goPrev() {
+  if (currentIndex === 0) return;
+  currentIndex--;
+  deckCard.classList.remove('card-enter');
+  void deckCard.offsetWidth;
+  deckCard.classList.add('card-enter');
+  renderQuestion();
 }
 
-function hideGradingPill() {
-  gradingPill.classList.remove('show');
+function resetDeckState() {
+  results = new Array(flashcards.length).fill(null);
 }
 
 function finishQuiz() {
-  const front = deckCards[0];
-  const btn = front.querySelector('.btn');
-  const ta = front.querySelector('textarea');
-  if (btn) btn.disabled = true;
-  if (ta) ta.disabled = true;
-  front.querySelectorAll('.choice-option').forEach((o) => o.classList.add('disabled'));
-
-  gradingPillText.textContent = 'Finishing up…';
-  gradingPill.classList.add('show');
-
-  Promise.all(Object.values(gradingPromises)).then(() => {
-    updateGradingPill();
-    showResults();
-  });
+  deckCard.classList.add('done');
+  showResults();
 }
 
 /* ---------------- Results ---------------- */
@@ -758,13 +686,13 @@ function resetToUpload() {
   results = [];
   gradingPromises = {};
   currentIndex = 0;
+  endless = false;
   deckCards = [];
   selectedFile = null;
   fileInput.value = '';
   fileNameEl.textContent = '';
   uploadBtn.disabled = true;
   setStatus(uploadStatus, '', '');
-  hideGradingPill();
   setActiveNav('new');
   showScreen(uploadScreen);
   updateFlashcardCountLabel();
@@ -914,6 +842,7 @@ function escapeHtml(str) {
 
 initSupabase();
 wireSidebar();
+wireDeck();
 updateFlashcardCountLabel();
 
 /* ---------------- Motion: confetti, toasts, counters ---------------- */
