@@ -2263,3 +2263,106 @@ header h1 {
 .history-item {
   transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s;
 }
+
+/* ---------- Create quiz wizard ---------- */
+.source-hint {
+  color: #8a87a3;
+  font-size: 0.9rem;
+  margin-bottom: 14px;
+}
+
+.source-box {
+  margin-bottom: 6px;
+}
+
+.btn-secondary {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-family: inherit;
+  border: 1.5px solid #e5e1f6;
+  border-radius: 12px;
+  background: #f8f7ff;
+  color: #3d3a52;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
+}
+
+.btn-secondary:hover {
+  border-color: #c9bdf5;
+  background: #f1ecff;
+}
+
+.popup-status {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.type-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.type-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 12px;
+  border: 1.5px solid #e5e1f6;
+  border-radius: 14px;
+  background: #f8f7ff;
+  color: #3d3a52;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.type-option:hover {
+  border-color: #c9bdf5;
+}
+
+.type-option .to-icon {
+  font-size: 1.6rem;
+}
+
+.type-option .to-title {
+  font-weight: 800;
+  font-size: 0.95rem;
+}
+
+.type-option .to-sub {
+  font-size: 0.75rem;
+  color: #a09cb8;
+}
+
+.type-option.active {
+  background: #7b5cff;
+  border-color: #7b5cff;
+  color: #fff;
+  box-shadow: 0 10px 22px rgba(124, 92, 255, 0.3);
+}
+
+.type-option.active .to-sub {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.modal-actions .btn {
+  margin-top: 0;
+  flex: 1;
+}
+
+.auth-error.info {
+  color: #7b5cff;
+}

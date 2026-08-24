@@ -6,6 +6,7 @@ let results = [];
 let gradingPromises = {};
 let deckCards = [];
 let selectedFile = null;
+let lastModuleName = 'Quiz';
 let supabaseClient = null;
 let currentUser = null;
 let historyEntries = [];
@@ -22,9 +23,6 @@ const quizScreen = document.getElementById('quiz-screen');
 const resultsScreen = document.getElementById('results-screen');
 
 const fileInput = document.getElementById('file-input');
-const fileNameEl = document.getElementById('file-name');
-const uploadBtn = document.getElementById('upload-btn');
-const uploadStatus = document.getElementById('upload-status');
 
 const deckName = document.getElementById('deck-name');
 const deckCount = document.getElementById('deck-count');
@@ -76,9 +74,31 @@ const settingsOptions = document.getElementById('settings-options');
 
 let authMode = 'signin';
 let quizLength = parseInt(localStorage.getItem('quizLength') || '10', 10);
-let quizMode = localStorage.getItem('quizMode') || 'flashcard';
-const modeFlashcard = document.getElementById('mode-flashcard');
-const modeChoice = document.getElementById('mode-choice');
+let createSource = null;
+let createMode = null;
+let createFile = null;
+let createText = '';
+let createUrl = '';
+
+const createModal = document.getElementById('create-modal');
+const createBackdrop = document.getElementById('create-backdrop');
+const createClose = document.getElementById('create-close');
+const createTitle = document.getElementById('create-title');
+const createSourcePanel = document.getElementById('create-source-panel');
+const createTypePanel = document.getElementById('create-type-panel');
+const createStatus = document.getElementById('create-status');
+const createStatus2 = document.getElementById('create-status2');
+const createNext = document.getElementById('create-next');
+const createBack = document.getElementById('create-back');
+const createGenerate = document.getElementById('create-generate');
+const sourceHint = document.getElementById('source-hint');
+const sourcePdf = document.getElementById('source-pdf');
+const sourceText = document.getElementById('source-text');
+const sourceUrl = document.getElementById('source-url');
+const pickPdf = document.getElementById('pick-pdf');
+const pdfName = document.getElementById('pdf-name');
+const createTextEl = document.getElementById('create-text');
+const createUrlEl = document.getElementById('create-url');
 
 function showScreen(screen) {
   [uploadScreen, quizScreen, resultsScreen, authScreen].forEach((s) => s.classList.add('hidden'));
@@ -90,51 +110,157 @@ function setStatus(el, msg, type) {
   el.className = 'status ' + (type || '');
 }
 
-/* ---------------- Upload ---------------- */
+/* ---------------- Create quiz wizard ---------------- */
 
-document.getElementById('action-upload').addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => {
-  selectedFile = e.target.files[0] || null;
-  handleFileSelect();
-});
-
-function handleFileSelect() {
-  if (!selectedFile) return;
-  if (!selectedFile.name.toLowerCase().endsWith('.pdf')) {
-    revealUploadBar();
-    setStatus(uploadStatus, 'Please choose a PDF file.', 'error');
-    uploadBtn.disabled = true;
-    fileNameEl.textContent = '';
+  createFile = e.target.files[0] || null;
+  if (!createFile) return;
+  if (!createFile.name.toLowerCase().endsWith('.pdf')) {
+    createStatus.textContent = 'Please choose a PDF file.';
+    pdfName.textContent = '';
     return;
   }
-  revealUploadBar();
-  fileNameEl.textContent = selectedFile.name;
-  uploadBtn.disabled = false;
-  setStatus(uploadStatus, attachedFileName(selectedFile.name))
+  pdfName.textContent = createFile.name;
+  createStatus.textContent = '';
+});
+
+function openCreate(source) {
+  createSource = source;
+  createMode = null;
+  createFile = null;
+  createText = '';
+  createUrl = '';
+  createTextEl.value = '';
+  createUrlEl.value = '';
+  pdfName.textContent = '';
+  createStatus.textContent = '';
+  createStatus2.textContent = '';
+  createGenerate.disabled = true;
+
+  const titles = { pdf: 'Create a quiz from a PDF', text: 'Create a quiz from text', link: 'Create a quiz from a link' };
+  const hints = {
+    pdf: 'Upload a PDF and we\u2019ll turn it into a quiz.',
+    text: 'Paste your module text below.',
+    link: 'Paste a website or YouTube link (e.g. Wikipedia).',
+  };
+  createTitle.textContent = titles[source];
+  sourceHint.textContent = hints[source];
+  sourcePdf.classList.toggle('hidden', source !== 'pdf');
+  sourceText.classList.toggle('hidden', source !== 'text');
+  sourceUrl.classList.toggle('hidden', source !== 'link');
+  createTypePanel.classList.add('hidden');
+  createSourcePanel.classList.remove('hidden');
+  document.querySelectorAll('.type-option').forEach((b) => b.classList.remove('active'));
+  createModal.classList.remove('hidden');
+  if (source === 'text') createTextEl.focus();
+  else if (source === 'link') createUrlEl.focus();
 }
 
-function attachedFileName(name) {
-  return name.length > 40 ? name.slice(0, 40) + '…' : name;
+function closeCreate() {
+  createModal.classList.add('hidden');
 }
 
-function revealUploadBar() {
-  const bar = document.getElementById('upload-bar');
-  if (bar) bar.classList.remove('hidden');
+function createNextStep() {
+  let val;
+  if (createSource === 'pdf') {
+    if (!createFile) {
+      createStatus.textContent = 'Please choose a PDF first.';
+      return;
+    }
+  } else if (createSource === 'text') {
+    val = createTextEl.value.trim();
+    if (!val) {
+      createStatus.textContent = 'Please enter some text.';
+      return;
+    }
+    createText = val;
+  } else {
+    val = createUrlEl.value.trim();
+    if (!/^https?:\/\//i.test(val)) {
+      createStatus.textContent = 'Enter a valid link (starting with http).';
+      return;
+    }
+    createUrl = val;
+  }
+  createSourcePanel.classList.add('hidden');
+  createTypePanel.classList.remove('hidden');
+  createStatus2.textContent = '';
 }
 
-function setGeneratingStatus(msg) {
-  setStatus(uploadStatus, msg, 'loading');
+function createBackStep() {
+  createTypePanel.classList.add('hidden');
+  createSourcePanel.classList.remove('hidden');
 }
 
-async function startAnalysis(payload, moduleName) {
+async function runCreateGenerate() {
+  if (!createMode) return;
+  createGenerate.disabled = true;
+  createStatus2.className = 'auth-error info';
+  createStatus2.textContent = 'Generating your quiz with AI\u2026';
+
+  try {
+    let payload;
+    let name;
+    if (createSource === 'pdf') {
+      const res = await fetchPdfPayload(createFile);
+      payload = res.payload;
+      name = createFile.name.replace(/\.pdf$/i, '');
+    } else if (createSource === 'text') {
+      payload = { text: createText.trim(), count: quizLength, mode: createMode };
+      name = createText.trim().slice(0, 24);
+    } else {
+      createStatus2.textContent = 'Fetching that page and extracting its text\u2026';
+      const sc = await fetch('/api/scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: createUrl }),
+      });
+      const scData = await sc.json();
+      if (!sc.ok) {
+        createStatus2.className = 'auth-error error';
+        createStatus2.textContent = scData.error || 'Could not scrape that page.';
+        createGenerate.disabled = false;
+        return;
+      }
+      payload = { text: scData.text, count: quizLength, mode: createMode };
+      name = scData.title || createUrl;
+    }
+
+    const ok = await startAnalysis(payload, name, createStatus2);
+    if (ok) closeCreate();
+    else createGenerate.disabled = false;
+  } catch (err) {
+    createStatus2.className = 'auth-error error';
+    createStatus2.textContent = err.message || 'Something went wrong.';
+    createGenerate.disabled = false;
+  }
+}
+
+async function fetchPdfPayload(file) {
+  const text = await extractTextFromPdf(file);
+  const hasText = text && text.replace(/\s+/g, ' ').trim().length >= 100;
+  if (hasText) {
+    return { payload: { text: text.trim(), count: quizLength, mode: createMode } };
+  }
+  const images = await renderPdfImages(file);
+  if (!images.length) {
+    throw new Error('The PDF could not be read. It may be image-based or corrupted.');
+  }
+  return { payload: { images, count: quizLength, mode: createMode } };
+}
+
+async function startAnalysis(payload, moduleName, statusEl) {
   if (!canGenerate()) {
-    revealUploadBar();
-    setStatus(uploadStatus, 'No hearts left. Next \u2665 in ' + heartTimerLabel() + '.', 'error');
+    if (statusEl) {
+      statusEl.className = 'auth-error error';
+      statusEl.textContent = 'No hearts left. Next \u2665 in ' + heartTimerLabel() + '.';
+    }
     return false;
   }
-  revealUploadBar();
-  uploadBtn.disabled = true;
-  setGeneratingStatus('Generating your quiz with AI\u2026');
+  if (statusEl) {
+    statusEl.className = 'auth-error info';
+    statusEl.textContent = 'Generating your quiz with AI\u2026';
+  }
   savePendingDeck('generating', moduleName);
   try {
     const res = await fetch('/api/analyze', {
@@ -150,45 +276,20 @@ async function startAnalysis(payload, moduleName) {
     results = new Array(flashcards.length).fill(null);
     gradingPromises = {};
     currentIndex = 0;
-    savePendingDeck('ready', data.flashcards, moduleName);
+    lastModuleName = moduleName || 'Quiz';
+    savePendingDeck('ready', data.flashcards, moduleName, createMode);
     renderPendingDeck();
     renderJumpBack();
     startQuiz();
     return true;
   } catch (err) {
-    uploadBtn.disabled = false;
-    setStatus(uploadStatus, err.message, 'error');
-    uploadBtn.disabled = false;
+    if (statusEl) {
+      statusEl.className = 'auth-error error';
+      statusEl.textContent = err.message;
+    }
     return false;
   }
 }
-
-uploadBtn.addEventListener('click', async () => {
-  if (!selectedFile) return;
-  uploadBtn.disabled = true;
-  setStatus(uploadStatus, 'Reading your PDF...', 'info');
-  try {
-    const text = await extractTextFromPdf(selectedFile);
-    const hasText = text && text.replace(/\s+/g, ' ').trim().length >= 100;
-    let payload;
-    if (hasText) {
-      payload = { text: text.trim(), count: quizLength, mode: quizMode };
-    } else {
-      setStatus(uploadStatus, 'Scanned PDF detected — reading pages with AI vision...', 'info');
-      const images = await renderPdfImages(selectedFile);
-      if (!images.length) {
-        throw new Error('The PDF could not be read. It may be image-based or corrupted, and no pages could be extracted.');
-      }
-      payload = { images: images, count: quizLength, mode: quizMode };
-      uploadBtn.disabled = false;
-    }
-    const done = await startAnalysis(payload, selectedFile.name.replace(/\.pdf$/i, ''));
-    if (!done && payload.images) uploadBtn.disabled = false;
-  } catch (err) {
-    setStatus(uploadStatus, err.message, 'error');
-    uploadBtn.disabled = false;
-  }
-});
 
 async function extractTextFromPdf(file) {
   const pdfjsLib = await import('/vendor/pdf.min.mjs');
@@ -375,18 +476,18 @@ function startQuiz() {
   renderHearts();
   setActiveNav('new');
   const pending = loadPendingDeck();
-  deckName.textContent = pending && pending.name ? pending.name : (selectedFile ? selectedFile.name.replace(/\.pdf$/i, '').slice(0, 40) : 'Study deck');
+  deckName.textContent = pending && pending.name ? pending.name : 'Study deck';
   renderQuestion();
 }
 
 /* ---------------- Pending deck (survives refresh / tab switch) ---------------- */
 
-function savePendingDeck(status, flashcardsArg, nameArg) {
+function savePendingDeck(status, flashcardsArg, nameArg, modeArg) {
   const pending = {
     status,
     flashcards: status === 'ready' ? flashcardsArg : null,
-    mode: quizMode,
-    name: nameArg || (selectedFile ? selectedFile.name.replace(/\.pdf$/i, '') : 'Study deck'),
+    mode: modeArg || createMode || 'flashcard',
+    name: nameArg || 'Study deck',
     savedAt: Date.now(),
   };
   localStorage.setItem('pendingDeck', JSON.stringify(pending));
@@ -432,7 +533,8 @@ function startPendingDeck() {
   const pending = loadPendingDeck();
   if (!pending || pending.status !== 'ready' || !pending.flashcards) return;
   if (!canGenerate()) {
-    setStatus(uploadStatus, 'No hearts left. Next heart refills in ' + heartTimerLabel() + '.', 'error');
+    const bar = document.getElementById('pending-status');
+    if (bar) bar.textContent = 'No hearts left. Next \u2665 in ' + heartTimerLabel() + '.';
     return;
   }
   flashcards = pending.flashcards;
@@ -652,7 +754,7 @@ function showResults() {
   const percent = Math.round(((correct + partial * 0.5) / total) * 100);
 
   renderResults({
-    moduleName: selectedFile ? selectedFile.name.replace(/\.pdf$/i, '') : 'Quiz',
+    moduleName: lastModuleName,
     total,
     correct,
     partial,
@@ -672,7 +774,7 @@ function showResults() {
   } else {
     note.textContent = 'Saving to your history…';
     saveHistory({
-      moduleName: selectedFile ? selectedFile.name.replace(/\.pdf$/i, '') : 'Quiz',
+      moduleName: lastModuleName,
       total,
       correct,
       partial,
@@ -895,22 +997,18 @@ function wireSidebar() {
     });
   });
 
-  modeFlashcard.addEventListener('click', () => {
-    quizMode = 'flashcard';
-    localStorage.setItem('quizMode', quizMode);
-    updateModeUI();
+  document.querySelectorAll('.type-option').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      createMode = btn.dataset.mode;
+      document.querySelectorAll('.type-option').forEach((b) => b.classList.toggle('active', b === btn));
+      createGenerate.disabled = false;
+    });
   });
-  modeChoice.addEventListener('click', () => {
-    quizMode = 'choice';
-    localStorage.setItem('quizMode', quizMode);
-    updateModeUI();
-  });
-  updateModeUI();
-}
-
-function updateModeUI() {
-  modeFlashcard.classList.toggle('active', quizMode === 'flashcard');
-  modeChoice.classList.toggle('active', quizMode === 'choice');
+  createNext.addEventListener('click', createNextStep);
+  createBack.addEventListener('click', createBackStep);
+  createGenerate.addEventListener('click', runCreateGenerate);
+  createClose.addEventListener('click', closeCreate);
+  createBackdrop.addEventListener('click', closeCreate);
 }
 
 function openMobileSidebar() {
@@ -948,9 +1046,6 @@ function resetToUpload() {
   deckCards = [];
   selectedFile = null;
   fileInput.value = '';
-  fileNameEl.textContent = '';
-  uploadBtn.disabled = true;
-  setStatus(uploadStatus, '', '');
   setActiveNav('new');
   showScreen(uploadScreen);
   updateFlashcardCountLabel();
@@ -1134,53 +1229,10 @@ setInterval(renderHearts, 1000);
 /* ---------------- Home: action cards, study input, jump back ---------------- */
 
 function wireHome() {
-  const studyInput = document.getElementById('study-text');
-  document.getElementById('action-paste').addEventListener('click', () => {
-    studyInput.placeholder = 'Paste any text or a link...';
-    studyInput.focus();
-  });
-  document.getElementById('action-youtube').addEventListener('click', () => {
-    studyInput.placeholder = 'Paste a YouTube or article link...';
-    studyInput.focus();
-  });
-  document.getElementById('study-go').addEventListener('click', submitStudyText);
-  studyInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') submitStudyText();
-  });
-}
-
-function submitStudyText() {
-  const val = document.getElementById('study-text').value.trim();
-  if (!val) return;
-  if (/^https?:\/\//i.test(val)) {
-    handleUrl(val);
-    return;
-  }
-  const name = val.length > 24 ? val.slice(0, 24) + '…' : val;
-  startAnalysis({ text: val, count: quizLength, mode: quizMode }, name);
-}
-
-async function handleUrl(url) {
-  revealUploadBar();
-  setGeneratingStatus('Fetching that page and extracting its text\u2026');
-  try {
-    const res = await fetch('/api/scrape', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      uploadBtn.disabled = false;
-      setStatus(uploadStatus, data.error || 'Could not scrape that page.', 'error');
-      return;
-    }
-    const name = data.title || url;
-    await startAnalysis({ text: data.text, count: quizLength, mode: quizMode }, name);
-  } catch (err) {
-    uploadBtn.disabled = false;
-    setStatus(uploadStatus, 'Failed to fetch that page. Check the link and try again.', 'error');
-  }
+  document.getElementById('action-pdf').addEventListener('click', () => openCreate('pdf'));
+  document.getElementById('action-text').addEventListener('click', () => openCreate('text'));
+  document.getElementById('action-link').addEventListener('click', () => openCreate('link'));
+  pickPdf.addEventListener('click', () => fileInput.click());
 }
 
 function renderJumpBack() {

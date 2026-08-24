@@ -107,33 +107,22 @@
             <h2 class="hero-line">What shall we <span class="grad">study?</span></h2>
           </div>
 
-          <div class="mode-switch" role="tablist">
-            <button class="mode-option" id="mode-flashcard" role="tab">&#128278; Flashcards</button>
-            <button class="mode-option" id="mode-choice" role="tab">&#9745; Multiple Choice</button>
-          </div>
-
           <div class="action-cards">
-            <button class="action-card" id="action-upload">
-              <span class="ac-icon">&#128228;</span>
-              <span class="ac-title">Upload file</span>
-              <span class="ac-sub">PDF</span>
+            <button class="action-card" id="action-pdf">
+              <span class="ac-icon">&#128196;</span>
+              <span class="ac-title">Upload a PDF</span>
+              <span class="ac-sub">module, notes</span>
             </button>
-            <button class="action-card" id="action-paste">
+            <button class="action-card" id="action-text">
               <span class="ac-icon">&#128221;</span>
-              <span class="ac-title">Paste</span>
+              <span class="ac-title">Paste text</span>
               <span class="ac-sub">any text</span>
             </button>
-            <button class="action-card" id="action-youtube">
-              <span class="ac-icon">&#127916;</span>
-              <span class="ac-title">YouTube</span>
-              <span class="ac-sub">paste a link</span>
+            <button class="action-card" id="action-link">
+              <span class="ac-icon">&#128279;</span>
+              <span class="ac-title">Paste a link</span>
+              <span class="ac-sub">website &bull; YouTube</span>
             </button>
-          </div>
-
-          <div class="study-input">
-            <span class="si-plus">+</span>
-            <input id="study-text" type="text" placeholder="I want to study..." autocomplete="off" />
-            <button id="study-go" class="study-go">Search</button>
           </div>
 
           <div class="home-jump">
@@ -142,18 +131,59 @@
           </div>
         </div>
 
-        <div class="card upload-bar hidden" id="upload-bar">
-          <div id="file-name" class="file-name"></div>
-          <button id="upload-btn" class="btn btn-primary">
-            <span class="btn-label">Analyze &amp; Start Quiz</span>
-            <span class="btn-arrow">&#8594;</span>
-          </button>
-          <div id="upload-status" class="status"></div>
-        </div>
-
         <input type="file" id="file-input" accept=".pdf" hidden />
         <div class="card pending-deck hidden" id="pending-deck"></div>
       </section>
+
+      <!-- Create quiz wizard modal -->
+      <div id="create-modal" class="modal hidden">
+        <div class="modal-backdrop" id="create-backdrop"></div>
+        <div class="modal-card">
+          <div class="modal-head">
+            <h3 id="create-title">Create a quiz</h3>
+            <button id="create-close" class="modal-close">&times;</button>
+          </div>
+
+          <!-- Step 1: source -->
+          <div id="create-source-panel">
+            <p class="source-hint" id="source-hint"></p>
+            <div id="source-pdf" class="source-box hidden">
+              <button id="pick-pdf" class="btn btn-secondary">Choose a PDF</button>
+              <div id="pdf-name" class="file-name"></div>
+            </div>
+            <div id="source-text" class="source-box hidden">
+              <textarea id="create-text" rows="6" placeholder="Paste or type your module text here..."></textarea>
+            </div>
+            <div id="source-url" class="source-box hidden">
+              <input id="create-url" type="url" placeholder="Paste a link, e.g. Wikipedia or YouTube" />
+            </div>
+            <div id="create-status" class="auth-error"></div>
+            <button id="create-next" class="btn btn-primary">Next</button>
+          </div>
+
+          <!-- Step 2: question type -->
+          <div id="create-type-panel" class="hidden">
+            <p class="source-hint">How would you like to answer?</p>
+            <div class="type-options">
+              <button class="type-option" data-mode="flashcard">
+                <span class="to-icon">&#128278;</span>
+                <span class="to-title">Flashcards</span>
+                <span class="to-sub">Type your answer</span>
+              </button>
+              <button class="type-option" data-mode="choice">
+                <span class="to-icon">&#9745;</span>
+                <span class="to-title">Multiple Choice</span>
+                <span class="to-sub">Pick from options</span>
+              </button>
+            </div>
+            <div id="create-status2" class="auth-error"></div>
+            <div class="modal-actions">
+              <button id="create-back" class="btn btn-secondary">Back</button>
+              <button id="create-generate" class="btn btn-primary" disabled>Generate</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- Quiz / Deck view -->
       <section id="quiz-screen" class="screen hidden">
