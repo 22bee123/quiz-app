@@ -330,22 +330,30 @@ function gameOver() {
 function heartTimerLabel() {
   if (hearts >= MAX_HEARTS) return '';
   const ms = Math.max(0, (heartRefillAt || Date.now()) - Date.now());
-  const total = Math.ceil(ms / 60000);
-  const m = Math.floor(total / 60);
+  const total = Math.ceil(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+function heartsMarkup() {
+  let heartsHtml = '';
+  for (let i = 0; i < MAX_HEARTS; i++) {
+    heartsHtml += `<span class="life-heart${i < hearts ? '' : ' lost'}">\u2665</span>`;
+  }
+  const timer = hearts < MAX_HEARTS ? `<span class="hearts-timer">next \u2665 ${heartTimerLabel()}</span>` : '';
+  return `<span class="hearts-icons">${heartsHtml}</span><span class="hearts-count">${hearts}/${MAX_HEARTS}</span>${timer}`;
 }
 
 function renderHearts() {
   syncHearts();
   const el = document.getElementById('hearts-display');
-  if (!el) return;
-  let heartsHtml = '';
-  for (let i = 0; i < MAX_HEARTS; i++) {
-    heartsHtml += `<span class="life-heart${i < hearts ? '' : ' lost'}">\u2665</span>`;
-  }
-  const timer = hearts < MAX_HEARTS ? `<span class="hearts-timer">next \u2665 in ${heartTimerLabel()}</span>` : '';
-  el.innerHTML = `<span class="hearts-icons">${heartsHtml}</span><span class="hearts-count">${hearts}/${MAX_HEARTS}</span>${timer}`;
+  if (el) el.innerHTML = heartsMarkup();
+  const de = document.getElementById('deck-hearts');
+  if (de) de.innerHTML = heartsMarkup();
 }
 
 function startQuiz() {
@@ -1109,7 +1117,7 @@ wireDeck();
 updateFlashcardCountLabel();
 renderHearts();
 renderPendingDeck();
-setInterval(renderHearts, 15000);
+setInterval(renderHearts, 1000);
 
 /* ---------------- Motion: confetti, toasts, counters ---------------- */
 

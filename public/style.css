@@ -574,6 +574,45 @@ body::after {
   color: #a09cb8;
 }
 
+.deck-hearts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid rgba(239, 68, 68, 0.18);
+}
+
+.deck-hearts .hearts-icons {
+  display: flex;
+  gap: 2px;
+}
+
+.deck-hearts .life-heart {
+  color: #ef4444;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.deck-hearts .life-heart.lost {
+  color: #e6e0ea;
+}
+
+.deck-hearts .hearts-count {
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #3d3a52;
+}
+
+.deck-hearts .hearts-timer {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #ef4444;
+}
+
 .mode-switch {
   display: flex;
   gap: 8px;
