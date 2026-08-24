@@ -137,6 +137,7 @@ uploadBtn.addEventListener('click', async () => {
 
   uploadBtn.disabled = true;
   setStatus(uploadStatus, 'Reading your PDF...', 'info');
+  savePendingDeck('generating');
 
   try {
     const text = await extractTextFromPdf(selectedFile);
@@ -166,11 +167,12 @@ uploadBtn.addEventListener('click', async () => {
       throw new Error(data.error || 'Analysis failed.');
     }
 
-    consumeHeart();
     flashcards = data.flashcards;
     results = new Array(flashcards.length).fill(null);
     gradingPromises = {};
     currentIndex = 0;
+    savePendingDeck('ready', data.flashcards);
+    renderPendingDeck();
     startQuiz();
   } catch (err) {
     setStatus(uploadStatus, err.message, 'error');
@@ -303,14 +305,26 @@ function canGenerate() {
   return hearts >= 1;
 }
 
-function consumeHeart() {
+function loseHeart() {
   syncHearts();
-  if (hearts <= 0) return false;
-  hearts--;
+  hearts = Math.max(0, hearts - 1);
   if (!heartRefillAt || heartRefillAt < Date.now()) heartRefillAt = Date.now() + REFILL_MS;
   saveHearts();
   renderHearts();
-  return true;
+  if (hearts <= 0) {
+    gameOver();
+    return true;
+  }
+  return false;
+}
+
+function gameOver() {
+  for (let i = 0; i < flashcards.length; i++) {
+    if (!results[i]) {
+      results[i] = { question: flashcards[i].question, type: flashcards[i].type, options: flashcards[i].options, correctAnswer: flashcards[i].answer, userAnswer: '—', verdict: 'wrong', feedback: 'Out of hearts' };
+    }
+  }
+  finishQuiz();
 }
 
 function heartTimerLabel() {
@@ -340,9 +354,73 @@ function startQuiz() {
   endless = false;
   endlessToggle.classList.remove('active');
   attempted = [];
+  renderHearts();
   setActiveNav('new');
   deckName.textContent = selectedFile ? selectedFile.name.replace(/\.pdf$/i, '').slice(0, 40) : 'Study deck';
   renderQuestion();
+}
+
+/* ---------------- Pending deck (survives refresh / tab switch) ---------------- */
+
+function savePendingDeck(status) {
+  const pending = {
+    status, // 'generating' | 'ready'
+    flashcards: status === 'ready' ? flashcards : null,
+    mode: quizMode,
+    name: selectedFile ? selectedFile.name.replace(/\.pdf$/i, '') : 'Study deck',
+    savedAt: Date.now(),
+  };
+  localStorage.setItem('pendingDeck', JSON.stringify(pending));
+}
+
+function loadPendingDeck() {
+  try {
+    const raw = localStorage.getItem('pendingDeck');
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function renderPendingDeck() {
+  const box = document.getElementById('pending-deck');
+  if (!box) return;
+  const pending = loadPendingDeck();
+  if (!pending || pending.status === 'generating') {
+    box.classList.add('hidden');
+    return;
+  }
+  box.classList.remove('hidden');
+  box.innerHTML = `
+    <div class="pending-body">
+      <span class="pending-badge">&#128278; READY</span>
+      <div class="pending-info">
+        <span class="pending-name">${escapeHtml(pending.name)}</span>
+        <span class="pending-meta">${pending.flashcards.length} questions &middot; ${pending.mode === 'choice' ? 'Multiple Choice' : 'Flashcards'}</span>
+      </div>
+    </div>
+    <button class="btn btn-primary pending-start" id="pending-start">Start Quiz &#8594;</button>
+  `;
+  const startBtn = box.querySelector('#pending-start');
+  if (startBtn) {
+    startBtn.addEventListener('click', () => {
+      startPendingDeck();
+    });
+  }
+}
+
+function startPendingDeck() {
+  const pending = loadPendingDeck();
+  if (!pending || pending.status !== 'ready' || !pending.flashcards) return;
+  if (!canGenerate()) {
+    setStatus(uploadStatus, 'No hearts left. Next heart refills in ' + heartTimerLabel() + '.', 'error');
+    return;
+  }
+  flashcards = pending.flashcards;
+  results = new Array(flashcards.length).fill(null);
+  gradingPromises = {};
+  currentIndex = 0;
+  startQuiz();
 }
 
 function currentItem() {
@@ -439,8 +517,10 @@ function chooseAnswer(btn) {
     return;
   }
 
-  // wrong pick
+  // wrong pick -> lose a heart
   playWrong();
+  const out = loseHeart();
+  if (out) return;
   attempted.push(oi);
   btn.classList.add('wrong', 'eliminated');
   btn.disabled = true;
@@ -483,6 +563,11 @@ function selfMark(verdict) {
   deckResult.className = 'deck-result ' + verdict;
   markAnswered(currentIndex, verdict, verdict === 'correct' ? 'Knew it' : 'Missed it', item.answer);
   deckAnswerActions.classList.add('hidden');
+
+  if (verdict === 'wrong') {
+    const out = loseHeart();
+    if (out) return;
+  }
   deckNext.disabled = false;
 }
 
@@ -1023,6 +1108,7 @@ wireSidebar();
 wireDeck();
 updateFlashcardCountLabel();
 renderHearts();
+renderPendingDeck();
 setInterval(renderHearts, 15000);
 
 /* ---------------- Motion: confetti, toasts, counters ---------------- */

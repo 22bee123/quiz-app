@@ -487,6 +487,53 @@ body::after {
 }
 
 /* ---------- Settings options ---------- */
+.pending-deck {
+  margin-top: 20px;
+}
+
+.pending-body {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.pending-badge {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #0ea5e9;
+  background: #e0f2fe;
+  padding: 5px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.pending-info {
+  min-width: 0;
+}
+
+.pending-name {
+  display: block;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #2d2a3a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pending-meta {
+  display: block;
+  font-size: 0.8rem;
+  color: #a09cb8;
+  margin-top: 2px;
+}
+
+.pending-deck .btn {
+  margin-top: 0;
+}
+
 .hearts-display {
   display: flex;
   align-items: center;
