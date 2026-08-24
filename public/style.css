@@ -462,7 +462,47 @@ body::after {
 }
 
 /* ---------- Settings options ---------- */
+.mode-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.mode-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border: 1.5px solid #e5e1f6;
+  border-radius: 12px;
+  background: #fff;
+  color: #5a5672;
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.mode-option:hover {
+  border-color: #c9bdf5;
+}
+
+.mode-option.active {
+  background: #7b5cff;
+  border-color: #7b5cff;
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(124, 92, 255, 0.28);
+}
+
 .settings-options {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 8px 0 4px;
+}
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
@@ -702,56 +742,44 @@ header p {
 
 .deck {
   position: relative;
-  margin-top: 96px;
+  margin-top: 48px;
   margin-bottom: 48px;
-  transition: height 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: height 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .deck-card {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  position: relative;
   padding: 28px;
-  will-change: transform, opacity, filter;
-  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), top 0.35s cubic-bezier(0.22, 1, 0.36, 1), filter 0.35s ease, opacity 0.35s ease;
-}
-
-.deck-card.is-front {
-  z-index: 100;
   box-shadow: 0 18px 50px rgba(93, 82, 179, 0.16), 0 3px 12px rgba(93, 82, 179, 0.07);
 }
 
-.deck-card:not(.is-front) {
-  box-shadow: 0 10px 26px rgba(93, 82, 179, 0.1);
-  pointer-events: none;
+.deck-card.card-enter {
+  animation: cardEnter 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.deck-card.swipe-out {
-  animation: swipeOut 0.55s cubic-bezier(0.3, 0.7, 0.3, 1) forwards;
-}
-
-@keyframes swipeOut {
-  0% {
-    transform: translate(0, 0) scale(1);
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(140vw) rotate(7deg) scale(0.95);
-    opacity: 0;
-  }
-}
-
-.deck-card.card-pop {
-  animation: cardPop 0.4s ease-out;
-}
-
-@keyframes cardPop {
+@keyframes cardEnter {
   0% {
     opacity: 0;
+    transform: translateY(14px);
   }
   100% {
     opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.deck-card.card-leaving {
+  animation: cardLeave 0.22s ease forwards;
+}
+
+@keyframes cardLeave {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-14px);
   }
 }
 
@@ -855,6 +883,45 @@ textarea:disabled {
 .answer-status.error {
   color: #ef4444;
   font-weight: 600;
+}
+
+/* Multiple choice options */
+.choice-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.choice-option {
+  width: 100%;
+  text-align: left;
+  background: #f8f7ff;
+  border: 1.5px solid #e5e1f6;
+  border-radius: 12px;
+  color: #3d3a52;
+  padding: 13px 16px;
+  font-size: 0.97rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+
+.choice-option:hover {
+  border-color: #c9bdf5;
+  background: #f1ecff;
+}
+
+.choice-option.selected {
+  border-color: #7b5cff;
+  background: #e7deff;
+  box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.15);
+  font-weight: 600;
+}
+
+.choice-option.disabled {
+  pointer-events: none;
+  opacity: 0.6;
 }
 
 /* Flashcard dots (deck indicator) */

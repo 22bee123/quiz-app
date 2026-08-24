@@ -65,6 +65,9 @@ const flashcardCountLabel = document.getElementById('flashcard-count-label');
 
 let authMode = 'signin';
 let quizLength = parseInt(localStorage.getItem('quizLength') || '10', 10);
+let quizMode = localStorage.getItem('quizMode') || 'flashcard';
+const modeFlashcard = document.getElementById('mode-flashcard');
+const modeChoice = document.getElementById('mode-choice');
 
 function showScreen(screen) {
   [uploadScreen, quizScreen, resultsScreen, authScreen].forEach((s) => s.classList.add('hidden'));
@@ -122,14 +125,14 @@ uploadBtn.addEventListener('click', async () => {
 
     let payload;
     if (hasText) {
-      payload = { text: text.trim(), count: quizLength };
+      payload = { text: text.trim(), count: quizLength, mode: quizMode };
     } else {
       setStatus(uploadStatus, 'Scanned PDF detected — reading pages with AI vision...', 'info');
       const images = await renderPdfImages(selectedFile);
       if (!images.length) {
         throw new Error('The PDF could not be read. It may be image-based or corrupted, and no pages could be extracted.');
       }
-      payload = { images, count: quizLength };
+      payload = { images, count: quizLength, mode: quizMode };
     }
 
     setStatus(uploadStatus, 'Analyzing module with AI... This may take a moment.', 'info');
@@ -206,29 +209,28 @@ function startQuiz() {
 function initDeck() {
   deck.innerHTML = '';
   deckCards = [];
-  const count = Math.min(flashcards.length, MAX_BACKS + 1);
-  for (let i = 0; i < count; i++) {
-    const card = buildCard(i);
-    deckCards.push(card);
-    deck.appendChild(card);
-  }
-  deckCards.forEach((card, i) => {
-    if (i === 0) {
-      card.classList.add('is-front');
-      styleDeckCard(card, 0, true);
-    } else {
-      styleDeckCard(card, i, false);
-    }
-  });
-  deck.style.height = deckCards[0].offsetHeight + 'px';
+  const card = buildCard(0);
+  deckCards.push(card);
+  deck.appendChild(card);
+  card.classList.add('is-front', 'card-enter');
+  deck.style.height = card.offsetHeight + 'px';
   enableFront();
 }
 
 function buildCard(qi) {
   const f = flashcards[qi];
   const card = document.createElement('div');
-  card.className = 'deck-card card';
+  card.className = 'deck-card card is-front';
   card.dataset.qindex = qi;
+
+  const isChoice = f.type === 'choice';
+  const answerArea = isChoice
+    ? `<div class="choice-options" data-q="${qi}">
+        ${f.options.map((_, oi) => `<button class="choice-option" data-oi="${oi}">${escapeHtml(f.options[oi])}</button>`).join('')}
+      </div>`
+    : `<div class="answer-label">Your answer</div>
+       <textarea rows="4" placeholder="Type your answer here..." spellcheck="true"></textarea>`;
+
   card.innerHTML = `
     <div class="quiz-top">
       <span class="q-chip">Question ${qi + 1} of ${flashcards.length}</span>
@@ -236,8 +238,7 @@ function buildCard(qi) {
     </div>
     <div class="q-number">${String(qi + 1).padStart(2, '0')}</div>
     <h2 class="question-text"></h2>
-    <div class="answer-label">Your answer</div>
-    <textarea rows="3" placeholder="Type your answer here..." spellcheck="true"></textarea>
+    ${answerArea}
     <div class="answer-status"></div>
     <button class="btn btn-primary">
       <span class="btn-label">Next Question</span>
@@ -256,39 +257,38 @@ function buildCard(qi) {
   });
 
   card.querySelector('.btn').addEventListener('click', () => submitFront(card));
-  card.querySelector('textarea').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      submitFront(card);
-    }
-  });
+
+  if (isChoice) {
+    card.querySelectorAll('.choice-option').forEach((opt) => {
+      opt.addEventListener('click', () => {
+        card.querySelectorAll('.choice-option').forEach((o) => o.classList.remove('selected'));
+        opt.classList.add('selected');
+        card.dataset.selected = opt.dataset.oi;
+      });
+    });
+  } else {
+    card.querySelector('textarea').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        submitFront(card);
+      }
+    });
+  }
 
   return card;
-}
-
-function styleDeckCard(card, idx, isFront) {
-  if (isFront) {
-    card.style.zIndex = 100;
-    card.style.top = '0';
-    card.style.transform = 'translate(0, 0) scale(1)';
-    card.style.filter = 'none';
-    card.style.opacity = 1;
-  } else {
-    card.style.zIndex = 100 - idx;
-    card.style.top = `-${idx * FAN_OFFSET_PCT}%`;
-    card.style.transform = `scale(${Math.max(0.7, 1 - idx * FAN_SCALE_STEP)})`;
-    card.style.filter = `brightness(${Math.max(0.45, 1 - idx * FAN_DIM_STEP)})`;
-    card.style.opacity = 1;
-  }
 }
 
 function enableFront() {
   const front = deckCards[0];
   if (!front) return;
   const qi = currentIndex;
-  const textarea = front.querySelector('textarea');
+  const card = flashcards[qi];
+  const isChoice = card && card.type === 'choice';
 
-  textarea.disabled = false;
+  front.querySelectorAll('.choice-option').forEach((o) => o.classList.remove('selected'));
+  front.dataset.selected = '';
+  const textarea = front.querySelector('textarea');
+  if (textarea) textarea.disabled = false;
   front.querySelector('.btn').disabled = false;
   front.querySelector('.q-chip').textContent = `Question ${qi + 1} of ${flashcards.length}`;
   front.querySelector('.q-number').textContent = String(qi + 1).padStart(2, '0');
@@ -302,82 +302,82 @@ function enableFront() {
   statusEl.textContent = '';
   statusEl.className = 'answer-status';
 
-  textarea.focus();
+  if (textarea) textarea.focus();
 }
 
 function advance() {
   const front = deckCards[0];
   if (!front) return;
 
-  deck.style.height = front.offsetHeight + 'px';
-  front.style.transform = '';
-  front.classList.remove('is-front');
-  front.classList.add('swipe-out');
-  front.querySelector('textarea').disabled = true;
+  const ta = front.querySelector('textarea');
+  if (ta) ta.disabled = true;
+  front.querySelector('.btn').disabled = true;
+  front.classList.add('card-leaving');
 
-  let done = false;
-  const finish = () => {
-    if (done) return;
-    done = true;
-    front.removeEventListener('animationend', onSwipeEnd);
-    advanceStack(front);
-  };
-  const onSwipeEnd = (e) => {
-    if (e.animationName === 'swipeOut') finish();
-  };
-  front.addEventListener('animationend', onSwipeEnd);
-  setTimeout(finish, 900);
-}
+  setTimeout(() => {
+    const nextIdx = currentIndex + 1;
+    if (nextIdx >= flashcards.length) return;
+    currentIndex = nextIdx;
 
-function advanceStack(leavingFront) {
-  leavingFront.remove();
-  deckCards.shift();
-  currentIndex++;
-
-  const newFront = deckCards[0];
-  newFront.classList.add('is-front');
-  styleDeckCard(newFront, 0, true);
-
-  for (let j = 1; j < deckCards.length; j++) {
-    styleDeckCard(deckCards[j], j, false);
-  }
-
-  const newBackIndex = currentIndex + MAX_BACKS;
-  if (newBackIndex < flashcards.length) {
-    const nc = buildCard(newBackIndex);
-    styleDeckCard(nc, MAX_BACKS, false);
-    nc.classList.add('card-pop');
-    deck.appendChild(nc);
-    deckCards.push(nc);
-  }
-
-  enableFront();
-  deck.style.height = newFront.offsetHeight + 'px';
+    const newCard = buildCard(currentIndex);
+    newCard.classList.add('card-enter');
+    deck.innerHTML = '';
+    deckCards = [newCard];
+    deck.appendChild(newCard);
+    deck.style.height = newCard.offsetHeight + 'px';
+    enableFront();
+  }, 240);
 }
 
 /* ---------------- Answer submission + background grading ---------------- */
 
 function submitFront(card) {
-  const textarea = card.querySelector('textarea');
-  const answer = textarea.value.trim();
+  const qi = currentIndex;
+  const item = flashcards[qi];
   const statusEl = card.querySelector('.answer-status');
+  const isChoice = item.type === 'choice';
 
-  if (!answer) {
-    statusEl.textContent = 'Please type an answer first.';
-    statusEl.className = 'answer-status error';
-    return;
+  let userAnswer;
+  let verdict;
+  let feedback = '';
+
+  if (isChoice) {
+    const selected = card.dataset.selected;
+    if (selected === undefined || selected === '') {
+      statusEl.textContent = 'Please choose an answer.';
+      statusEl.className = 'answer-status error';
+      return;
+    }
+    userAnswer = item.options[Number(selected)];
+    verdict = userAnswer === item.answer ? 'correct' : 'wrong';
+    feedback = verdict === 'correct' ? 'Correct!' : `The correct answer is: ${item.answer}`;
+  } else {
+    const textarea = card.querySelector('textarea');
+    const answer = textarea.value.trim();
+    if (!answer) {
+      statusEl.textContent = 'Please type an answer first.';
+      statusEl.className = 'answer-status error';
+      return;
+    }
+    userAnswer = answer;
   }
 
-  const qi = currentIndex;
   results[qi] = {
-    question: flashcards[qi].question,
-    correctAnswer: flashcards[qi].answer,
-    userAnswer: answer,
-    verdict: null,
-    feedback: '',
+    question: item.question,
+    type: item.type,
+    options: isChoice ? item.options : undefined,
+    correctAnswer: isChoice ? item.answer : item.answer,
+    userAnswer,
+    verdict: verdict || null,
+    feedback,
   };
 
-  gradingPromises[qi] = gradeQuestion(qi, answer);
+  if (!isChoice) {
+    gradingPromises[qi] = gradeQuestion(qi, userAnswer);
+  } else {
+    results[qi].verdict = verdict;
+    results[qi].feedback = feedback;
+  }
   updateGradingPill();
 
   if (qi === flashcards.length - 1) {
@@ -437,8 +437,11 @@ function hideGradingPill() {
 
 function finishQuiz() {
   const front = deckCards[0];
-  front.querySelector('.btn').disabled = true;
-  front.querySelector('textarea').disabled = true;
+  const btn = front.querySelector('.btn');
+  const ta = front.querySelector('textarea');
+  if (btn) btn.disabled = true;
+  if (ta) ta.disabled = true;
+  front.querySelectorAll('.choice-option').forEach((o) => o.classList.add('disabled'));
 
   gradingPillText.textContent = 'Finishing up…';
   gradingPill.classList.add('show');
@@ -703,6 +706,23 @@ function wireSidebar() {
       closeSettings();
     });
   });
+
+  modeFlashcard.addEventListener('click', () => {
+    quizMode = 'flashcard';
+    localStorage.setItem('quizMode', quizMode);
+    updateModeUI();
+  });
+  modeChoice.addEventListener('click', () => {
+    quizMode = 'choice';
+    localStorage.setItem('quizMode', quizMode);
+    updateModeUI();
+  });
+  updateModeUI();
+}
+
+function updateModeUI() {
+  modeFlashcard.classList.toggle('active', quizMode === 'flashcard');
+  modeChoice.classList.toggle('active', quizMode === 'choice');
 }
 
 function openMobileSidebar() {

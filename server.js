@@ -82,20 +82,39 @@ app.post('/api/analyze', async (req, res) => {
       return res.status(400).json({ error: 'The PDF appears to contain no readable text. It may be a scanned/image-based document.' });
     }
 
-    const prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} flashcards (quiz questions) that test understanding of the material.
+    const mode = req.body.mode === 'choice' ? 'choice' : 'flashcard';
+
+    let prompt;
+    if (mode === 'choice') {
+      prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} multiple-choice quiz questions that test understanding of the material.
+
+Each question must have exactly 4 options and one correct answer.
 
 Requirements:
-- Questions must be answerable in a short phrase or 1-2 sentences (no multiple choice).
+- Questions must be answerable based only on the module.
+- Vary difficulty across the questions.
+- Focus on key concepts, definitions, and important facts.
+
+Respond with ONLY a valid JSON array in this exact format (no extra text):
+[
+  { "type": "choice", "question": "...", "options": ["a", "b", "c", "d"], "answer": "a" }
+]
+${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 30000 ? text.slice(0, 30000) : text) + '"""'}`;
+    } else {
+      prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} open-ended flashcards (quiz questions) that test understanding of the material.
+
+Requirements:
+- Questions must be answerable in a short phrase or 1-2 sentences.
 - Each flashcard needs a clear, accurate answer based on the module.
 - Vary difficulty across the questions.
 - Focus on key concepts, definitions, and important facts.
 
 Respond with ONLY a valid JSON array in this exact format (no extra text):
 [
-  { "question": "...", "answer": "..." },
-  { "question": "...", "answer": "..." }
+  { "type": "flashcard", "question": "...", "answer": "..." }
 ]
 ${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 30000 ? text.slice(0, 30000) : text) + '"""'}`;
+    }
 
     let content;
     if (images.length) {
@@ -115,15 +134,32 @@ ${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 300
     }
 
     const clean = flashcards
-      .filter((f) => f && typeof f.question === 'string' && typeof f.answer === 'string')
+      .filter((f) => {
+        if (!f || typeof f.question !== 'string') return false;
+        if (mode === 'choice') {
+          return f.type === 'choice' && Array.isArray(f.options) && f.options.length >= 2 && typeof f.answer === 'string' && f.options.includes(f.answer);
+        }
+        return f.type === 'flashcard' && typeof f.answer === 'string';
+      })
       .slice(0, count)
-      .map((f) => ({
-        question: f.question.trim(),
-        answer: f.answer.trim(),
-      }));
+      .map((f) => {
+        if (mode === 'choice') {
+          return {
+            type: 'choice',
+            question: f.question.trim(),
+            options: f.options.map((o) => String(o).trim()).slice(0, 4),
+            answer: String(f.answer).trim(),
+          };
+        }
+        return {
+          type: 'flashcard',
+          question: f.question.trim(),
+          answer: f.answer.trim(),
+        };
+      });
 
     if (clean.length === 0) {
-      throw new Error('AI response did not contain valid flashcards.');
+      throw new Error('AI response did not contain valid questions.');
     }
 
     res.json({ flashcards: clean });
