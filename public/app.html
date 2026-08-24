@@ -20,9 +20,9 @@
       </button>
     </div>
 
-    <button id="nav-new" class="new-quiz-btn" title="New Quiz">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      <span class="nav-label">New Quiz</span>
+    <button id="nav-new" class="new-quiz-btn" title="Home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span class="nav-label">Home</span>
     </button>
 
     <div class="sidebar-scroll">
@@ -152,10 +152,14 @@
               <div id="pdf-name" class="file-name"></div>
             </div>
             <div id="source-text" class="source-box hidden">
-              <textarea id="create-text" rows="6" placeholder="Paste or type your module text here..."></textarea>
+              <label class="source-label" for="create-text">Your text</label>
+              <textarea id="create-text" rows="7" placeholder="Paste or type your module text here..."></textarea>
+              <span class="source-hint-small">Paste notes, a chapter, or any content you want to study.</span>
             </div>
             <div id="source-url" class="source-box hidden">
-              <input id="create-url" type="url" placeholder="Paste a link, e.g. Wikipedia or YouTube" />
+              <label class="source-label" for="create-url">Website or YouTube link</label>
+              <input id="create-url" type="url" placeholder="https://en.wikipedia.org/..." />
+              <span class="source-hint-small">We\u2019ll read the page and turn it into questions.</span>
             </div>
             <div id="create-status" class="auth-error"></div>
             <button id="create-next" class="btn btn-primary">Next</button>
