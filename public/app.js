@@ -919,7 +919,16 @@ function wireLive() {
   });
   document.getElementById('live-join').addEventListener('click', async () => {
     const code = document.getElementById('live-code-input').value;
-    await joinRoom(code);
+    const ok = await joinRoom(code);
+    if (!ok) {
+      const hint = document.getElementById('join-hint');
+      if (hint) hint.textContent = 'Room not found. Double-check the code and try again.';
+    }
+  });
+  document.getElementById('live-code-input').addEventListener('input', (e) => {
+    e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    const hint = document.getElementById('join-hint');
+    if (hint) hint.textContent = '';
   });
   document.getElementById('live-code-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {

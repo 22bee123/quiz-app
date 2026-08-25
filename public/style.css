@@ -2999,75 +2999,194 @@ header h1 {
 /* ---------- Live competition ---------- */
 .live-head {
   text-align: center;
-  margin-bottom: 24px;
+  margin-bottom: 28px;
+}
+
+.live-hero-icon {
+  font-size: 3.6rem;
+  line-height: 1;
+  margin-bottom: 6px;
+  filter: drop-shadow(0 8px 18px rgba(124, 92, 255, 0.3));
+  animation: iconFloat 3s ease-in-out infinite;
+}
+
+.live-pill {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #f59e0b;
+  background: #fef3dd;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  padding: 5px 12px;
+  border-radius: 999px;
+  margin-bottom: 10px;
 }
 
 .live-title {
-  font-size: 1.6rem;
+  font-size: 1.9rem;
   font-weight: 800;
   color: #2d2a3a;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+
+.live-title .grad {
+  background: linear-gradient(135deg, #7b5cff, #b18cff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .live-sub {
   color: #8a87a3;
-  font-size: 0.95rem;
+  font-size: 0.98rem;
+  max-width: 440px;
+  margin: 0 auto;
 }
 
 .live-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  max-width: 640px;
+  gap: 18px;
+  max-width: 680px;
   margin: 0 auto;
 }
 
 .live-card {
   background: #fff;
-  border: 1px solid rgba(124, 92, 255, 0.14);
-  border-radius: 18px;
-  padding: 26px 22px;
+  border: 1px solid rgba(124, 92, 255, 0.16);
+  border-radius: 20px;
+  padding: 30px 24px;
   text-align: center;
+  box-shadow: 0 10px 30px rgba(93, 82, 179, 0.08);
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s;
+}
+
+.live-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 16px 38px rgba(93, 82, 179, 0.14);
+}
+
+.create-card {
+  background: linear-gradient(160deg, #7b5cff, #a56bff);
+  border: none;
+  color: #fff;
+}
+
+.create-card .live-card-icon {
+  font-size: 2.4rem;
+}
+
+.create-card h3 {
+  font-size: 1.2rem;
+  margin-bottom: 8px;
+  color: #fff;
+}
+
+.create-card p {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.9rem;
+  margin-bottom: 18px;
+}
+
+.create-card .btn {
+  background: #fff;
+  color: #7b5cff;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.14);
+}
+
+.create-card .btn:hover {
+  filter: brightness(1.02);
+}
+
+.join-card .live-card-icon {
+  font-size: 2.4rem;
 }
 
 .live-card-icon {
-  font-size: 2rem;
   margin-bottom: 10px;
 }
 
 .live-card h3 {
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   margin-bottom: 8px;
 }
 
 .live-card p {
   color: #8a87a3;
   font-size: 0.88rem;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
+}
+
+.code-label {
+  display: block;
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #a09cb8;
+  margin-bottom: 7px;
+}
+
+.code-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f8f7ff;
+  border: 1.5px solid #e5e1f6;
+  border-radius: 14px;
+  padding: 4px 8px 4px 14px;
+  margin-bottom: 14px;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.code-wrap:focus-within {
+  border-color: #7b5cff;
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.14);
+}
+
+.code-key {
+  font-size: 1rem;
+  color: #b9b3d6;
+  flex-shrink: 0;
 }
 
 .live-code-input {
-  width: 100%;
-  background: #f8f7ff;
-  border: 1.5px solid #e5e1f6;
-  border-radius: 12px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
   color: #2d2a3a;
-  padding: 12px 14px;
-  font-size: 1.1rem;
-  text-align: center;
-  letter-spacing: 0.2em;
+  padding: 10px 4px;
+  font-size: 1.25rem;
+  text-align: left;
+  letter-spacing: 0.28em;
   text-transform: uppercase;
   font-weight: 800;
   font-family: inherit;
-  margin-bottom: 12px;
-  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .live-code-input:focus {
   outline: none;
-  border-color: #7b5cff;
-  box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.14);
 }
+
+.live-code-input::placeholder {
+  color: #d5d1ea;
+  letter-spacing: 0.4em;
+}
+
+.join-hint {
+  display: block;
+  margin-top: 12px;
+  font-size: 0.82rem;
+  color: #ef4444;
+  font-weight: 600;
+  min-height: 1.2em;
+}
+
 
 .room-head {
   display: flex;

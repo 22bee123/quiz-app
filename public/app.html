@@ -262,24 +262,32 @@
       <!-- Live screen -->
       <section id="live-screen" class="screen hidden">
         <div class="live-head">
-          <h1 class="live-title">&#127942; Live Competition</h1>
+          <div class="live-hero-icon">&#127942;</div>
+          <span class="live-pill">&#128293; Beat your friends</span>
+          <h1 class="live-title">Live <span class="grad">Competition</span></h1>
           <p class="live-sub">Create a room and invite a friend, or join with a code — then race to the highest score.</p>
         </div>
 
         <div id="live-lobby">
           <div class="live-actions">
-            <div class="live-card">
+            <div class="live-card create-card">
               <div class="live-card-icon">&#128640;</div>
               <h3>Create a room</h3>
               <p>Set up a quiz and get a room code for others to join.</p>
               <button id="live-create" class="btn btn-primary">Create a room &rarr;</button>
             </div>
-            <div class="live-card">
+
+            <div class="live-card join-card">
               <div class="live-card-icon">&#128101;</div>
               <h3>Join a room</h3>
               <p>Enter the room code a friend shared with you.</p>
-              <input id="live-code-input" class="live-code-input" maxlength="6" placeholder="Room code" />
+              <label class="code-label" for="live-code-input">Room code</label>
+              <div class="code-wrap">
+                <span class="code-key">&#128273;</span>
+                <input id="live-code-input" class="live-code-input" maxlength="6" placeholder="••••••" autocomplete="off" spellcheck="false" />
+              </div>
               <button id="live-join" class="btn btn-primary">Join</button>
+              <span class="join-hint" id="join-hint"></span>
             </div>
           </div>
         </div>
