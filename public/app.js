@@ -7,6 +7,13 @@ let gradingPromises = {};
 let deckCards = [];
 let selectedFile = null;
 let lastModuleName = 'Quiz';
+let roomMode = false;
+let roomCode = null;
+let myPlayerId = null;
+let roomPlayerName = '';
+let roomPlayers = [];
+let roomPollTimer = null;
+let hostingRoom = false;
 let supabaseClient = null;
 let currentUser = null;
 let historyEntries = [];
@@ -21,6 +28,7 @@ const FAN_DIM_STEP = 0.13;
 const uploadScreen = document.getElementById('upload-screen');
 const quizScreen = document.getElementById('quiz-screen');
 const resultsScreen = document.getElementById('results-screen');
+const liveScreen = document.getElementById('live-screen');
 
 const fileInput = document.getElementById('file-input');
 
@@ -101,7 +109,7 @@ const createTextEl = document.getElementById('create-text');
 const createUrlEl = document.getElementById('create-url');
 
 function showScreen(screen) {
-  [uploadScreen, quizScreen, resultsScreen, authScreen].forEach((s) => s.classList.add('hidden'));
+  [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen].forEach((s) => s.classList.add('hidden'));
   screen.classList.remove('hidden');
 }
 
@@ -281,7 +289,12 @@ async function startAnalysis(payload, moduleName, statusEl) {
     savePendingDeck('ready', data.flashcards, moduleName, createMode);
     renderPendingDeck();
     renderJumpBack();
-    startQuiz();
+    if (hostingRoom) {
+      hostingRoom = false;
+      await hostCreateRoom(payload, moduleName, data.flashcards);
+    } else {
+      startQuiz();
+    }
     return true;
   } catch (err) {
     if (statusEl) {
@@ -669,6 +682,262 @@ function renderFullCal(el) {
   while (grid.children.length % 7 !== 0) grid.appendChild(document.createElement('span'));
 }
 
+/* ---------------- Live multiplayer ---------------- */
+
+function genRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+function openLive() {
+  stopRoomPoll();
+  roomPlayers = [];
+  document.getElementById('live-lobby').classList.remove('hidden');
+  document.getElementById('live-room').classList.add('hidden');
+  document.getElementById('live-code-input').value = '';
+  setActiveNav('live');
+  showScreen(liveScreen);
+}
+
+async function hostCreateRoom(payload, name, questions) {
+  if (!supabaseClient || !currentUser) {
+    alert('Please sign in to host a live competition.');
+    return;
+  }
+  if (!requireHearts()) return;
+  questions = questions || flashcards;
+
+  // create room, then it's ready to play (host starts immediately)
+  const code = genRoomCode();
+  const { error } = await supabaseClient.from('rooms').insert({
+    code,
+    host_user_id: currentUser.id,
+    host_name: currentUser.email || 'Host',
+    mode: 'choice',
+    questions,
+    status: 'open',
+  });
+  if (error) {
+    setStatus(uploadStatus, 'Could not create room: ' + error.message, 'error');
+    return;
+  }
+  roomCode = code;
+  roomMode = true;
+  document.getElementById('room-code').textContent = code;
+  document.getElementById('live-lobby').classList.add('hidden');
+  document.getElementById('live-room').classList.remove('hidden');
+  document.getElementById('room-wait').textContent = 'Waiting for players\u2026';
+  document.getElementById('room-status').classList.add('hidden');
+
+  // host player row
+  roomPlayerName = (currentUser.email || 'Host').split('@')[0];
+  const { data: p, error: pErr } = await supabaseClient.from('room_players').insert({
+    room_code: code,
+    user_id: currentUser.id,
+    name: roomPlayerName,
+    score: 0,
+    done: false,
+  }).select().single();
+  if (pErr || !p) {
+    myPlayerId = null;
+  } else {
+    myPlayerId = p.id;
+  }
+
+  roomPlayers = [];
+  startRoomPlay();
+  startRoomPoll();
+}
+
+async function joinRoom(code) {
+  if (!supabaseClient || !currentUser) {
+    alert('Please sign in to join a live competition.');
+    return;
+  }
+  code = (code || '').toUpperCase().trim();
+  const { data: room, error } = await supabaseClient.from('rooms').select('*').eq('code', code).maybeSingle();
+  if (error || !room) {
+    const st = document.getElementById('room-status');
+    st.textContent = 'Room not found. Check the code and try again.';
+    st.classList.remove('hidden');
+    return false;
+  }
+  roomCode = room.code;
+  roomMode = true;
+  roomPlayerName = (currentUser.email || 'Player').split('@')[0];
+  const { data: p, error: pErr } = await supabaseClient.from('room_players').insert({
+    room_code: room.code,
+    user_id: currentUser.id,
+    name: roomPlayerName,
+    score: 0,
+    done: false,
+  }).select().single();
+  if (!pErr && p) myPlayerId = p.id;
+
+  document.getElementById('room-code').textContent = room.code;
+  document.getElementById('live-lobby').classList.add('hidden');
+  document.getElementById('live-room').classList.remove('hidden');
+  document.getElementById('room-wait').textContent = '';
+  document.getElementById('room-status').classList.add('hidden');
+
+  roomPlayers = [];
+  const questions = room.questions;
+  enterRoomPlay(questions);
+  startRoomPoll();
+  return true;
+}
+
+function enterRoomPlay(questions) {
+  flashcards = questions;
+  results = new Array(flashcards.length).fill(null);
+  gradingPromises = {};
+  currentIndex = 0;
+  openRoomPlay();
+}
+
+function startRoomPlay() {
+  flashcards = flashcards.length ? flashcards : flashcards;
+  results = new Array(flashcards.length).fill(null);
+  currentIndex = 0;
+  openRoomPlay();
+}
+
+function openRoomPlay() {
+  showScreen(quizScreen);
+  attempted = [];
+  renderHearts();
+  renderProgress();
+  deckName.textContent = 'Live Competition';
+  renderLiveBar();
+  renderQuestion();
+}
+
+function renderLiveBar() {
+  const bar = document.getElementById('live-bar-area');
+  if (!bar) return;
+  const me = roomPlayers.find((p) => p.id === myPlayerId);
+  bar.innerHTML = `<span class="live-bar-tag">&#127942; LIVE</span><span class="live-bar-code">${roomCode}</span><span class="live-bar-score">Your score: ${me ? me.score : 0}</span>`;
+}
+
+async function bumpRoomScore() {
+  if (!roomCode || !myPlayerId) return;
+  const current = results.filter((r) => r && r.verdict === 'correct').length;
+  try {
+    await supabaseClient.from('room_players').update({ score: current }).eq('id', myPlayerId);
+  } catch (e) {}
+}
+
+function startRoomPoll() {
+  stopRoomPoll();
+  roomPollTimer = setInterval(fetchRoomPlayers, 2500);
+  fetchRoomPlayers();
+}
+
+function stopRoomPoll() {
+  if (roomPollTimer) {
+    clearInterval(roomPollTimer);
+    roomPollTimer = null;
+  }
+}
+
+async function fetchRoomPlayers() {
+  if (!roomCode) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from('room_players')
+      .select('*')
+      .eq('room_code', roomCode)
+      .order('score', { ascending: false });
+    if (error) return;
+    roomPlayers = data || [];
+    renderRoomPlayers();
+  } catch (e) {}
+}
+
+function renderRoomPlayers() {
+  const el = document.getElementById('room-players');
+  if (!el) return;
+  const me = roomPlayers.find((p) => p.id === myPlayerId);
+  el.innerHTML = roomPlayers.length
+    ? roomPlayers.map((p) => `
+        <div class="room-player${p.id === myPlayerId ? ' me' : ''}">
+          <span class="rp-avatar">${escapeHtml((p.name || 'P')[0].toUpperCase())}</span>
+          <span class="rp-name">${escapeHtml(p.name)}${p.id === myPlayerId ? ' (you)' : ''}</span>
+          <span class="rp-score">${p.score}</span>
+        </div>`).join('')
+    : '<p class="room-empty">No players yet\u2026</p>';
+  const bar = document.getElementById('live-bar-area');
+  if (bar && me) bar.querySelector('.live-bar-score').textContent = `Your score: ${me.score}`;
+}
+
+function finishRoomPlay() {
+  if (!roomCode) return;
+  const final = results.filter((r) => r && r.verdict === 'correct').length;
+  try {
+    supabaseClient.from('room_players').update({ score: final, done: true }).eq('id', myPlayerId);
+  } catch (e) {}
+  showScreen(liveScreen);
+  document.getElementById('live-lobby').classList.add('hidden');
+  document.getElementById('live-room').classList.remove('hidden');
+  document.getElementById('room-wait').textContent = 'Waiting for everyone to finish\u2026';
+  fetchRoomPlayers();
+  showRoomResult();
+}
+
+function showRoomResult() {
+  const el = document.getElementById('room-status');
+  if (!el) return;
+  const me = roomPlayers.find((p) => p.id === myPlayerId);
+  const top = Math.max(0, ...roomPlayers.map((p) => p.score));
+  let html = '<div class="room-result"><h3>Finished!</h3>';
+  if (me && me.score >= top && roomPlayers.length > 1) html += '<p class="rr-winner">You have the highest score! \u{1F3C6}</p>';
+  else if (roomPlayers.length > 1) html += `<p class="rr-loser">Top score: ${top}</p>`;
+  html += `<div class="rr-score">Your score: <strong>${me ? me.score : 0}</strong></div></div>`;
+  el.innerHTML = html;
+  el.classList.remove('hidden');
+}
+
+async function leaveRoom() {
+  try {
+    if (roomCode && myPlayerId) await supabaseClient.from('room_players').delete().eq('id', myPlayerId);
+  } catch (e) {}
+  stopRoomPoll();
+  roomCode = null;
+  roomMode = false;
+  myPlayerId = null;
+  roomPlayers = [];
+  openLive();
+}
+
+function wireLive() {
+  document.getElementById('nav-live').addEventListener('click', openLive);
+  document.getElementById('live-create').addEventListener('click', () => {
+    hostingRoom = true;
+    openCreate('pdf');
+  });
+  document.getElementById('live-join').addEventListener('click', async () => {
+    const code = document.getElementById('live-code-input').value;
+    await joinRoom(code);
+  });
+  document.getElementById('live-code-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('live-join').click();
+    }
+  });
+  document.getElementById('room-copy').addEventListener('click', () => {
+    const code = document.getElementById('room-code').textContent;
+    try {
+      navigator.clipboard && navigator.clipboard.writeText(code);
+      document.getElementById('room-copy').textContent = 'Copied!';
+      setTimeout(() => (document.getElementById('room-copy').textContent = 'Copy'), 1500);
+    } catch (e) {}
+  });
+  document.getElementById('room-leave').addEventListener('click', leaveRoom);
+}
+
 function startQuiz() {
   uploadScreen.classList.add('hidden');
   quizScreen.classList.remove('hidden');
@@ -764,6 +1033,9 @@ function renderQuestion() {
   const isChoice = item.type === 'choice';
   attempted = [];
 
+  const lb = document.getElementById('live-bar-area');
+  if (lb) lb.classList.toggle('hidden', !roomMode);
+
   deckBadge.textContent = isChoice ? 'MULTIPLE CHOICE' : 'FLASHCARD';
   deckBadge.classList.toggle('choice', isChoice);
   deckQuestion.textContent = item.question;
@@ -833,6 +1105,7 @@ function chooseAnswer(btn) {
     deckResult.textContent = 'Correct!';
     deckResult.className = 'deck-result correct';
     markAnswered(currentIndex, 'correct', item.options[oi], item.answer, item.options);
+    if (roomMode) bumpRoomScore();
     deckNext.disabled = false;
     return;
   }
@@ -883,6 +1156,7 @@ function selfMark(verdict) {
   deckResult.className = 'deck-result ' + verdict;
   markAnswered(currentIndex, verdict, verdict === 'correct' ? 'Knew it' : 'Missed it', item.answer);
   deckAnswerActions.classList.add('hidden');
+  if (roomMode && verdict === 'correct') bumpRoomScore();
 
   if (verdict === 'wrong') {
     const out = loseHeart();
@@ -938,6 +1212,10 @@ function resetDeckState() {
 
 function finishQuiz() {
   deckCard.classList.add('done');
+  if (roomMode) {
+    finishRoomPlay();
+    return;
+  }
   showResults();
 }
 
@@ -1238,6 +1516,9 @@ function closeSettings() {
 function updateFlashcardCountLabel() {}
 
 function resetToUpload() {
+  stopRoomPoll();
+  roomMode = false;
+  hostingRoom = false;
   flashcards = [];
   results = [];
   gradingPromises = {};
@@ -1431,6 +1712,7 @@ wireDeck();
 wireHome();
 wireProgress();
 wireHearts();
+wireLive();
 updateFlashcardCountLabel();
 renderHearts();
 renderPendingDeck();

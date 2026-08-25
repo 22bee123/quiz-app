@@ -33,6 +33,10 @@
         <span class="nav-emoji">&#128218;</span>
         <span class="nav-label">My decks</span>
       </button>
+      <button class="nav-item" id="nav-live" title="Live">
+        <span class="nav-emoji">&#127942;</span>
+        <span class="nav-label">Live</span>
+      </button>
     </nav>
 
     <button class="study-btn" id="study-btn">
@@ -255,6 +259,44 @@
         </div>
       </div>
 
+      <!-- Live screen -->
+      <section id="live-screen" class="screen hidden">
+        <div class="live-head">
+          <h1 class="live-title">&#127942; Live Competition</h1>
+          <p class="live-sub">Create a room and invite a friend, or join with a code — then race to the highest score.</p>
+        </div>
+
+        <div id="live-lobby">
+          <div class="live-actions">
+            <div class="live-card">
+              <div class="live-card-icon">&#128640;</div>
+              <h3>Create a room</h3>
+              <p>Set up a quiz and get a room code for others to join.</p>
+              <button id="live-create" class="btn btn-primary">Create a room &rarr;</button>
+            </div>
+            <div class="live-card">
+              <div class="live-card-icon">&#128101;</div>
+              <h3>Join a room</h3>
+              <p>Enter the room code a friend shared with you.</p>
+              <input id="live-code-input" class="live-code-input" maxlength="6" placeholder="Room code" />
+              <button id="live-join" class="btn btn-primary">Join</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="live-room" class="hidden">
+          <div class="room-head">
+            <span class="room-badge">Room code</span>
+            <span class="room-code" id="room-code">------</span>
+            <button class="room-copy" id="room-copy" title="Copy code">Copy</button>
+            <span class="room-wait" id="room-wait">Waiting for players&hellip;</span>
+          </div>
+          <div class="room-players" id="room-players"></div>
+          <div class="room-status hidden" id="room-status"></div>
+          <button id="room-leave" class="btn btn-secondary">Leave room</button>
+        </div>
+      </section>
+
       <!-- Quiz / Deck view -->
       <section id="quiz-screen" class="screen hidden">
         <div class="deck-head">
@@ -267,6 +309,7 @@
             <button id="endless-toggle" class="endless-btn" title="Endless mode">&#8734;</button>
           </div>
           <div class="deck-progress"><span id="deck-progress-fill"></span></div>
+          <div class="live-bar-area hidden" id="live-bar-area"></div>
         </div>
 
         <div class="card deck-card-panel" id="deck-card">
