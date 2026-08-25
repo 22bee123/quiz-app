@@ -467,6 +467,124 @@ function renderHearts() {
   if (de) de.innerHTML = heartsMarkup();
 }
 
+/* ---------------- Progress / XP / Streak ---------------- */
+
+const DAILY_GOAL = 5;
+
+function todayStr(d) {
+  const dt = d || new Date();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const day = String(dt.getDate()).padStart(2, '0');
+  return `${dt.getFullYear()}-${m}-${day}`;
+}
+
+function yesterdayStr() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return todayStr(d);
+}
+
+function loadNum(key, fallback) {
+  const v = parseInt(localStorage.getItem(key), 10);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+function saveProgress() {
+  localStorage.setItem('quizXp', String(quizXp));
+  localStorage.setItem('quizStreak', String(quizStreak));
+  localStorage.setItem('quizLastStudy', quizLastStudy || '');
+  localStorage.setItem('quizTodayQuestions', String(quizTodayQuestions));
+  localStorage.setItem('quizTodayDate', quizTodayDate || '');
+  localStorage.setItem('quizStudyDays', JSON.stringify(quizStudyDays));
+}
+
+let quizXp = loadNum('quizXp', 0);
+let quizStreak = loadNum('quizStreak', 0);
+let quizLastStudy = localStorage.getItem('quizLastStudy') || '';
+let quizTodayQuestions = loadNum('quizTodayQuestions', 0);
+let quizTodayDate = localStorage.getItem('quizTodayDate') || '';
+let quizStudyDays = [];
+try { quizStudyDays = JSON.parse(localStorage.getItem('quizStudyDays') || '[]'); } catch (e) { quizStudyDays = []; }
+if (!Array.isArray(quizStudyDays)) quizStudyDays = [];
+
+function levelInfo() {
+  const perLevel = 100;
+  const level = Math.floor(quizXp / perLevel) + 1;
+  const into = quizXp - (level - 1) * perLevel;
+  const titles = ['Novice', 'Learner', 'Studier', 'Achiever', 'Expert', 'Master', 'Genius', 'Legend'];
+  const title = titles[Math.min(level - 1, titles.length - 1)];
+  return { level, title, into, perLevel, pct: Math.min(100, Math.round((into / perLevel) * 100)) };
+}
+
+function recordStudy(correctCount, questionCount) {
+  quizXp += correctCount * 10;
+  const today = todayStr();
+  if (quizTodayDate !== today) {
+    quizTodayDate = today;
+    quizTodayQuestions = 0;
+  }
+  quizTodayQuestions += questionCount;
+  if (quizLastStudy !== today) {
+    quizStreak = quizLastStudy === yesterdayStr() ? quizStreak + 1 : 1;
+    quizLastStudy = today;
+  }
+  if (!quizStudyDays.includes(today)) {
+    quizStudyDays.push(today);
+    if (quizStudyDays.length > 40) quizStudyDays = quizStudyDays.slice(-40);
+  }
+  saveProgress();
+  renderProgress();
+}
+
+function renderProgress() {
+  const info = levelInfo();
+  const elTitle = document.getElementById('pc-title');
+  const elLevel = document.getElementById('pc-level');
+  const elFill = document.getElementById('pc-fill');
+  const elStreak = document.getElementById('pc-streak-text');
+  const elTogo = document.getElementById('pc-togo');
+  const elWeek = document.getElementById('pc-week');
+  const elAvatar = document.getElementById('pc-avatar');
+  const elFlame = document.getElementById('pc-flame');
+  if (!elTitle) return;
+
+  elTitle.textContent = info.title;
+  elLevel.textContent = `Level ${info.level} \u00b7 ${quizXp} XP`;
+  elFill.style.width = info.pct + '%';
+
+  elStreak.textContent = quizStreak > 0 ? `Keep your ${quizStreak} day streak!` : 'Start your streak today!';
+  elStreak.style.color = quizStreak > 0 ? '#f59e0b' : '#8a87a3';
+  elFlame.textContent = quizStreak > 0 ? '\u{1F525}' : '\u{1F551}';
+
+  const remaining = Math.max(0, DAILY_GOAL - quizTodayQuestions);
+  elTogo.textContent = remaining > 0
+    ? `${remaining} question${remaining === 1 ? '' : 's'} to continue your streak`
+    : 'Streak secured! \u{1F389}';
+
+  renderWeek(elWeek);
+}
+
+function renderWeek(el) {
+  if (!el) return;
+  el.innerHTML = '';
+  const days = [];
+  const now = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(now.getDate() - i);
+    days.push(d);
+  }
+  days.forEach((d) => {
+    const key = todayStr(d);
+    const studied = quizStudyDays.includes(key);
+    const isToday = key === todayStr();
+    const cell = document.createElement('div');
+    cell.className = 'pc-day' + (studied ? ' studied' : '') + (isToday ? ' today' : '');
+    cell.innerHTML = `<span class="pc-dow">${['S', 'M', 'T', 'W', 'T', 'F', 'S'][d.getDay()]}</span><span class="pc-dnum">${d.getDate()}</span>${studied ? '<span class="pc-dot"></span>' : ''}`;
+    el.appendChild(cell);
+  });
+}
+
 function startQuiz() {
   uploadScreen.classList.add('hidden');
   quizScreen.classList.remove('hidden');
@@ -765,6 +883,7 @@ function showResults() {
   });
 
   if (percent >= 50) launchConfetti();
+  recordStudy(correct, total);
 
   const note = document.getElementById('results-save-note');
   note.classList.remove('hidden');
@@ -1224,6 +1343,7 @@ updateFlashcardCountLabel();
 renderHearts();
 renderPendingDeck();
 renderJumpBack();
+renderProgress();
 setInterval(renderHearts, 1000);
 
 /* ---------------- Home: action cards, study input, jump back ---------------- */

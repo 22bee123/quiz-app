@@ -162,6 +162,138 @@ body::after {
 }
 
 /* Scrollable history */
+/* Progress / streak card */
+.progress-card {
+  margin: 0 10px 10px;
+  padding: 12px 14px;
+  background: linear-gradient(160deg, #ffffff, #f7f4ff);
+  border: 1px solid rgba(124, 92, 255, 0.16);
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(93, 82, 179, 0.1);
+}
+
+.pc-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.pc-avatar {
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.pc-title {
+  font-weight: 800;
+  font-size: 0.9rem;
+  color: #2d2a3a;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pc-level {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #7b5cff;
+  background: #f1ecff;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.pc-bar {
+  height: 8px;
+  background: #ece8fb;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.pc-bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #7b5cff, #b18cff);
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pc-streak {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+
+.pc-flame {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.pc-streak-text {
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: #f59e0b;
+}
+
+.pc-togo {
+  font-size: 0.75rem;
+  color: #8a87a3;
+  margin-bottom: 12px;
+}
+
+.pc-week {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.pc-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 2px;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.pc-day.today {
+  background: #f1ecff;
+}
+
+.pc-dow {
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: #b9b3d6;
+  text-transform: uppercase;
+}
+
+.pc-dnum {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #5a5672;
+}
+
+.pc-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.pc-day.studied .pc-dot {
+  background: #4ade80;
+}
+
+.pc-day.studied .pc-dnum {
+  color: #16a34a;
+}
+
 .sidebar-scroll {
   flex: 1;
   overflow-y: auto;
@@ -420,6 +552,10 @@ body::after {
 }
 
 .sidebar.collapsed .sidebar-scroll {
+  display: none;
+}
+
+.sidebar.collapsed .progress-card {
   display: none;
 }
 
@@ -2057,6 +2193,10 @@ header p {
   .sidebar.collapsed .nav-label,
   .sidebar.collapsed .nav-account-text {
     display: initial;
+  }
+
+  .sidebar.collapsed .progress-card {
+    display: block;
   }
 
   .sidebar.collapsed .sidebar-top {
