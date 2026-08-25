@@ -30,6 +30,7 @@
         <span class="pc-avatar" id="pc-avatar">&#129417;</span>
         <span class="pc-title" id="pc-title">Novice</span>
         <span class="pc-level" id="pc-level">Level 1 &middot; 0 XP</span>
+        <span class="pc-view">&#8250;</span>
       </div>
       <div class="pc-bar"><span id="pc-fill"></span></div>
       <div class="pc-streak">
@@ -201,6 +202,35 @@
               <button id="create-generate" class="btn btn-primary" disabled>Generate</button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Progress modal -->
+      <div id="progress-modal" class="modal hidden">
+        <div class="modal-backdrop" id="progress-backdrop"></div>
+        <div class="modal-card progress-modal">
+          <div class="modal-head">
+            <h3>Your progress</h3>
+            <button id="progress-close" class="modal-close">&times;</button>
+          </div>
+          <div class="pm-header">
+            <span class="pm-avatar" id="pm-avatar">&#129417;</span>
+            <span class="pm-title" id="pm-title">Novice</span>
+            <span class="pm-level" id="pm-level">Level 1 &middot; 0 XP</span>
+          </div>
+          <div class="pm-bar"><span id="pm-fill"></span></div>
+          <div class="pm-body">
+            <div class="pm-left">
+              <h2 class="pm-streak-title" id="pm-streak-title">Keep your 1 day streak!</h2>
+              <div class="pm-cal" id="pm-cal"></div>
+            </div>
+            <div class="pm-right">
+              <div class="pm-ring" id="pm-ring"><span class="pm-flame" id="pm-flame">&#128293;</span></div>
+              <div class="pm-togo" id="pm-togo">0 questions to continue your streak</div>
+              <button class="pm-cta" id="pm-cta">Keep your streak</button>
+            </div>
+          </div>
+          <button class="pm-foot" id="pm-foot">Go study &rarr;</button>
         </div>
       </div>
 

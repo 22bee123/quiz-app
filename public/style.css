@@ -164,12 +164,20 @@ body::after {
 /* Scrollable history */
 /* Progress / streak card */
 .progress-card {
+  position: relative;
   margin: 0 10px 10px;
   padding: 12px 14px;
   background: linear-gradient(160deg, #ffffff, #f7f4ff);
   border: 1px solid rgba(124, 92, 255, 0.16);
   border-radius: 14px;
   box-shadow: 0 6px 18px rgba(93, 82, 179, 0.1);
+  cursor: pointer;
+  transition: transform 0.16s, box-shadow 0.16s;
+}
+
+.progress-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(93, 82, 179, 0.16);
 }
 
 .pc-top {
@@ -203,6 +211,12 @@ body::after {
   padding: 3px 8px;
   border-radius: 999px;
   white-space: nowrap;
+}
+
+.pc-view {
+  font-size: 1rem;
+  color: #b9b3d6;
+  line-height: 1;
 }
 
 .pc-bar {
@@ -2553,4 +2567,199 @@ header h1 {
 
 .auth-error.info {
   color: #7b5cff;
+}
+
+/* ---------- Progress modal ---------- */
+.progress-modal {
+  max-width: 560px;
+  width: 100%;
+}
+
+.pm-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.pm-avatar {
+  font-size: 1.9rem;
+  line-height: 1;
+}
+
+.pm-title {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #2d2a3a;
+  flex: 1;
+}
+
+.pm-level {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #7b5cff;
+  background: #f1ecff;
+  padding: 5px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.pm-bar {
+  height: 10px;
+  background: #ece8fb;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 22px;
+}
+
+.pm-bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #7b5cff, #b18cff);
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pm-body {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 22px;
+}
+
+.pm-streak-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #2d2a3a;
+  margin-bottom: 18px;
+  letter-spacing: -0.02em;
+}
+
+.pm-cal-head {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.pm-dow {
+  text-align: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #b9b3d6;
+  text-transform: uppercase;
+}
+
+.pm-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.pm-day {
+  position: relative;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #8a87a3;
+  border-radius: 10px;
+}
+
+.pm-day.studied {
+  background: #e7f9ef;
+  color: #16a34a;
+  font-weight: 800;
+}
+
+.pm-day.today {
+  box-shadow: 0 0 0 2px #7b5cff inset;
+  background: #f1ecff;
+  color: #7b5cff;
+}
+
+.pm-day-flame {
+  position: absolute;
+  top: -8px;
+  right: -4px;
+  font-size: 0.8rem;
+}
+
+.pm-right {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.pm-ring {
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  background: conic-gradient(#f59e0b 0deg, #ece8fb 0deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.pm-ring::before {
+  content: '';
+  position: absolute;
+  inset: 13px;
+  background: #fff;
+  border-radius: 50%;
+}
+
+.pm-flame {
+  position: relative;
+  z-index: 1;
+  font-size: 3rem;
+  line-height: 1;
+}
+
+.pm-togo {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #8a87a3;
+  max-width: 180px;
+}
+
+.pm-cta {
+  border: none;
+  background: #2d2a3a;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 12px 20px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: filter 0.18s;
+}
+
+.pm-cta:hover {
+  filter: brightness(1.15);
+}
+
+.pm-foot {
+  display: block;
+  width: 100%;
+  margin-top: 20px;
+  border: none;
+  background: linear-gradient(135deg, #7b5cff, #b18cff);
+  color: #fff;
+  font-weight: 700;
+  padding: 13px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+@media (max-width: 520px) {
+  .pm-body {
+    grid-template-columns: 1fr;
+  }
 }

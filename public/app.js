@@ -585,6 +585,76 @@ function renderWeek(el) {
   });
 }
 
+function openProgress() {
+  renderProgressModal();
+  document.getElementById('progress-modal').classList.remove('hidden');
+}
+
+function closeProgress() {
+  document.getElementById('progress-modal').classList.add('hidden');
+}
+
+function renderProgressModal() {
+  const info = levelInfo();
+  const elTitle = document.getElementById('pm-title');
+  const elLevel = document.getElementById('pm-level');
+  const elFill = document.getElementById('pm-fill');
+  const elStreak = document.getElementById('pm-streak-title');
+  const elTogo = document.getElementById('pm-togo');
+  const elFlame = document.getElementById('pm-flame');
+  const elRing = document.getElementById('pm-ring');
+  const elCal = document.getElementById('pm-cal');
+  const elAvatar = document.getElementById('pm-avatar');
+  if (!elTitle) return;
+
+  elAvatar.textContent = info.level <= 1 ? '\u{1F989}' : info.level <= 3 ? '\u{1F393}' : info.level <= 5 ? '\u{1F4DA}' : '\u{1F451}';
+  elTitle.textContent = info.title;
+  elLevel.textContent = `Level ${info.level} \u00b7 ${quizXp} XP`;
+  elFill.style.width = info.pct + '%';
+  elStreak.textContent = quizStreak > 0 ? `Keep your ${quizStreak} day streak!` : 'Start your streak today!';
+
+  const remaining = Math.max(0, DAILY_GOAL - quizTodayQuestions);
+  elTogo.textContent = remaining > 0
+    ? `${remaining} question${remaining === 1 ? '' : 's'} to continue your streak`
+    : 'Streak secured! \u{1F389}';
+  elFlame.textContent = quizStreak > 0 ? '\u{1F525}' : '\u{1F551}';
+
+  const pct = Math.min(1, quizTodayQuestions / DAILY_GOAL);
+  elRing.style.background = `conic-gradient(#f59e0b ${pct * 360}deg, #ece8fb 0deg)`;
+
+  renderFullCal(elCal);
+}
+
+function renderFullCal(el) {
+  if (!el) return;
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const today = todayStr();
+
+  const head = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+    .map((h) => `<span class="pm-dow">${h}</span>`)
+    .join('');
+  el.innerHTML = `<div class="pm-cal-head">${head}</div><div class="pm-cal-grid"></div>`;
+  const grid = el.querySelector('.pm-cal-grid');
+
+  for (let i = 0; i < firstDow; i++) grid.appendChild(document.createElement('span'));
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(year, month, d);
+    const key = todayStr(date);
+    const studied = quizStudyDays.includes(key);
+    const isToday = key === today;
+    const hasFlame = isToday && studied && quizStreak > 0;
+    const cell = document.createElement('div');
+    cell.className = 'pm-day' + (studied ? ' studied' : '') + (isToday ? ' today' : '');
+    cell.innerHTML = `<span class="pm-day-num">${d}</span>${hasFlame ? '<span class="pm-day-flame">\u{1F525}</span>' : ''}`;
+    grid.appendChild(cell);
+  }
+  while (grid.children.length % 7 !== 0) grid.appendChild(document.createElement('span'));
+}
+
 function startQuiz() {
   uploadScreen.classList.add('hidden');
   quizScreen.classList.remove('hidden');
@@ -1339,6 +1409,7 @@ initSupabase();
 wireSidebar();
 wireDeck();
 wireHome();
+wireProgress();
 updateFlashcardCountLabel();
 renderHearts();
 renderPendingDeck();
@@ -1353,6 +1424,16 @@ function wireHome() {
   document.getElementById('action-text').addEventListener('click', () => openCreate('text'));
   document.getElementById('action-link').addEventListener('click', () => openCreate('link'));
   pickPdf.addEventListener('click', () => fileInput.click());
+}
+
+function wireProgress() {
+  document.getElementById('progress-card').addEventListener('click', openProgress);
+  document.getElementById('progress-close').addEventListener('click', closeProgress);
+  document.getElementById('progress-backdrop').addEventListener('click', closeProgress);
+  document.getElementById('pm-cta').addEventListener('click', () => {
+    closeProgress();
+    resetToUpload();
+  });
 }
 
 function renderJumpBack() {
