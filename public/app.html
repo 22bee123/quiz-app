@@ -238,6 +238,23 @@
         </div>
       </div>
 
+      <!-- No hearts modal -->
+      <div id="hearts-modal" class="modal hidden">
+        <div class="modal-backdrop" id="hearts-backdrop"></div>
+        <div class="modal-card hearts-modal">
+          <button class="modal-close hearts-close" id="hearts-close" title="Close">&times;</button>
+          <div class="hm-emoji" id="hm-emoji">&#128148;</div>
+          <h2 class="hm-title">You're out of hearts!</h2>
+          <p class="hm-sub">You need at least 1 heart to start or create a quiz. Studied too fast? Take a short break — hearts refill over time.</p>
+          <div class="hm-hearts" id="hm-hearts"></div>
+          <div class="hm-timer-box">
+            <span class="hm-timer-label">Next heart in</span>
+            <span class="hm-timer" id="hm-timer">00:00</span>
+          </div>
+          <button class="btn btn-primary" id="hm-close-btn">Got it</button>
+        </div>
+      </div>
+
       <!-- Quiz / Deck view -->
       <section id="quiz-screen" class="screen hidden">
         <div class="deck-head">

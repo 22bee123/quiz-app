@@ -125,6 +125,7 @@ fileInput.addEventListener('change', (e) => {
 });
 
 function openCreate(source) {
+  if (!requireHearts()) return;
   createSource = source;
   createMode = null;
   createFile = null;
@@ -416,6 +417,38 @@ function canGenerate() {
   return hearts >= 1;
 }
 
+function openNoHearts() {
+  const modal = document.getElementById('hearts-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  updateHeartsTimer();
+}
+
+function closeNoHearts() {
+  const modal = document.getElementById('hearts-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function updateHeartsTimer() {
+  syncHearts();
+  const modal = document.getElementById('hearts-modal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  const heartsEl = document.getElementById('hm-hearts');
+  if (heartsEl) {
+    let h = '';
+    for (let i = 0; i < MAX_HEARTS; i++) h += `<span class="life-heart${i < hearts ? '' : ' lost'}">\u2665</span>`;
+    heartsEl.innerHTML = h;
+  }
+  const timerEl = document.getElementById('hm-timer');
+  if (timerEl) timerEl.textContent = heartTimerLabel();
+}
+
+function requireHearts() {
+  if (canGenerate()) return true;
+  openNoHearts();
+  return false;
+}
+
 function loseHeart() {
   syncHearts();
   hearts = Math.max(0, hearts - 1);
@@ -702,11 +735,7 @@ function renderPendingDeck() {
 function startPendingDeck() {
   const pending = loadPendingDeck();
   if (!pending || pending.status !== 'ready' || !pending.flashcards) return;
-  if (!canGenerate()) {
-    const bar = document.getElementById('pending-status');
-    if (bar) bar.textContent = 'No hearts left. Next \u2665 in ' + heartTimerLabel() + '.';
-    return;
-  }
+  if (!requireHearts()) return;
   flashcards = pending.flashcards;
   results = new Array(flashcards.length).fill(null);
   gradingPromises = {};
@@ -1401,6 +1430,7 @@ wireSidebar();
 wireDeck();
 wireHome();
 wireProgress();
+wireHearts();
 updateFlashcardCountLabel();
 renderHearts();
 renderPendingDeck();
@@ -1416,9 +1446,9 @@ function wireHome() {
   document.getElementById('action-link').addEventListener('click', () => openCreate('link'));
   pickPdf.addEventListener('click', () => fileInput.click());
 
-  document.getElementById('study-btn').addEventListener('click', () => resetToUpload());
-  document.getElementById('add-btn').addEventListener('click', () => openCreate('pdf'));
-  document.getElementById('myd-add').addEventListener('click', () => openCreate('pdf'));
+  document.getElementById('study-btn').addEventListener('click', () => { if (requireHearts()) resetToUpload(); });
+  document.getElementById('add-btn').addEventListener('click', () => { if (requireHearts()) openCreate('pdf'); });
+  document.getElementById('myd-add').addEventListener('click', () => { if (requireHearts()) openCreate('pdf'); });
   document.getElementById('nav-myd').addEventListener('click', () => {
     const sc = document.querySelector('.sidebar-scroll');
     if (sc) sc.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1433,6 +1463,13 @@ function wireProgress() {
     closeProgress();
     resetToUpload();
   });
+}
+
+function wireHearts() {
+  document.getElementById('hearts-close').addEventListener('click', closeNoHearts);
+  document.getElementById('hearts-backdrop').addEventListener('click', closeNoHearts);
+  document.getElementById('hm-close-btn').addEventListener('click', closeNoHearts);
+  setInterval(updateHeartsTimer, 1000);
 }
 
 function renderJumpBack() {
