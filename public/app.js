@@ -538,6 +538,11 @@ function recordStudy(correctCount, questionCount) {
 
 function renderProgress() {
   renderProgressModal();
+  const el = document.getElementById('deck-streak');
+  if (el) {
+    el.textContent = quizStreak > 0 ? `\u{1F525} ${quizStreak} day${quizStreak === 1 ? '' : 's'}` : '\u{1F551} Start a streak';
+    el.classList.toggle('active', quizStreak > 0);
+  }
 }
 
 function renderWeek(el) {
@@ -638,6 +643,7 @@ function startQuiz() {
   endlessToggle.classList.remove('active');
   attempted = [];
   renderHearts();
+  renderProgress();
   setActiveNav('new');
   const pending = loadPendingDeck();
   deckName.textContent = pending && pending.name ? pending.name : 'Study deck';

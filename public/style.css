@@ -57,7 +57,7 @@ body::after {
 
 .app {
   width: 100%;
-  max-width: 680px;
+  max-width: 860px;
 }
 
 /* ---------- Sidebar ---------- */
@@ -1340,8 +1340,40 @@ header p {
   color: #c2bdda;
 }
 
+.deck-crumb .crumb-home {
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  color: #a09cb8;
+  cursor: pointer;
+  padding: 0;
+}
+
 .deck-crumb .crumb-home:hover {
   color: #7b5cff;
+}
+
+.deck-streak {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: #8a87a3;
+  background: #fff;
+  border: 1px solid #e5e1f6;
+  border-radius: 999px;
+  padding: 5px 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.deck-streak.active {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.35);
+  background: #fef3dd;
 }
 
 .deck-title-row {
