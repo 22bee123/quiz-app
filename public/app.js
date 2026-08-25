@@ -1286,7 +1286,9 @@ function buildSidebarHistoryItem(entry) {
 
   const item = document.createElement('div');
   item.className = 'hist-item';
+  const dotColor = deckColor(entry.module_name);
   item.innerHTML = `
+    <span class="hi-dot" style="background:${dotColor}"></span>
     <button class="hi-main-btn">
       <span class="hi-name">${escapeHtml(entry.module_name)}</span>
       <span class="hi-meta">${entry.score_percent}% &middot; ${date}</span>
@@ -1375,6 +1377,13 @@ function hideHistory() {
   recentList.innerHTML = '';
 }
 
+function deckColor(name) {
+  const colors = ['#8a7cff', '#ffb340', '#4ade80', '#38bdf8', '#f472b6', '#f87171', '#c084fc', '#34d399'];
+  let h = 0;
+  for (let i = 0; i < String(name).length; i++) h = (h * 31 + String(name).charCodeAt(i)) >>> 0;
+  return colors[h % colors.length];
+}
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
@@ -1400,6 +1409,14 @@ function wireHome() {
   document.getElementById('action-text').addEventListener('click', () => openCreate('text'));
   document.getElementById('action-link').addEventListener('click', () => openCreate('link'));
   pickPdf.addEventListener('click', () => fileInput.click());
+
+  document.getElementById('study-btn').addEventListener('click', () => resetToUpload());
+  document.getElementById('add-btn').addEventListener('click', () => openCreate('pdf'));
+  document.getElementById('myd-add').addEventListener('click', () => openCreate('pdf'));
+  document.getElementById('nav-myd').addEventListener('click', () => {
+    const sc = document.querySelector('.sidebar-scroll');
+    if (sc) sc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 }
 
 function wireProgress() {

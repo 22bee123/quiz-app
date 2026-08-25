@@ -336,7 +336,7 @@ body::after {
   padding: 2px 10px 12px;
   scrollbar-width: thin;
   scrollbar-color: #d9d5f0 transparent;
-}
+  scroll-behavior: smooth;}
 
 .sidebar-scroll::-webkit-scrollbar {
   width: 6px;
@@ -588,6 +588,11 @@ body::after {
 }
 
 .sidebar.collapsed .sidebar-scroll {
+  display: none;
+}
+
+.sidebar.collapsed .study-btn,
+.sidebar.collapsed .add-btn {
   display: none;
 }
 
@@ -2224,6 +2229,11 @@ header p {
     display: initial;
   }
 
+  .sidebar.collapsed .study-btn,
+  .sidebar.collapsed .add-btn {
+    display: flex;
+  }
+
   .sidebar.collapsed .sidebar-top {
     justify-content: space-between;
   }
@@ -2772,4 +2782,102 @@ header h1 {
   .pm-body {
     grid-template-columns: 1fr;
   }
+}
+
+/* ---------- Study / Add buttons ---------- */
+.study-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: calc(100% - 20px);
+  margin: 4px 10px 8px;
+  padding: 11px;
+  border: none;
+  border-radius: 12px;
+  background: #2d2a3a;
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  transition: filter 0.18s, transform 0.18s;
+}
+
+.study-btn:hover {
+  filter: brightness(1.2);
+  transform: translateY(-1px);
+}
+
+.study-icon {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(100% - 20px);
+  margin: 0 10px 10px;
+  padding: 10px;
+  border: 1.5px solid #e5e1f6;
+  border-radius: 12px;
+  background: #fff;
+  color: #3d3a52;
+  font-size: 0.9rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
+}
+
+.add-btn:hover {
+  border-color: #c9bdf5;
+  background: #f1ecff;
+}
+
+/* My decks header */
+.myd-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 6px;
+}
+
+.myd-title {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #3d3a52;
+}
+
+.myd-add {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #a09cb8;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.myd-add:hover {
+  background: #e7deff;
+  color: #7b5cff;
+}
+
+/* Deck colored dot */
+.hi-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-left: 2px;
 }
