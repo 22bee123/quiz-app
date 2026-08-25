@@ -20,26 +20,16 @@
       </button>
     </div>
 
-    <button id="nav-new" class="new-quiz-btn" title="Home">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-      <span class="nav-label">Home</span>
-    </button>
-
-    <div class="progress-card" id="progress-card">
-      <div class="pc-top">
-        <span class="pc-avatar" id="pc-avatar">&#129417;</span>
-        <span class="pc-title" id="pc-title">Novice</span>
-        <span class="pc-level" id="pc-level">Level 1 &middot; 0 XP</span>
-        <span class="pc-view">&#8250;</span>
-      </div>
-      <div class="pc-bar"><span id="pc-fill"></span></div>
-      <div class="pc-streak">
-        <span class="pc-flame" id="pc-flame">&#128293;</span>
-        <span class="pc-streak-text" id="pc-streak-text">Keep your 1 day streak!</span>
-      </div>
-      <div class="pc-togo" id="pc-togo"></div>
-      <div class="pc-week" id="pc-week"></div>
-    </div>
+    <nav class="sidebar-nav">
+      <button class="nav-item" id="nav-new" title="Home">
+        <span class="nav-emoji">&#127968;</span>
+        <span class="nav-label">Home</span>
+      </button>
+      <button class="nav-item" id="nav-progress" title="Progress">
+        <span class="nav-emoji">&#128293;</span>
+        <span class="nav-label">Progress</span>
+      </button>
+    </nav>
 
     <div class="sidebar-scroll">
       <div id="pinned-wrap" class="hist-section hidden">

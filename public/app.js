@@ -537,31 +537,7 @@ function recordStudy(correctCount, questionCount) {
 }
 
 function renderProgress() {
-  const info = levelInfo();
-  const elTitle = document.getElementById('pc-title');
-  const elLevel = document.getElementById('pc-level');
-  const elFill = document.getElementById('pc-fill');
-  const elStreak = document.getElementById('pc-streak-text');
-  const elTogo = document.getElementById('pc-togo');
-  const elWeek = document.getElementById('pc-week');
-  const elAvatar = document.getElementById('pc-avatar');
-  const elFlame = document.getElementById('pc-flame');
-  if (!elTitle) return;
-
-  elTitle.textContent = info.title;
-  elLevel.textContent = `Level ${info.level} \u00b7 ${quizXp} XP`;
-  elFill.style.width = info.pct + '%';
-
-  elStreak.textContent = quizStreak > 0 ? `Keep your ${quizStreak} day streak!` : 'Start your streak today!';
-  elStreak.style.color = quizStreak > 0 ? '#f59e0b' : '#8a87a3';
-  elFlame.textContent = quizStreak > 0 ? '\u{1F525}' : '\u{1F551}';
-
-  const remaining = Math.max(0, DAILY_GOAL - quizTodayQuestions);
-  elTogo.textContent = remaining > 0
-    ? `${remaining} question${remaining === 1 ? '' : 's'} to continue your streak`
-    : 'Streak secured! \u{1F389}';
-
-  renderWeek(elWeek);
+  renderProgressModal();
 }
 
 function renderWeek(el) {
@@ -1427,7 +1403,7 @@ function wireHome() {
 }
 
 function wireProgress() {
-  document.getElementById('progress-card').addEventListener('click', openProgress);
+  document.getElementById('nav-progress').addEventListener('click', openProgress);
   document.getElementById('progress-close').addEventListener('click', closeProgress);
   document.getElementById('progress-backdrop').addEventListener('click', closeProgress);
   document.getElementById('pm-cta').addEventListener('click', () => {

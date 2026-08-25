@@ -129,6 +129,28 @@ body::after {
   transform: rotate(180deg);
 }
 
+/* Nav list (Home / Progress) */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 10px 8px;
+}
+
+.nav-item .nav-emoji {
+  font-size: 1.05rem;
+  line-height: 1;
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.nav-item.active {
+  background: #e7deff;
+  color: #7b5cff;
+  font-weight: 700;
+}
+
 /* New Quiz button (top) */
 .new-quiz-btn {
   display: flex;
@@ -571,13 +593,6 @@ body::after {
 
 .sidebar.collapsed .progress-card {
   display: none;
-}
-
-.sidebar.collapsed .new-quiz-btn {
-  justify-content: center;
-  padding: 12px 0;
-  margin: 4px 8px 8px;
-  width: calc(100% - 16px);
 }
 
 .sidebar.collapsed .sidebar-top {
@@ -2209,10 +2224,6 @@ header p {
     display: initial;
   }
 
-  .sidebar.collapsed .progress-card {
-    display: block;
-  }
-
   .sidebar.collapsed .sidebar-top {
     justify-content: space-between;
   }
@@ -2312,10 +2323,9 @@ header h1 {
 }
 
 /* Nav active state */
-.nav-item.active {
+.nav-icon-btn.active {
   background: #e7deff;
   color: #7b5cff;
-  font-weight: 700;
 }
 
 .nav-icon-btn.active {
