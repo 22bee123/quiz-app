@@ -1780,6 +1780,15 @@ renderJumpBack();
 renderProgress();
 setInterval(renderHearts, 1000);
 
+// Guarantee a screen is always visible (never a blank page)
+setTimeout(() => {
+  const anyVisible = [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen].some((s) => s && !s.classList.contains('hidden'));
+  if (!anyVisible) {
+    const target = (authEnabled && authScreen) ? authScreen : (uploadScreen || quizScreen);
+    if (target) target.classList.remove('hidden');
+  }
+}, 1200);
+
 /* ---------------- Home: action cards, study input, jump back ---------------- */
 
 function wireHome() {
