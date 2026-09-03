@@ -3069,9 +3069,41 @@ header h1 {
 }
 
 .create-card {
-  background: linear-gradient(160deg, #7b5cff, #a56bff);
+  background: linear-gradient(160deg, #6d4df0 0%, #8f5cf5 55%, #a56bff 100%);
   border: none;
   color: #fff;
+  position: relative;
+  overflow: hidden;
+}
+
+.create-card::before {
+  content: '';
+  position: absolute;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  top: -60px;
+  right: -60px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.create-card::after {
+  content: '';
+  position: absolute;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  bottom: -30px;
+  left: -30px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.create-card .live-card-icon,
+.create-card h3,
+.create-card p,
+.create-card .btn {
+  position: relative;
+  z-index: 1;
 }
 
 .create-card .live-card-icon {
@@ -3085,15 +3117,16 @@ header h1 {
 }
 
 .create-card p {
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.95);
   font-size: 0.9rem;
   margin-bottom: 18px;
+  font-weight: 500;
 }
 
 .create-card .btn {
   background: #fff;
-  color: #7b5cff;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.14);
+  color: #6d4df0;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
 }
 
 .create-card .btn:hover {
