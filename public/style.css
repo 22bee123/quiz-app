@@ -3054,10 +3054,12 @@ header h1 {
 }
 
 .live-card {
+  display: flex;
+  flex-direction: column;
   background: #fff;
   border: 1px solid rgba(124, 92, 255, 0.16);
   border-radius: 20px;
-  padding: 30px 24px;
+  padding: 28px 24px 24px;
   text-align: center;
   box-shadow: 0 10px 30px rgba(93, 82, 179, 0.08);
   transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s;
@@ -3068,74 +3070,46 @@ header h1 {
   box-shadow: 0 16px 38px rgba(93, 82, 179, 0.14);
 }
 
-.create-card {
-  background: linear-gradient(160deg, #6d4df0 0%, #8f5cf5 55%, #a56bff 100%);
-  border: none;
-  color: #fff;
-  position: relative;
-  overflow: hidden;
+.live-orb {
+  width: 68px;
+  height: 68px;
+  border-radius: 20px;
+  margin: 0 auto 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 20px rgba(124, 92, 255, 0.22);
 }
 
-.create-card::before {
-  content: '';
-  position: absolute;
-  width: 160px;
-  height: 160px;
-  border-radius: 50%;
-  top: -60px;
-  right: -60px;
-  background: rgba(255, 255, 255, 0.14);
+.orb-create {
+  background: linear-gradient(135deg, #7b5cff, #a56bff);
 }
 
-.create-card::after {
-  content: '';
-  position: absolute;
-  width: 90px;
-  height: 90px;
-  border-radius: 50%;
-  bottom: -30px;
-  left: -30px;
-  background: rgba(255, 255, 255, 0.1);
+.orb-join {
+  background: linear-gradient(135deg, #f97316, #fbbf24);
 }
 
-.create-card .live-card-icon,
-.create-card h3,
-.create-card p,
-.create-card .btn {
-  position: relative;
-  z-index: 1;
+.live-card-icon {
+  font-size: 1.9rem;
+  line-height: 1;
 }
 
-.create-card .live-card-icon {
-  font-size: 2.4rem;
-}
-
-.create-card h3 {
-  font-size: 1.2rem;
+.live-card h3 {
+  font-size: 1.15rem;
   margin-bottom: 8px;
-  color: #fff;
+  color: #2d2a3a;
 }
 
-.create-card p {
-  color: rgba(255, 255, 255, 0.95);
+.live-card p {
+  color: #8a87a3;
   font-size: 0.9rem;
-  margin-bottom: 18px;
-  font-weight: 500;
+  margin-bottom: 20px;
 }
 
-.create-card .btn {
-  background: #fff;
-  color: #6d4df0;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+.live-card .btn {
+  margin-top: auto;
 }
 
-.create-card .btn:hover {
-  filter: brightness(1.02);
-}
-
-.join-card .live-card-icon {
-  font-size: 2.4rem;
-}
 
 .live-card-icon {
   margin-bottom: 10px;

@@ -270,15 +270,15 @@
 
         <div id="live-lobby">
           <div class="live-actions">
-            <div class="live-card create-card">
-              <div class="live-card-icon">&#128640;</div>
+            <div class="live-card">
+              <div class="live-orb orb-create"><span class="live-card-icon">&#128640;</span></div>
               <h3>Create a room</h3>
               <p>Set up a quiz and get a room code for others to join.</p>
-              <button id="live-create" class="btn btn-primary">Create a room &rarr;</button>
+              <button id="live-create" class="btn btn-primary">&#128640; Create a room</button>
             </div>
 
-            <div class="live-card join-card">
-              <div class="live-card-icon">&#128101;</div>
+            <div class="live-card">
+              <div class="live-orb orb-join"><span class="live-card-icon">&#128101;</span></div>
               <h3>Join a room</h3>
               <p>Enter the room code a friend shared with you.</p>
               <label class="code-label" for="live-code-input">Room code</label>
@@ -286,7 +286,7 @@
                 <span class="code-key">&#128273;</span>
                 <input id="live-code-input" class="live-code-input" maxlength="6" placeholder="••••••" autocomplete="off" spellcheck="false" />
               </div>
-              <button id="live-join" class="btn btn-primary">Join</button>
+              <button id="live-join" class="btn btn-primary">&#128101; Join room</button>
               <span class="join-hint" id="join-hint"></span>
             </div>
           </div>
