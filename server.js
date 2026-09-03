@@ -101,11 +101,12 @@ Respond with ONLY a valid JSON array in this exact format (no extra text):
 ]
 ${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 30000 ? text.slice(0, 30000) : text) + '"""'}`;
     } else {
-      prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} open-ended flashcards (quiz questions) that test understanding of the material.
+      prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} flashcards (quiz questions) where the learner must NAME or ENUMERATE specific items from the module.
 
 Requirements:
-- Questions must be answerable in a short phrase or 1-2 sentences.
-- Each flashcard needs a clear, accurate answer based on the module.
+- Ask the learner to name or list specific items (e.g. "Name the two main stages\u2026", "List the key ingredients\u2026", "Which molecule\u2026", "What are the inputs\u2026?").
+- The ANSWER must be a SHORT enumeration of the exact item(s) or a single specific term — a comma-separated list or one/few words. NEVER write a full sentence.
+- Keep answers as short and specific as possible. A precise, concise answer is best.
 - Vary difficulty across the questions.
 - Focus on key concepts, definitions, and important facts.
 
@@ -240,15 +241,15 @@ app.post('/api/grade', async (req, res) => {
       return res.status(400).json({ error: 'question, correctAnswer, and userAnswer are required.' });
     }
 
-    const prompt = `You are a fair grading assistant. A student answered a quiz question. Grade the answer as "correct", "partial", or "wrong".
+    const prompt = `You are a fair grading assistant. A student answered a quiz question that asks them to NAME or ENUMERATE specific items. Grade the answer as "correct", "partial", or "wrong".
 
-Be lenient: accept correct answers that are paraphrased or worded differently, as long as the key meaning is present.
-- "correct": fully correct or essentially equivalent to the correct answer.
-- "partial": contains some correct information but is incomplete or partly inaccurate.
-- "wrong": incorrect, irrelevant, or empty.
+The correct answer is a short list of specific items. Grade by whether the student listed the required item(s):
+- "correct": they named ALL the required items (order and wording can differ; synonyms are fine). Extra harmless words/order are okay.
+- "partial": they listed SOME of the items but missed one or more required items.
+- "wrong": they named none of the required items, or answered unrelated to the question.
 
 Question: ${question}
-Correct answer: ${correctAnswer}
+Correct answer (required items): ${correctAnswer}
 Student's answer: ${userAnswer}
 
 Reply with ONLY valid JSON: {"verdict": "correct"|"partial"|"wrong", "feedback": "one short sentence explaining the grade"}`;
