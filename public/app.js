@@ -722,7 +722,7 @@ function openLive() {
 
 async function hostCreateRoom(payload, name, questions) {
   if (!supabaseClient || !currentUser) {
-    alert('Please sign in to host a live competition.');
+    showToast('Please sign in to host a live competition.', 'partial');
     return;
   }
   if (!requireHearts()) return;
@@ -739,7 +739,7 @@ async function hostCreateRoom(payload, name, questions) {
     status: 'open',
   });
   if (error) {
-    setStatus(uploadStatus, 'Could not create room: ' + error.message, 'error');
+    showToast('Could not create room: ' + error.message, 'wrong');
     return;
   }
   roomCode = code;
@@ -772,8 +772,12 @@ async function hostCreateRoom(payload, name, questions) {
 
 async function joinRoom(code) {
   if (!supabaseClient || !currentUser) {
-    alert('Please sign in to join a live competition.');
-    return;
+    showToast('Please sign in to join a live competition.', 'partial');
+    return false;
+  }
+  if (!canGenerate()) {
+    openNoHearts();
+    return false;
   }
   code = (code || '').toUpperCase().trim();
   const { data: room, error } = await supabaseClient.from('rooms').select('*').eq('code', code).maybeSingle();
