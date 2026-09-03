@@ -1005,7 +1005,6 @@ async function saveMyUsername() {
   try {
     const { error } = await supabaseClient.from('profiles').update({ username }).eq('id', currentUser.id);
     if (error) {
-      setStatus(document.getElementById('my-username'), '', '');
       if (/unique/i.test(error.message)) {
         alert('That username is already taken. Try another.');
       }
