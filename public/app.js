@@ -1405,6 +1405,15 @@ function chooseAnswer(btn) {
   }
 }
 
+function safeHint(answer) {
+  const words = String(answer).split(/\s+/).filter(Boolean);
+  let h = '';
+  if (words.length) h = `${words.length} word${words.length > 1 ? 's' : ''}`;
+  const first = words.length ? words[0][0] : '';
+  if (first) h += (h ? ', ' : '') + `starts with '${first.toUpperCase()}'`;
+  return h;
+}
+
 async function checkFill() {
   const item = currentItem();
   if (item.type === 'choice') return;
@@ -1420,8 +1429,6 @@ async function checkFill() {
   deckResult.textContent = 'Checking\u2026';
   deckResult.className = 'deck-result';
   let verdict = 'wrong';
-  let feedback = '';
-  let hint = '';
   try {
     const res = await fetch('/api/grade', {
       method: 'POST',
@@ -1431,8 +1438,6 @@ async function checkFill() {
     const data = await res.json();
     if (res.ok) {
       verdict = data.verdict || 'wrong';
-      feedback = data.feedback || '';
-      hint = data.hint || '';
     }
   } catch (e) {}
 
@@ -1445,8 +1450,8 @@ async function checkFill() {
   deckResult.className = 'deck-result ' + verdict;
   const hintEl = document.getElementById('deck-hint');
   if (hintEl) {
-    if ((verdict === 'wrong' || verdict === 'partial') && hint) {
-      hintEl.textContent = '\u{1F4A1} Hint: ' + hint;
+    if (verdict === 'wrong' || verdict === 'partial') {
+      hintEl.textContent = '\u{1F4A1} Hint: ' + safeHint(item.answer);
       hintEl.classList.remove('hidden');
     } else {
       hintEl.classList.add('hidden');

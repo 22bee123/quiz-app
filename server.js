@@ -265,11 +265,11 @@ Reply with ONLY valid JSON: {"verdict": "correct"|"partial"|"wrong", "feedback":
     const parsed = JSON.parse(match[0]);
 
     const verdict = ['correct', 'partial', 'wrong'].includes(parsed.verdict) ? parsed.verdict : 'wrong';
+    const genericFeedback = verdict === 'correct' ? 'Correct.' : verdict === 'partial' ? 'Partly correct.' : 'Not quite.';
 
     res.json({
       verdict,
-      feedback: typeof parsed.feedback === 'string' ? parsed.feedback : '',
-      hint: typeof parsed.hint === 'string' ? parsed.hint : '',
+      feedback: genericFeedback,
     });
   } catch (err) {
     console.error('Grade error:', err.message);
