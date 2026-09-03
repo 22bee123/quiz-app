@@ -109,6 +109,41 @@ const createSourcePanel = document.getElementById('create-source-panel');
 const createTypePanel = document.getElementById('create-type-panel');
 const createStatus = document.getElementById('create-status');
 const createStatus2 = document.getElementById('create-status2');
+const createLoading = document.getElementById('create-loading');
+const clFill = document.getElementById('cl-fill');
+const clPercent = document.getElementById('cl-percent');
+let clTimer = null;
+let clPct = 0;
+
+function startCreateLoading() {
+  clPct = 4;
+  createLoading.classList.remove('hidden');
+  setCreateProgress(clPct);
+  if (clTimer) clearInterval(clTimer);
+  clTimer = setInterval(() => {
+    const step = 0.6 + Math.random() * 1.4;
+    clPct = Math.min(92, clPct + step);
+    setCreateProgress(clPct);
+  }, 250);
+}
+
+function setCreateProgress(pct) {
+  const val = Math.round(Math.min(100, pct));
+  if (clFill) clFill.style.width = val + '%';
+  if (clPercent) clPercent.textContent = val + '%';
+}
+
+function completeCreateLoading() {
+  if (clTimer) clearInterval(clTimer);
+  clTimer = null;
+  setCreateProgress(100);
+}
+
+function stopCreateLoading() {
+  if (clTimer) clearInterval(clTimer);
+  clTimer = null;
+  createLoading.classList.add('hidden');
+}
 const createNext = document.getElementById('create-next');
 const createBack = document.getElementById('create-back');
 const createGenerate = document.getElementById('create-generate');
@@ -217,8 +252,7 @@ function createBackStep() {
 async function runCreateGenerate() {
   if (!createMode) return;
   createGenerate.disabled = true;
-  createStatus2.className = 'auth-error info';
-  createStatus2.textContent = 'Generating your quiz with AI\u2026';
+  startCreateLoading();
 
   try {
     let payload;
@@ -231,7 +265,6 @@ async function runCreateGenerate() {
       payload = { text: createText.trim(), count: quizLength, mode: createMode };
       name = createText.trim().slice(0, 24);
     } else {
-      createStatus2.textContent = 'Fetching that page and extracting its text\u2026';
       const sc = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -239,6 +272,7 @@ async function runCreateGenerate() {
       });
       const scData = await sc.json();
       if (!sc.ok) {
+        stopCreateLoading();
         createStatus2.className = 'auth-error error';
         createStatus2.textContent = scData.error || 'Could not scrape that page.';
         createGenerate.disabled = false;
@@ -249,9 +283,15 @@ async function runCreateGenerate() {
     }
 
     const ok = await startAnalysis(payload, name, createStatus2);
-    if (ok) closeCreate();
-    else createGenerate.disabled = false;
+    completeCreateLoading();
+    if (ok) {
+      setTimeout(() => { stopCreateLoading(); closeCreate(); }, 400);
+    } else {
+      setTimeout(() => { stopCreateLoading(); }, 350);
+      createGenerate.disabled = false;
+    }
   } catch (err) {
+    stopCreateLoading();
     createStatus2.className = 'auth-error error';
     createStatus2.textContent = err.message || 'Something went wrong.';
     createGenerate.disabled = false;
