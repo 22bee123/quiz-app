@@ -244,15 +244,19 @@ app.post('/api/grade', async (req, res) => {
     const prompt = `You are a fair grading assistant. A student answered a quiz question that asks them to NAME or ENUMERATE specific items. Grade the answer as "correct", "partial", or "wrong".
 
 The correct answer is a short list of specific items. Grade by whether the student listed the required item(s):
-- "correct": they named ALL the required items (order and wording can differ; synonyms are fine). Extra harmless words/order are okay.
+- "correct": they named ALL the required items (order and wording can differ; synonyms are fine).
 - "partial": they listed SOME of the items but missed one or more required items.
 - "wrong": they named none of the required items, or answered unrelated to the question.
+
+Rules for the response:
+- "feedback" must be VERY short and concise (e.g. "Not quite.", "Partly there.", "Correct."). NEVER include the correct answer in feedback.
+- "hint" is a short, concise clue that helps WITHOUT revealing the answer — for example the number of words, the starting letter, or a category (e.g. "2 words, starts with 'l'"). Never write the actual answer as the hint.
 
 Question: ${question}
 Correct answer (required items): ${correctAnswer}
 Student's answer: ${userAnswer}
 
-Reply with ONLY valid JSON: {"verdict": "correct"|"partial"|"wrong", "feedback": "one short sentence explaining the grade"}`;
+Reply with ONLY valid JSON: {"verdict": "correct"|"partial"|"wrong", "feedback": "short feedback", "hint": "short clue"}`;
 
     const raw = await callDeepSeek([{ role: 'user', content: prompt }], 1000, 0.2);
 
@@ -265,6 +269,7 @@ Reply with ONLY valid JSON: {"verdict": "correct"|"partial"|"wrong", "feedback":
     res.json({
       verdict,
       feedback: typeof parsed.feedback === 'string' ? parsed.feedback : '',
+      hint: typeof parsed.hint === 'string' ? parsed.hint : '',
     });
   } catch (err) {
     console.error('Grade error:', err.message);

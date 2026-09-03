@@ -51,6 +51,7 @@ const deckAnswer = document.getElementById('deck-answer');
 const deckAnswerActions = document.getElementById('deck-answer-actions');
 const deckChoices = document.getElementById('deck-choices');
 const deckResult = document.getElementById('deck-result');
+const deckHint = document.getElementById('deck-hint');
 const deckPrev = document.getElementById('deck-prev');
 const deckNext = document.getElementById('deck-next');
 const deckFlip = document.getElementById('deck-flip');
@@ -1303,6 +1304,8 @@ function renderQuestion() {
   deckAnswerActions.classList.add('hidden');
   deckResult.classList.add('hidden');
   deckResult.textContent = '';
+  deckHint.classList.add('hidden');
+  deckHint.textContent = '';
   deckFlip.classList.add('hidden');
   deckNext.disabled = true;
 
@@ -1418,6 +1421,7 @@ async function checkFill() {
   deckResult.className = 'deck-result';
   let verdict = 'wrong';
   let feedback = '';
+  let hint = '';
   try {
     const res = await fetch('/api/grade', {
       method: 'POST',
@@ -1428,6 +1432,7 @@ async function checkFill() {
     if (res.ok) {
       verdict = data.verdict || 'wrong';
       feedback = data.feedback || '';
+      hint = data.hint || '';
     }
   } catch (e) {}
 
@@ -1436,8 +1441,18 @@ async function checkFill() {
   else playWrong();
 
   deckResult.classList.remove('hidden');
-  deckResult.textContent = verdict === 'correct' ? 'Correct! ' + (feedback || '') : (verdict === 'partial' ? 'Partly correct. ' : 'Not quite. ') + feedback;
+  deckResult.textContent = verdict === 'correct' ? 'Correct!' : (verdict === 'partial' ? 'Partly correct.' : 'Not quite.');
   deckResult.className = 'deck-result ' + verdict;
+  const hintEl = document.getElementById('deck-hint');
+  if (hintEl) {
+    if ((verdict === 'wrong' || verdict === 'partial') && hint) {
+      hintEl.textContent = '\u{1F4A1} Hint: ' + hint;
+      hintEl.classList.remove('hidden');
+    } else {
+      hintEl.classList.add('hidden');
+      hintEl.textContent = '';
+    }
+  }
   deckFillInput.disabled = true;
   deckCheck.disabled = true;
 
