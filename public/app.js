@@ -109,8 +109,15 @@ const createTextEl = document.getElementById('create-text');
 const createUrlEl = document.getElementById('create-url');
 
 function showScreen(screen) {
-  [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen].forEach((s) => s.classList.add('hidden'));
-  screen.classList.remove('hidden');
+  [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen].forEach((s) => { if (s) s.classList.add('hidden'); });
+  if (screen) screen.classList.remove('hidden');
+  ensureScreenVisible(screen);
+}
+
+function ensureScreenVisible(current) {
+  if (current && !current.classList.contains('hidden')) return;
+  const fallback = uploadScreen || authScreen || quizScreen;
+  if (fallback) fallback.classList.remove('hidden');
 }
 
 function setStatus(el, msg, type) {
@@ -1394,18 +1401,24 @@ function initSupabase() {
           showAuthGate();
         }
       });
-      supabaseClient.auth.getUser().then(({ data }) => {
-        currentUser = data.user || null;
-        updateAuthUI();
-        if (currentUser) {
-          loadHistory();
-          resetToUpload();
-        } else {
-          showAuthGate();
-        }
-      });
+      supabaseClient.auth.getUser()
+        .then(({ data }) => {
+          currentUser = data.user || null;
+          updateAuthUI();
+          if (currentUser) {
+            loadHistory();
+            resetToUpload();
+          } else {
+            showAuthGate();
+          }
+        })
+        .catch(() => showAuthGate());
     })
-    .catch(() => {});
+    .catch(() => {
+      // If config/auth can't be reached, still show a usable screen.
+      if (authEnabled) showAuthGate();
+      else resetToUpload();
+    });
 }
 
 function showAuthGate() {
