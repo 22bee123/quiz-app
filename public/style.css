@@ -3375,57 +3375,168 @@ header h1 {
   }
 }
 
-/* Source chooser (wizard) */
-#source-chooser {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+/* ---------- Friends ---------- */
+.friends-head {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.friends-title {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #2d2a3a;
+  margin-bottom: 6px;
+}
+
+.friends-sub {
+  color: #8a87a3;
+  font-size: 0.93rem;
+}
+
+.friend-search {
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.friend-search-row {
+  display: flex;
+  align-items: center;
   gap: 10px;
 }
 
-.src-opt {
+.fs-icon {
+  font-size: 1.1rem;
+  color: #b9b3d6;
+}
+
+.friend-query {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: #2d2a3a;
+  font-size: 1rem;
+  font-family: inherit;
+  outline: none;
+}
+
+.friend-search-row .btn {
+  margin-top: 0;
+  width: auto;
+}
+
+.friend-search-results {
+  margin-top: 14px;
+}
+
+.friend-section {
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.fs-title {
+  font-size: 1rem;
+  font-weight: 800;
+  color: #2d2a3a;
+  margin-bottom: 12px;
+}
+
+.friend-list {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+.friend-row {
+  display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 18px 8px;
-  border: 1.5px solid #e5e1f6;
-  border-radius: 14px;
+  gap: 12px;
   background: #f8f7ff;
-  color: #3d3a52;
-  font-family: inherit;
-  font-size: 0.95rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.18s;
+  border: 1px solid #ece8fb;
+  border-radius: 12px;
+  padding: 10px 12px;
 }
 
-.src-opt:hover {
-  border-color: #c9bdf5;
-  background: #f1ecff;
+.fr-avatar {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7b5cff, #b18cff);
+  color: #fff;
+  font-weight: 800;
 }
 
-.src-icon {
-  font-size: 1.6rem;
-}
-
-.src-sub {
-  font-size: 0.72rem;
+.fr-name {
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
-  color: #a09cb8;
+  color: #3d3a52;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* Fatal error banner */
-.fatal-error {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 3000;
+.fr-btn {
+  margin-top: 0;
+  width: auto;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+}
+
+.fr-btn-row {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.fr-accept,
+.fr-decline {
+  border: none;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.78rem;
+  padding: 7px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.fr-accept {
+  background: #16a34a;
+  color: #fff;
+}
+
+.fr-decline {
   background: #feecec;
   color: #dc2626;
+}
+
+.fr-pending {
+  font-size: 0.78rem;
   font-weight: 700;
+  color: #f59e0b;
+  background: #fef3dd;
+  padding: 5px 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.fr-friend {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #16a34a;
+  background: #e7f9ef;
+  padding: 5px 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.friend-empty {
+  color: #a09cb8;
+  font-size: 0.85rem;
   text-align: center;
-  padding: 12px 18px;
-  font-size: 0.9rem;
-  border-bottom: 1px solid #f5c6c6;
+  padding: 8px 0;
 }

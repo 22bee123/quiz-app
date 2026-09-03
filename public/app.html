@@ -37,6 +37,10 @@
         <span class="nav-emoji">&#127942;</span>
         <span class="nav-label">Live</span>
       </button>
+      <button class="nav-item" id="nav-friends" title="Friends">
+        <span class="nav-emoji">&#129309;</span>
+        <span class="nav-label">Friends</span>
+      </button>
     </nav>
 
     <button class="study-btn" id="study-btn">
@@ -87,7 +91,6 @@
   </aside>
 
   <main class="main">
-    <div id="fatal-error" class="fatal-error hidden"></div>
     <div class="app">
       <header>
         <div class="brand-badge">&#127891; AI QUIZ</div>
@@ -172,30 +175,22 @@
           <!-- Step 1: source -->
           <div id="create-source-panel">
             <p class="source-hint" id="source-hint"></p>
-            <div id="source-chooser">
-              <button class="src-opt" data-src="pdf"><span class="src-icon">&#128196;</span>PDF<span class="src-sub">file</span></button>
-              <button class="src-opt" data-src="text"><span class="src-icon">&#128221;</span>Text<span class="src-sub">paste</span></button>
-              <button class="src-opt" data-src="link"><span class="src-icon">&#128279;</span>Link<span class="src-sub">website &bull; YouTube</span></button>
+            <div id="source-pdf" class="source-box hidden">
+              <button id="pick-pdf" class="btn btn-secondary">Choose a PDF</button>
+              <div id="pdf-name" class="file-name"></div>
             </div>
-            <div id="source-fields">
-            <div id="source-fields">
-              <div id="source-pdf" class="source-box hidden">
-                <button id="pick-pdf" class="btn btn-secondary">Choose a PDF</button>
-                <div id="pdf-name" class="file-name"></div>
-              </div>
-              <div id="source-text" class="source-box hidden">
-                <label class="source-label" for="create-text">Your text</label>
-                <textarea id="create-text" rows="7" placeholder="Paste or type your module text here..."></textarea>
-                <span class="source-hint-small">Paste notes, a chapter, or any content you want to study.</span>
-              </div>
-              <div id="source-url" class="source-box hidden">
-                <label class="source-label" for="create-url">Website or YouTube link</label>
-                <input id="create-url" type="url" placeholder="https://en.wikipedia.org/..." />
-                <span class="source-hint-small">We\u2019ll read the page and turn it into questions.</span>
-              </div>
-              <div id="create-status" class="auth-error"></div>
-              <button id="create-next" class="btn btn-primary">Next</button>
+            <div id="source-text" class="source-box hidden">
+              <label class="source-label" for="create-text">Your text</label>
+              <textarea id="create-text" rows="7" placeholder="Paste or type your module text here..."></textarea>
+              <span class="source-hint-small">Paste notes, a chapter, or any content you want to study.</span>
             </div>
+            <div id="source-url" class="source-box hidden">
+              <label class="source-label" for="create-url">Website or YouTube link</label>
+              <input id="create-url" type="url" placeholder="https://en.wikipedia.org/..." />
+              <span class="source-hint-small">We\u2019ll read the page and turn it into questions.</span>
+            </div>
+            <div id="create-status" class="auth-error"></div>
+            <button id="create-next" class="btn btn-primary">Next</button>
           </div>
 
           <!-- Step 2: question type -->
@@ -311,6 +306,33 @@
           <div class="room-players" id="room-players"></div>
           <div class="room-status hidden" id="room-status"></div>
           <button id="room-leave" class="btn btn-secondary">Leave room</button>
+        </div>
+      </section>
+
+      <!-- Friends screen -->
+      <section id="friends-screen" class="screen hidden">
+        <div class="friends-head">
+          <h1 class="friends-title">&#129309; Friends</h1>
+          <p class="friends-sub">Add friends by email and challenge them to a live competition.</p>
+        </div>
+
+        <div class="friend-search card">
+          <div class="friend-search-row">
+            <span class="fs-icon">&#128269;</span>
+            <input id="friend-query" class="friend-query" placeholder="Search by email..." autocomplete="off" />
+            <button id="friend-search-btn" class="btn btn-primary">Search</button>
+          </div>
+          <div id="friend-search-results" class="friend-search-results"></div>
+        </div>
+
+        <div class="friend-section card">
+          <h3 class="fs-title">Requests</h3>
+          <div id="friend-requests" class="friend-list"></div>
+        </div>
+
+        <div class="friend-section card">
+          <h3 class="fs-title">Your friends</h3>
+          <div id="friend-list" class="friend-list"></div>
         </div>
       </section>
 

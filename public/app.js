@@ -29,6 +29,7 @@ const uploadScreen = document.getElementById('upload-screen');
 const quizScreen = document.getElementById('quiz-screen');
 const resultsScreen = document.getElementById('results-screen');
 const liveScreen = document.getElementById('live-screen');
+const friendsScreen = document.getElementById('friends-screen');
 
 const fileInput = document.getElementById('file-input');
 
@@ -65,6 +66,10 @@ const sidebarOpenBtn = document.getElementById('sidebar-open-btn');
 const sidebarBackdrop = document.getElementById('sidebar-backdrop');
 const navNew = document.getElementById('nav-new');
 const navSettings = document.getElementById('nav-settings');
+const navProgress = document.getElementById('nav-progress');
+const navMyd = document.getElementById('nav-myd');
+const navLive = document.getElementById('nav-live');
+const navFriends = document.getElementById('nav-friends');
 const navAccount = document.getElementById('nav-account');
 const navAvatar = document.getElementById('nav-avatar');
 const navAccountName = document.getElementById('nav-account-name');
@@ -109,15 +114,8 @@ const createTextEl = document.getElementById('create-text');
 const createUrlEl = document.getElementById('create-url');
 
 function showScreen(screen) {
-  [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen].forEach((s) => { if (s) s.classList.add('hidden'); });
-  if (screen) screen.classList.remove('hidden');
-  ensureScreenVisible(screen);
-}
-
-function ensureScreenVisible(current) {
-  if (current && !current.classList.contains('hidden')) return;
-  const fallback = uploadScreen || authScreen || quizScreen;
-  if (fallback) fallback.classList.remove('hidden');
+  [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen, friendsScreen].forEach((s) => s.classList.add('hidden'));
+  screen.classList.remove('hidden');
 }
 
 function setStatus(el, msg, type) {
@@ -140,7 +138,8 @@ fileInput.addEventListener('change', (e) => {
 });
 
 function openCreate(source) {
-  createSource = source || null;
+  if (!requireHearts()) return;
+  createSource = source;
   createMode = null;
   createFile = null;
   createText = '';
@@ -152,38 +151,23 @@ function openCreate(source) {
   createStatus2.textContent = '';
   createGenerate.disabled = true;
 
-  createTypePanel.classList.add('hidden');
-  createSourcePanel.classList.remove('hidden');
-  document.querySelectorAll('.type-option').forEach((b) => b.classList.remove('active'));
-
-  if (!createSource) {
-    // source chooser
-    createTitle.textContent = 'What would you like to study from?';
-    sourceHint.textContent = '';
-    document.getElementById('source-chooser').classList.remove('hidden');
-    document.getElementById('source-fields').classList.add('hidden');
-    createStatus.textContent = '';
-    createModal.classList.remove('hidden');
-    return;
-  }
-
-  document.getElementById('source-chooser').classList.add('hidden');
-  document.getElementById('source-fields').classList.remove('hidden');
-
   const titles = { pdf: 'Create a quiz from a PDF', text: 'Create a quiz from text', link: 'Create a quiz from a link' };
   const hints = {
     pdf: 'Upload a PDF and we\u2019ll turn it into a quiz.',
     text: 'Paste your module text below.',
     link: 'Paste a website or YouTube link (e.g. Wikipedia).',
   };
-  createTitle.textContent = titles[createSource];
-  sourceHint.textContent = hints[createSource];
-  sourcePdf.classList.toggle('hidden', createSource !== 'pdf');
-  sourceText.classList.toggle('hidden', createSource !== 'text');
-  sourceUrl.classList.toggle('hidden', createSource !== 'link');
+  createTitle.textContent = titles[source];
+  sourceHint.textContent = hints[source];
+  sourcePdf.classList.toggle('hidden', source !== 'pdf');
+  sourceText.classList.toggle('hidden', source !== 'text');
+  sourceUrl.classList.toggle('hidden', source !== 'link');
+  createTypePanel.classList.add('hidden');
+  createSourcePanel.classList.remove('hidden');
+  document.querySelectorAll('.type-option').forEach((b) => b.classList.remove('active'));
   createModal.classList.remove('hidden');
-  if (createSource === 'text') createTextEl.focus();
-  else if (createSource === 'link') createUrlEl.focus();
+  if (source === 'text') createTextEl.focus();
+  else if (source === 'link') createUrlEl.focus();
 }
 
 function closeCreate() {
@@ -224,11 +208,6 @@ function createBackStep() {
 
 async function runCreateGenerate() {
   if (!createMode) return;
-  if (!canGenerate()) {
-    openNoHearts();
-    createGenerate.disabled = false;
-    return;
-  }
   createGenerate.disabled = true;
   createStatus2.className = 'auth-error info';
   createStatus2.textContent = 'Generating your quiz with AI\u2026';
@@ -729,7 +708,7 @@ function openLive() {
 
 async function hostCreateRoom(payload, name, questions) {
   if (!supabaseClient || !currentUser) {
-    showToast('Please sign in to host a live competition.', 'partial');
+    alert('Please sign in to host a live competition.');
     return;
   }
   if (!requireHearts()) return;
@@ -746,7 +725,7 @@ async function hostCreateRoom(payload, name, questions) {
     status: 'open',
   });
   if (error) {
-    showToast('Could not create room: ' + error.message, 'wrong');
+    setStatus(uploadStatus, 'Could not create room: ' + error.message, 'error');
     return;
   }
   roomCode = code;
@@ -779,12 +758,8 @@ async function hostCreateRoom(payload, name, questions) {
 
 async function joinRoom(code) {
   if (!supabaseClient || !currentUser) {
-    showToast('Please sign in to join a live competition.', 'partial');
-    return false;
-  }
-  if (!canGenerate()) {
-    openNoHearts();
-    return false;
+    alert('Please sign in to join a live competition.');
+    return;
   }
   code = (code || '').toUpperCase().trim();
   const { data: room, error } = await supabaseClient.from('rooms').select('*').eq('code', code).maybeSingle();
@@ -828,6 +803,7 @@ function enterRoomPlay(questions) {
 }
 
 function startRoomPlay() {
+  flashcards = flashcards.length ? flashcards : flashcards;
   results = new Array(flashcards.length).fill(null);
   currentIndex = 0;
   openRoomPlay();
@@ -836,8 +812,6 @@ function startRoomPlay() {
 function openRoomPlay() {
   showScreen(quizScreen);
   attempted = [];
-  endless = false;
-  endlessToggle.classList.remove('active');
   renderHearts();
   renderProgress();
   deckName.textContent = 'Live Competition';
@@ -906,26 +880,15 @@ function renderRoomPlayers() {
 function finishRoomPlay() {
   if (!roomCode) return;
   const final = results.filter((r) => r && r.verdict === 'correct').length;
-  const update = myPlayerId
-    ? supabaseClient.from('room_players').update({ score: final, done: true }).eq('id', myPlayerId)
-    : Promise.resolve();
-  update.then(() => {
-    showScreen(liveScreen);
-    document.getElementById('live-lobby').classList.add('hidden');
-    document.getElementById('live-room').classList.remove('hidden');
-    document.getElementById('room-wait').textContent = 'Waiting for everyone to finish\u2026';
-    return fetchRoomPlayers();
-  }).then(() => {
-    showRoomResult();
-    pollRoomResult();
-  }).catch(() => {
-    showRoomResult();
-  });
-}
-
-function pollRoomResult() {
-  // keep polling so when the opponent finishes, their score shows too
-  startRoomPoll();
+  try {
+    supabaseClient.from('room_players').update({ score: final, done: true }).eq('id', myPlayerId);
+  } catch (e) {}
+  showScreen(liveScreen);
+  document.getElementById('live-lobby').classList.add('hidden');
+  document.getElementById('live-room').classList.remove('hidden');
+  document.getElementById('room-wait').textContent = 'Waiting for everyone to finish\u2026';
+  fetchRoomPlayers();
+  showRoomResult();
 }
 
 function showRoomResult() {
@@ -957,10 +920,7 @@ function wireLive() {
   document.getElementById('nav-live').addEventListener('click', openLive);
   document.getElementById('live-create').addEventListener('click', () => {
     hostingRoom = true;
-    openCreate();
-  });
-  document.querySelectorAll('.src-opt').forEach((btn) => {
-    btn.addEventListener('click', () => openCreate(btn.dataset.src));
+    openCreate('pdf');
   });
   document.getElementById('live-join').addEventListener('click', async () => {
     const code = document.getElementById('live-code-input').value;
@@ -990,6 +950,153 @@ function wireLive() {
     } catch (e) {}
   });
   document.getElementById('room-leave').addEventListener('click', leaveRoom);
+}
+
+/* ---------------- Friends ---------------- */
+
+function openFriends() {
+  if (!currentUser) {
+    showAuthGate();
+    return;
+  }
+  setActiveNav('friends');
+  showScreen(friendsScreen);
+  document.getElementById('friend-query').value = '';
+  document.getElementById('friend-search-results').innerHTML = '';
+  loadFriends();
+}
+
+async function searchFriends() {
+  const q = document.getElementById('friend-query').value.trim();
+  const resultsEl = document.getElementById('friend-search-results');
+  if (!q || !supabaseClient) {
+    resultsEl.innerHTML = '';
+    return;
+  }
+  resultsEl.innerHTML = '<p class="friend-empty">Searching&hellip;</p>';
+  try {
+    const { data, error } = await supabaseClient
+      .from('profiles')
+      .select('id, email, name')
+      .ilike('email', `%${q}%`)
+      .limit(10);
+    if (error) throw error;
+    const list = (data || []).filter((p) => p.id !== currentUser.id);
+    resultsEl.innerHTML = list.length ? '' : '<p class="friend-empty">No users found.</p>';
+    list.forEach((p) => resultsEl.appendChild(buildSearchResult(p)));
+  } catch (err) {
+    resultsEl.innerHTML = '<p class="friend-empty">Search failed.</p>';
+  }
+}
+
+function buildSearchResult(profile) {
+  const el = document.createElement('div');
+  el.className = 'friend-row';
+  el.innerHTML = `
+    <span class="fr-avatar">${escapeHtml((profile.email || '?')[0].toUpperCase())}</span>
+    <span class="fr-name">${escapeHtml(profile.email)}</span>
+    <button class="btn btn-primary fr-btn">Add friend</button>
+  `;
+  el.querySelector('.fr-btn').addEventListener('click', async () => {
+    const btn = el.querySelector('.fr-btn');
+    btn.disabled = true;
+    btn.textContent = 'Sending\u2026';
+    try {
+      const { error } = await supabaseClient.from('friendships').insert({
+        requester_id: currentUser.id,
+        requester_email: currentUser.email,
+        addressee_id: profile.id,
+        addressee_email: profile.email,
+        status: 'pending',
+      });
+      if (error) {
+        btn.textContent = error.message.includes('duplicate') ? 'Request sent' : 'Failed';
+      } else {
+        btn.textContent = 'Request sent \u2713';
+      }
+    } catch (e) {
+      btn.textContent = 'Failed';
+    }
+  });
+  return el;
+}
+
+async function loadFriends() {
+  if (!supabaseClient || !currentUser) return;
+  const requestsEl = document.getElementById('friend-requests');
+  const friendsEl = document.getElementById('friend-list');
+  try {
+    const { data: all, error } = await supabaseClient
+      .from('friendships')
+      .select('*')
+      .or(`requester_id.eq.${currentUser.id},addressee_id.eq.${currentUser.id}`)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const incoming = (all || []).filter((f) => f.addressee_id === currentUser.id && f.status === 'pending');
+    const outgoing = (all || []).filter((f) => f.requester_id === currentUser.id && f.status === 'pending');
+    const friends = (all || []).filter((f) => f.status === 'accepted');
+
+    requestsEl.innerHTML = '';
+    if (!incoming.length && !outgoing.length) {
+      requestsEl.innerHTML = '<p class="friend-empty">No requests right now.</p>';
+    }
+    incoming.forEach((f) => requestsEl.appendChild(buildRequestRow(f, 'incoming')));
+    outgoing.forEach((f) => requestsEl.appendChild(buildRequestRow(f, 'outgoing')));
+
+    friendsEl.innerHTML = '';
+    const friendNames = (all || []).filter((f) => f.status === 'accepted').map((f) =>
+      f.requester_id === currentUser.id ? f.addressee_email : f.requester_email
+    );
+    if (!friendNames.length) friendsEl.innerHTML = '<p class="friend-empty">No friends yet. Search above to add some!</p>';
+    friendNames.forEach((n) => (friendsEl.appendChild(buildFriendRow(n))));
+  } catch (err) {
+    requestsEl.innerHTML = '<p class="friend-empty">Could not load friends.</p>';
+    friendsEl.innerHTML = '';
+  }
+}
+
+function buildRequestRow(f, dir) {
+  const el = document.createElement('div');
+  el.className = 'friend-row request-row';
+  const email = dir === 'incoming' ? f.requester_email : f.addressee_email;
+  el.innerHTML = `
+    <span class="fr-avatar">${escapeHtml((email || '?')[0].toUpperCase())}</span>
+    <span class="fr-name">${escapeHtml(email)}</span>
+    ${dir === 'incoming' ? '<span class="fr-btn-row"><button class="fr-accept">Accept</button><button class="fr-decline">Decline</button></span>' : '<span class="fr-pending">Pending</span>'}
+  `;
+  if (dir === 'incoming') {
+    el.querySelector('.fr-accept').addEventListener('click', async () => {
+      await supabaseClient.from('friendships').update({ status: 'accepted' }).eq('id', f.id);
+      loadFriends();
+    });
+    el.querySelector('.fr-decline').addEventListener('click', async () => {
+      await supabaseClient.from('friendships').delete().eq('id', f.id);
+      loadFriends();
+    });
+  }
+  return el;
+}
+
+function buildFriendRow(email) {
+  const el = document.createElement('div');
+  el.className = 'friend-row';
+  el.innerHTML = `
+    <span class="fr-avatar">${escapeHtml((email || '?')[0].toUpperCase())}</span>
+    <span class="fr-name">${escapeHtml(email)}</span>
+    <span class="fr-friend">Friend &#10003;</span>
+  `;
+  return el;
+}
+
+function wireFriends() {
+  document.getElementById('nav-friends').addEventListener('click', openFriends);
+  document.getElementById('friend-search-btn').addEventListener('click', searchFriends);
+  document.getElementById('friend-query').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      searchFriends();
+    }
+  });
 }
 
 function startQuiz() {
@@ -1401,24 +1508,18 @@ function initSupabase() {
           showAuthGate();
         }
       });
-      supabaseClient.auth.getUser()
-        .then(({ data }) => {
-          currentUser = data.user || null;
-          updateAuthUI();
-          if (currentUser) {
-            loadHistory();
-            resetToUpload();
-          } else {
-            showAuthGate();
-          }
-        })
-        .catch(() => showAuthGate());
+      supabaseClient.auth.getUser().then(({ data }) => {
+        currentUser = data.user || null;
+        updateAuthUI();
+        if (currentUser) {
+          loadHistory();
+          resetToUpload();
+        } else {
+          showAuthGate();
+        }
+      });
     })
-    .catch(() => {
-      // If config/auth can't be reached, still show a usable screen.
-      if (authEnabled) showAuthGate();
-      else resetToUpload();
-    });
+    .catch(() => {});
 }
 
 function showAuthGate() {
@@ -1766,49 +1867,20 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-function safeInit(fn) {
-  try {
-    fn();
-  } catch (e) {
-    console.error('init step failed:', e && e.message);
-    showFatalError(e);
-  }
-}
-
-function showFatalError(e) {
-  try {
-    const msg = document.getElementById('fatal-error');
-    if (msg) {
-      msg.textContent = 'Something went wrong loading the app: ' + (e && e.message ? e.message : e) + '. Please hard-refresh (Ctrl+Shift+R) and check your internet connection.';
-      msg.classList.remove('hidden');
-    }
-  } catch (_) {}
-}
-
-window.addEventListener('error', (ev) => showFatalError(ev.error || ev.message));
-
-safeInit(initSupabase);
-safeInit(wireSidebar);
-safeInit(wireDeck);
-safeInit(wireHome);
-safeInit(wireProgress);
-safeInit(wireHearts);
-safeInit(wireLive);
+initSupabase();
+wireSidebar();
+wireDeck();
+wireHome();
+wireProgress();
+wireHearts();
+wireLive();
+wireFriends();
 updateFlashcardCountLabel();
 renderHearts();
-safeInit(renderPendingDeck);
-safeInit(renderJumpBack);
-safeInit(renderProgress);
+renderPendingDeck();
+renderJumpBack();
+renderProgress();
 setInterval(renderHearts, 1000);
-
-// Guarantee a screen is always visible (never a blank page)
-setTimeout(() => {
-  const anyVisible = [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen].some((s) => s && !s.classList.contains('hidden'));
-  if (!anyVisible) {
-    const target = (authEnabled && authScreen) ? authScreen : (uploadScreen || quizScreen);
-    if (target) target.classList.remove('hidden');
-  }
-}, 1200);
 
 /* ---------------- Home: action cards, study input, jump back ---------------- */
 
@@ -1818,9 +1890,9 @@ function wireHome() {
   document.getElementById('action-link').addEventListener('click', () => openCreate('link'));
   pickPdf.addEventListener('click', () => fileInput.click());
 
-  document.getElementById('study-btn').addEventListener('click', () => resetToUpload());
-  document.getElementById('add-btn').addEventListener('click', () => openCreate());
-  document.getElementById('myd-add').addEventListener('click', () => openCreate());
+  document.getElementById('study-btn').addEventListener('click', () => { if (requireHearts()) resetToUpload(); });
+  document.getElementById('add-btn').addEventListener('click', () => { if (requireHearts()) openCreate('pdf'); });
+  document.getElementById('myd-add').addEventListener('click', () => { if (requireHearts()) openCreate('pdf'); });
   document.getElementById('nav-myd').addEventListener('click', () => {
     const sc = document.querySelector('.sidebar-scroll');
     if (sc) sc.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1971,7 +2043,7 @@ function animateScore(el, target, duration = 900) {
 }
 
 function setActiveNav(view) {
-  [navNew, navSettings].forEach((btn) => {
-    btn.classList.toggle('active', btn.id === 'nav-' + view);
+  [navNew, navSettings, navFriends, navProgress, navMyd, navLive].forEach((btn) => {
+    if (btn) btn.classList.toggle('active', btn.id === 'nav-' + view);
   });
 }
