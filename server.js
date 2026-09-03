@@ -101,18 +101,18 @@ Respond with ONLY a valid JSON array in this exact format (no extra text):
 ]
 ${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 30000 ? text.slice(0, 30000) : text) + '"""'}`;
     } else {
-      prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} flashcards (quiz questions) where the learner must NAME or ENUMERATE specific items from the module.
+      prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} FILL-IN-THE-BLANK flashcards (quiz questions) from the module.
 
 Requirements:
-- Ask the learner to name or list specific items (e.g. "Name the two main stages\u2026", "List the key ingredients\u2026", "Which molecule\u2026", "What are the inputs\u2026?").
-- The ANSWER must be a SHORT enumeration of the exact item(s) or a single specific term — a comma-separated list or one/few words. NEVER write a full sentence.
-- Keep answers as short and specific as possible. A precise, concise answer is best.
+- Write each question as a statement/sentence from the module with a blank marked as "____" in place of the key term(s) or item(s) (e.g. "The two main stages of photosynthesis are ____ and ____.").
+- The blank must be filled by a SHORT, specific answer — a single term, a few words, or a short enumerated list. NEVER a full sentence.
+- Keep the answer as short and specific as possible.
 - Vary difficulty across the questions.
 - Focus on key concepts, definitions, and important facts.
 
 Respond with ONLY a valid JSON array in this exact format (no extra text):
 [
-  { "type": "flashcard", "question": "...", "answer": "..." }
+  { "type": "flashcard", "question": "... ____ ...", "answer": "short answer" }
 ]
 ${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 30000 ? text.slice(0, 30000) : text) + '"""'}`;
     }

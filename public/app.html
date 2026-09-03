@@ -364,6 +364,11 @@
         <div class="card deck-card-panel" id="deck-card">
           <div class="deck-badge" id="deck-badge">FLASHCARD</div>
           <h1 class="deck-question" id="deck-question"></h1>
+          <div class="deck-blank hidden" id="deck-blank"></div>
+          <div class="deck-fill hidden" id="deck-fill">
+            <input id="deck-fill-input" class="deck-fill-input" placeholder="Type the missing word(s)..." autocomplete="off" />
+            <button id="deck-check" class="btn btn-primary">Check</button>
+          </div>
           <div class="deck-answer hidden" id="deck-answer"></div>
           <div class="deck-answers hidden" id="deck-answer-actions">
             <button class="self-btn self-yes" id="self-yes">&#128077; Knew it</button>
@@ -375,7 +380,7 @@
 
         <div class="deck-controls">
           <button class="deck-nav-btn" id="deck-prev">&#8249; Previous</button>
-          <button class="deck-flip-btn" id="deck-flip">Flip card</button>
+          <button class="deck-flip-btn hidden" id="deck-flip">Flip card</button>
           <button class="deck-nav-btn" id="deck-next">Next &#8250;</button>
         </div>
       </section>

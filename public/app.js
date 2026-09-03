@@ -40,6 +40,10 @@ const deckProgressFill = document.getElementById('deck-progress-fill');
 const deckCard = document.getElementById('deck-card');
 const deckBadge = document.getElementById('deck-badge');
 const deckQuestion = document.getElementById('deck-question');
+const deckBlank = document.getElementById('deck-blank');
+const deckFill = document.getElementById('deck-fill');
+const deckFillInput = document.getElementById('deck-fill-input');
+const deckCheck = document.getElementById('deck-check');
 const deckAnswer = document.getElementById('deck-answer');
 const deckAnswerActions = document.getElementById('deck-answer-actions');
 const deckChoices = document.getElementById('deck-choices');
@@ -351,9 +355,13 @@ async function renderPdfImages(file, maxPages = 8) {
 /* ---------------- Deck view ---------------- */
 
 function wireDeck() {
-  deckFlip.addEventListener('click', flipCard);
-  document.getElementById('self-yes').addEventListener('click', () => selfMark('correct'));
-  document.getElementById('self-no').addEventListener('click', () => selfMark('wrong'));
+  deckCheck.addEventListener('click', checkFill);
+  deckFillInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      checkFill();
+    }
+  });
   deckPrev.addEventListener('click', goPrev);
   deckNext.addEventListener('click', goNext);
   endlessToggle.addEventListener('click', () => {
@@ -1272,15 +1280,20 @@ function renderQuestion() {
 
   deckBadge.textContent = isChoice ? 'MULTIPLE CHOICE' : 'FLASHCARD';
   deckBadge.classList.toggle('choice', isChoice);
-  deckQuestion.textContent = item.question;
+  deckQuestion.textContent = isChoice ? item.question : '';
+  deckFillInput.value = '';
   deckCount.textContent = `${currentIndex + 1} of ${flashcards.length} cards`;
   deckProgressFill.style.width = `${(currentIndex / flashcards.length) * 100}%`;
 
+  deckBlank.classList.add('hidden');
+  deckBlank.innerHTML = '';
+  deckFill.classList.add('hidden');
   deckAnswer.classList.add('hidden');
   deckAnswer.textContent = '';
   deckAnswerActions.classList.add('hidden');
   deckResult.classList.add('hidden');
   deckResult.textContent = '';
+  deckFlip.classList.add('hidden');
   deckNext.disabled = true;
 
   if (isChoice) {
@@ -1295,19 +1308,31 @@ function renderQuestion() {
       b.addEventListener('click', () => chooseAnswer(b));
       deckChoices.appendChild(b);
     });
-    deckFlip.disabled = true;
-    deckFlip.classList.add('hidden');
   } else {
     deckChoices.classList.add('hidden');
     deckChoices.innerHTML = '';
-    deckFlip.disabled = false;
-    deckFlip.classList.remove('hidden');
-    deckFlip.textContent = 'Flip card';
+    // fill-in-the-blank: replot the sentence with the blank replaced by a styled inline blank
+    deckBlank.classList.remove('hidden');
+    deckBlank.innerHTML = renderBlankQuestion(item.question);
+    deckFill.classList.remove('hidden');
+    setTimeout(() => deckFillInput.focus(), 50);
   }
 
   deckPrev.disabled = currentIndex === 0;
   const last = currentIndex === flashcards.length - 1;
   deckNext.textContent = last && !endless ? 'Finish' : 'Next ›';
+}
+
+function renderBlankQuestion(question) {
+  const blanks = (question.match(/_{2,}/g) || []).length;
+  if (!blanks) return escapeHtml(question);
+  const parts = question.split(/_+/);
+  let html = '';
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) html += '<span class="blank-marker"></span>';
+    if (parts[i]) html += escapeHtml(parts[i]);
+  }
+  return html;
 }
 
 function revealCorrectChoice() {
@@ -1366,32 +1391,46 @@ function chooseAnswer(btn) {
   }
 }
 
-function flipCard() {
+async function checkFill() {
   const item = currentItem();
   if (item.type === 'choice') return;
-  if (deckAnswer.classList.contains('hidden')) {
-    deckAnswer.classList.remove('hidden');
-    deckAnswer.textContent = item.answer;
-    deckFlip.textContent = 'Show question';
-    deckAnswerActions.classList.remove('hidden');
-  } else {
-    deckAnswer.classList.add('hidden');
-    deckFlip.textContent = 'Flip card';
-    deckAnswerActions.classList.add('hidden');
+  const answer = deckFillInput.value.trim();
+  if (!answer) {
+    deckResult.classList.remove('hidden');
+    deckResult.textContent = 'Type the missing word(s) first.';
+    deckResult.className = 'deck-result wrong';
+    return;
   }
-}
+  deckCheck.disabled = true;
+  deckResult.classList.remove('hidden');
+  deckResult.textContent = 'Checking\u2026';
+  deckResult.className = 'deck-result';
+  let verdict = 'wrong';
+  let feedback = '';
+  try {
+    const res = await fetch('/api/grade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: item.question, correctAnswer: item.answer, userAnswer: answer }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      verdict = data.verdict || 'wrong';
+      feedback = data.feedback || '';
+    }
+  } catch (e) {}
 
-function selfMark(verdict) {
-  const item = currentItem();
+  markAnswered(currentIndex, verdict, answer, item.answer);
   if (verdict === 'correct') playCorrect();
   else playWrong();
-  deckResult.classList.remove('hidden');
-  deckResult.textContent = verdict === 'correct' ? 'Nice! You knew it.' : 'You missed it.';
-  deckResult.className = 'deck-result ' + verdict;
-  markAnswered(currentIndex, verdict, verdict === 'correct' ? 'Knew it' : 'Missed it', item.answer);
-  deckAnswerActions.classList.add('hidden');
-  if (roomMode && verdict === 'correct') bumpRoomScore();
 
+  deckResult.classList.remove('hidden');
+  deckResult.textContent = verdict === 'correct' ? 'Correct! ' + (feedback || '') : (verdict === 'partial' ? 'Partly correct. ' : 'Not quite. ') + feedback + (verdict === 'wrong' ? ` Answer: ${item.answer}` : '');
+  deckResult.className = 'deck-result ' + verdict;
+  deckFillInput.disabled = true;
+  deckCheck.disabled = true;
+
+  if (roomMode && verdict === 'correct') bumpRoomScore();
   if (verdict === 'wrong') {
     const out = loseHeart();
     if (out) return;
@@ -1403,7 +1442,7 @@ function goNext() {
   const done = !!results[currentIndex];
   if (!done) {
     deckResult.classList.remove('hidden');
-    deckResult.textContent = currentItem().type === 'choice' ? 'Choose an answer first.' : 'Flip the card to check the answer.';
+    deckResult.textContent = currentItem().type === 'choice' ? 'Choose an answer first.' : 'Type the missing word(s) and press Check.';
     deckResult.className = 'deck-result wrong';
     return;
   }
