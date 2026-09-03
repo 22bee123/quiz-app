@@ -3540,3 +3540,115 @@ header h1 {
   text-align: center;
   padding: 8px 0;
 }
+
+/* ---------- Global username + stats ---------- */
+.my-handle {
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  background: linear-gradient(160deg, #ffffff, #f7f4ff);
+}
+
+.mh-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a87a3;
+  margin-bottom: 10px;
+}
+
+.mh-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mh-at {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: #7b5cff;
+}
+
+.mh-input {
+  flex: 1;
+  min-width: 0;
+  background: #f8f7ff;
+  border: 1.5px solid #e5e1f6;
+  border-radius: 12px;
+  color: #2d2a3a;
+  padding: 11px 14px;
+  font-size: 1rem;
+  font-family: inherit;
+  text-transform: lowercase;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.mh-input:focus {
+  outline: none;
+  border-color: #7b5cff;
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.14);
+}
+
+.mh-row .btn {
+  margin-top: 0;
+  width: auto;
+  padding: 11px 18px;
+}
+
+.mh-stats {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.fr-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.fr-sub {
+  font-size: 0.74rem;
+  color: #a09cb8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fr-stats {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.ps-badge {
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: #7b5cff;
+  background: #f1ecff;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.ps-xp {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #8a87a3;
+  background: #fff;
+  border: 1px solid #ece8fb;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.ps-streak {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #f59e0b;
+  background: #fef3dd;
+  padding: 3px 8px;
+  border-radius: 999px;
+}

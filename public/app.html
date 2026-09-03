@@ -313,13 +313,23 @@
       <section id="friends-screen" class="screen hidden">
         <div class="friends-head">
           <h1 class="friends-title">&#129309; Friends</h1>
-          <p class="friends-sub">Add friends by email and challenge them to a live competition.</p>
+          <p class="friends-sub">Find players by their global username, add friends, and see their stats.</p>
+        </div>
+
+        <div class="card my-handle">
+          <span class="mh-label">Your global username</span>
+          <div class="mh-row">
+            <span class="mh-at">@</span>
+            <input id="my-username" class="mh-input" maxlength="20" placeholder="set a username" autocomplete="off" />
+            <button id="save-username" class="btn btn-primary">Save</button>
+          </div>
+          <div class="mh-stats" id="my-stats"></div>
         </div>
 
         <div class="friend-search card">
           <div class="friend-search-row">
             <span class="fs-icon">&#128269;</span>
-            <input id="friend-query" class="friend-query" placeholder="Search by email..." autocomplete="off" />
+            <input id="friend-query" class="friend-query" placeholder="Search by username or email..." autocomplete="off" />
             <button id="friend-search-btn" class="btn btn-primary">Search</button>
           </div>
           <div id="friend-search-results" class="friend-search-results"></div>

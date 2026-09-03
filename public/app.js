@@ -585,6 +585,14 @@ function recordStudy(correctCount, questionCount) {
   }
   saveProgress();
   renderProgress();
+  syncProfileStats();
+}
+
+function syncProfileStats() {
+  if (!supabaseClient || !currentUser) return;
+  try {
+    supabaseClient.from('profiles').update({ xp: quizXp, streak: quizStreak, questions: quizTodayQuestions }).eq('id', currentUser.id);
+  } catch (e) {}
 }
 
 function renderProgress() {
@@ -963,7 +971,46 @@ function openFriends() {
   showScreen(friendsScreen);
   document.getElementById('friend-query').value = '';
   document.getElementById('friend-search-results').innerHTML = '';
+  loadMyProfile();
   loadFriends();
+}
+
+function nameOf(p) {
+  return p.username || p.email || 'Unknown';
+}
+
+function statsHtml(p) {
+  const level = Math.floor((p.xp || 0) / 100) + 1;
+  return `<span class="ps-badge">Lv ${level}</span><span class="ps-xp">${p.xp || 0} XP</span><span class="ps-streak">\u{1F525} ${p.streak || 0}</span>`;
+}
+
+async function loadMyProfile() {
+  if (!supabaseClient || !currentUser) return;
+  try {
+    const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
+    if (error || !data) return;
+    const input = document.getElementById('my-username');
+    if (input && !input.dataset.touched) input.value = data.username || '';
+    const stats = document.getElementById('my-stats');
+    if (stats) stats.innerHTML = statsHtml({ xp: data.xp, streak: data.streak }) || '';
+  } catch (e) {}
+}
+
+async function saveMyUsername() {
+  const input = document.getElementById('my-username');
+  const username = (input.value || '').replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+  if (!username) return;
+  input.value = username;
+  input.dataset.touched = '1';
+  try {
+    const { error } = await supabaseClient.from('profiles').update({ username }).eq('id', currentUser.id);
+    if (error) {
+      setStatus(document.getElementById('my-username'), '', '');
+      if (/unique/i.test(error.message)) {
+        alert('That username is already taken. Try another.');
+      }
+    }
+  } catch (e) {}
 }
 
 async function searchFriends() {
@@ -977,8 +1024,8 @@ async function searchFriends() {
   try {
     const { data, error } = await supabaseClient
       .from('profiles')
-      .select('id, email, name')
-      .ilike('email', `%${q}%`)
+      .select('*')
+      .or(`email.ilike.%${q}%,username.ilike.%${q}%`)
       .limit(10);
     if (error) throw error;
     const list = (data || []).filter((p) => p.id !== currentUser.id);
@@ -993,8 +1040,12 @@ function buildSearchResult(profile) {
   const el = document.createElement('div');
   el.className = 'friend-row';
   el.innerHTML = `
-    <span class="fr-avatar">${escapeHtml((profile.email || '?')[0].toUpperCase())}</span>
-    <span class="fr-name">${escapeHtml(profile.email)}</span>
+    <span class="fr-avatar">${escapeHtml((profile.username || profile.email || '?')[0].toUpperCase())}</span>
+    <span class="fr-info">
+      <span class="fr-name">${escapeHtml(nameOf(profile))}</span>
+      <span class="fr-sub">${escapeHtml(profile.email || '')}</span>
+      <span class="fr-stats">${statsHtml(profile)}</span>
+    </span>
     <button class="btn btn-primary fr-btn">Add friend</button>
   `;
   el.querySelector('.fr-btn').addEventListener('click', async () => {
@@ -1032,9 +1083,12 @@ async function loadFriends() {
       .or(`requester_id.eq.${currentUser.id},addressee_id.eq.${currentUser.id}`)
       .order('created_at', { ascending: false });
     if (error) throw error;
+
     const incoming = (all || []).filter((f) => f.addressee_id === currentUser.id && f.status === 'pending');
     const outgoing = (all || []).filter((f) => f.requester_id === currentUser.id && f.status === 'pending');
-    const friends = (all || []).filter((f) => f.status === 'accepted');
+    const friendIds = (all || []).filter((f) => f.status === 'accepted').map((f) =>
+      f.requester_id === currentUser.id ? f.addressee_id : f.requester_id
+    );
 
     requestsEl.innerHTML = '';
     if (!incoming.length && !outgoing.length) {
@@ -1044,11 +1098,17 @@ async function loadFriends() {
     outgoing.forEach((f) => requestsEl.appendChild(buildRequestRow(f, 'outgoing')));
 
     friendsEl.innerHTML = '';
-    const friendNames = (all || []).filter((f) => f.status === 'accepted').map((f) =>
-      f.requester_id === currentUser.id ? f.addressee_email : f.requester_email
-    );
-    if (!friendNames.length) friendsEl.innerHTML = '<p class="friend-empty">No friends yet. Search above to add some!</p>';
-    friendNames.forEach((n) => (friendsEl.appendChild(buildFriendRow(n))));
+    if (!friendIds.length) {
+      friendsEl.innerHTML = '<p class="friend-empty">No friends yet. Search above to add some!</p>';
+    } else {
+      const { data: profiles, error: pe } = await supabaseClient.from('profiles').select('*').in('id', friendIds);
+      const byId = {};
+      (profiles || []).forEach((p) => (byId[p.id] = p));
+      friendIds.forEach((id) => {
+        const p = byId[id];
+        friendsEl.appendChild(buildFriendRow(p));
+      });
+    }
   } catch (err) {
     requestsEl.innerHTML = '<p class="friend-empty">Could not load friends.</p>';
     friendsEl.innerHTML = '';
@@ -1058,10 +1118,13 @@ async function loadFriends() {
 function buildRequestRow(f, dir) {
   const el = document.createElement('div');
   el.className = 'friend-row request-row';
-  const email = dir === 'incoming' ? f.requester_email : f.addressee_email;
+  const name = dir === 'incoming' ? (f.requester_email || 'User') : (f.addressee_email || 'User');
   el.innerHTML = `
-    <span class="fr-avatar">${escapeHtml((email || '?')[0].toUpperCase())}</span>
-    <span class="fr-name">${escapeHtml(email)}</span>
+    <span class="fr-avatar">${escapeHtml(name[0].toUpperCase())}</span>
+    <span class="fr-info">
+      <span class="fr-name">${escapeHtml(name)}</span>
+      <span class="fr-sub">${dir === 'incoming' ? 'wants to connect' : 'request sent'}</span>
+    </span>
     ${dir === 'incoming' ? '<span class="fr-btn-row"><button class="fr-accept">Accept</button><button class="fr-decline">Decline</button></span>' : '<span class="fr-pending">Pending</span>'}
   `;
   if (dir === 'incoming') {
@@ -1077,12 +1140,16 @@ function buildRequestRow(f, dir) {
   return el;
 }
 
-function buildFriendRow(email) {
+function buildFriendRow(profile) {
   const el = document.createElement('div');
+  const nm = profile ? nameOf(profile) : 'Friend';
   el.className = 'friend-row';
   el.innerHTML = `
-    <span class="fr-avatar">${escapeHtml((email || '?')[0].toUpperCase())}</span>
-    <span class="fr-name">${escapeHtml(email)}</span>
+    <span class="fr-avatar">${escapeHtml(nm[0].toUpperCase())}</span>
+    <span class="fr-info">
+      <span class="fr-name">${escapeHtml(nm)}</span>
+      ${profile ? `<span class="fr-stats">${statsHtml(profile)}</span>` : ''}
+    </span>
     <span class="fr-friend">Friend &#10003;</span>
   `;
   return el;
@@ -1091,6 +1158,13 @@ function buildFriendRow(email) {
 function wireFriends() {
   document.getElementById('nav-friends').addEventListener('click', openFriends);
   document.getElementById('friend-search-btn').addEventListener('click', searchFriends);
+  document.getElementById('save-username').addEventListener('click', saveMyUsername);
+  const mi = document.getElementById('my-username');
+  if (mi) {
+    mi.addEventListener('input', () => {
+      mi.value = mi.value.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+    });
+  }
   document.getElementById('friend-query').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
