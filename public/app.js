@@ -1766,18 +1766,39 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-initSupabase();
-wireSidebar();
-wireDeck();
-wireHome();
-wireProgress();
-wireHearts();
-wireLive();
+function safeInit(fn) {
+  try {
+    fn();
+  } catch (e) {
+    console.error('init step failed:', e && e.message);
+    showFatalError(e);
+  }
+}
+
+function showFatalError(e) {
+  try {
+    const msg = document.getElementById('fatal-error');
+    if (msg) {
+      msg.textContent = 'Something went wrong loading the app: ' + (e && e.message ? e.message : e) + '. Please hard-refresh (Ctrl+Shift+R) and check your internet connection.';
+      msg.classList.remove('hidden');
+    }
+  } catch (_) {}
+}
+
+window.addEventListener('error', (ev) => showFatalError(ev.error || ev.message));
+
+safeInit(initSupabase);
+safeInit(wireSidebar);
+safeInit(wireDeck);
+safeInit(wireHome);
+safeInit(wireProgress);
+safeInit(wireHearts);
+safeInit(wireLive);
 updateFlashcardCountLabel();
 renderHearts();
-renderPendingDeck();
-renderJumpBack();
-renderProgress();
+safeInit(renderPendingDeck);
+safeInit(renderJumpBack);
+safeInit(renderProgress);
 setInterval(renderHearts, 1000);
 
 // Guarantee a screen is always visible (never a blank page)

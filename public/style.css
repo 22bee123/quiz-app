@@ -3413,3 +3413,19 @@ header h1 {
   font-weight: 600;
   color: #a09cb8;
 }
+
+/* Fatal error banner */
+.fatal-error {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3000;
+  background: #feecec;
+  color: #dc2626;
+  font-weight: 700;
+  text-align: center;
+  padding: 12px 18px;
+  font-size: 0.9rem;
+  border-bottom: 1px solid #f5c6c6;
+}
