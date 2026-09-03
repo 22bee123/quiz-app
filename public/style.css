@@ -3712,3 +3712,19 @@ header h1 {
   margin-top: 0;
   width: auto;
 }
+
+.deck-see {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.deck-see .btn {
+  margin-top: 0;
+  width: auto;
+}
+
+.deck-fill .btn.btn-secondary {
+  margin-top: 0;
+  width: auto;
+}

@@ -199,8 +199,8 @@
             <div class="type-options">
               <button class="type-option" data-mode="flashcard">
                 <span class="to-icon">&#128278;</span>
-                <span class="to-title">Flashcards</span>
-                <span class="to-sub">Type your answer</span>
+                <span class="to-title">Fill in the Blank</span>
+                <span class="to-sub">Type the missing word(s)</span>
               </button>
               <button class="type-option" data-mode="choice">
                 <span class="to-icon">&#9745;</span>
@@ -368,6 +368,10 @@
           <div class="deck-fill hidden" id="deck-fill">
             <input id="deck-fill-input" class="deck-fill-input" placeholder="Type the missing word(s)..." autocomplete="off" />
             <button id="deck-check" class="btn btn-primary">Check</button>
+            <button id="deck-skip" class="btn btn-secondary">Skip</button>
+          </div>
+          <div class="deck-see hidden" id="deck-see">
+            <button id="deck-see-answer" class="btn btn-secondary">&#128065; See the answer</button>
           </div>
           <div class="deck-answer hidden" id="deck-answer"></div>
           <div class="deck-answers hidden" id="deck-answer-actions">

@@ -44,6 +44,9 @@ const deckBlank = document.getElementById('deck-blank');
 const deckFill = document.getElementById('deck-fill');
 const deckFillInput = document.getElementById('deck-fill-input');
 const deckCheck = document.getElementById('deck-check');
+const deckSkip = document.getElementById('deck-skip');
+const deckSee = document.getElementById('deck-see');
+const deckSeeAnswer = document.getElementById('deck-see-answer');
 const deckAnswer = document.getElementById('deck-answer');
 const deckAnswerActions = document.getElementById('deck-answer-actions');
 const deckChoices = document.getElementById('deck-choices');
@@ -356,6 +359,8 @@ async function renderPdfImages(file, maxPages = 8) {
 
 function wireDeck() {
   deckCheck.addEventListener('click', checkFill);
+  deckSkip.addEventListener('click', skipFill);
+  deckSeeAnswer.addEventListener('click', revealAnswer);
   deckFillInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -1278,10 +1283,15 @@ function renderQuestion() {
   const lb = document.getElementById('live-bar-area');
   if (lb) lb.classList.toggle('hidden', !roomMode);
 
-  deckBadge.textContent = isChoice ? 'MULTIPLE CHOICE' : 'FLASHCARD';
+  deckBadge.textContent = isChoice ? 'MULTIPLE CHOICE' : 'ENUMERATION';
   deckBadge.classList.toggle('choice', isChoice);
   deckQuestion.textContent = isChoice ? item.question : '';
   deckFillInput.value = '';
+  deckFillInput.disabled = false;
+  deckCheck.disabled = false;
+  deckSee.classList.add('hidden');
+  deckAnswer.classList.add('hidden');
+  deckAnswer.textContent = '';
   deckCount.textContent = `${currentIndex + 1} of ${flashcards.length} cards`;
   deckProgressFill.style.width = `${(currentIndex / flashcards.length) * 100}%`;
 
@@ -1425,10 +1435,14 @@ async function checkFill() {
   else playWrong();
 
   deckResult.classList.remove('hidden');
-  deckResult.textContent = verdict === 'correct' ? 'Correct! ' + (feedback || '') : (verdict === 'partial' ? 'Partly correct. ' : 'Not quite. ') + feedback + (verdict === 'wrong' ? ` Answer: ${item.answer}` : '');
+  deckResult.textContent = verdict === 'correct' ? 'Correct! ' + (feedback || '') : (verdict === 'partial' ? 'Partly correct. ' : 'Not quite. ') + feedback;
   deckResult.className = 'deck-result ' + verdict;
   deckFillInput.disabled = true;
   deckCheck.disabled = true;
+
+  if (verdict === 'wrong' || verdict === 'partial') {
+    deckSee.classList.remove('hidden');
+  }
 
   if (roomMode && verdict === 'correct') bumpRoomScore();
   if (verdict === 'wrong') {
@@ -1436,6 +1450,28 @@ async function checkFill() {
     if (out) return;
   }
   deckNext.disabled = false;
+}
+
+function skipFill() {
+  const item = currentItem();
+  if (item.type === 'choice') return;
+  playWrong();
+  markAnswered(currentIndex, 'wrong', 'Skipped', item.answer);
+  deckFillInput.disabled = true;
+  deckCheck.disabled = true;
+  deckResult.classList.remove('hidden');
+  deckResult.textContent = 'Skipped.';
+  deckResult.className = 'deck-result wrong';
+  deckSee.classList.remove('hidden');
+  deckNext.disabled = false;
+}
+
+function revealAnswer() {
+  const item = currentItem();
+  if (item.type === 'choice') return;
+  deckAnswer.classList.remove('hidden');
+  deckAnswer.textContent = item.answer;
+  deckSee.classList.add('hidden');
 }
 
 function goNext() {
