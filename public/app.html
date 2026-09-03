@@ -171,22 +171,30 @@
           <!-- Step 1: source -->
           <div id="create-source-panel">
             <p class="source-hint" id="source-hint"></p>
-            <div id="source-pdf" class="source-box hidden">
-              <button id="pick-pdf" class="btn btn-secondary">Choose a PDF</button>
-              <div id="pdf-name" class="file-name"></div>
+            <div id="source-chooser">
+              <button class="src-opt" data-src="pdf"><span class="src-icon">&#128196;</span>PDF<span class="src-sub">file</span></button>
+              <button class="src-opt" data-src="text"><span class="src-icon">&#128221;</span>Text<span class="src-sub">paste</span></button>
+              <button class="src-opt" data-src="link"><span class="src-icon">&#128279;</span>Link<span class="src-sub">website &bull; YouTube</span></button>
             </div>
-            <div id="source-text" class="source-box hidden">
-              <label class="source-label" for="create-text">Your text</label>
-              <textarea id="create-text" rows="7" placeholder="Paste or type your module text here..."></textarea>
-              <span class="source-hint-small">Paste notes, a chapter, or any content you want to study.</span>
+            <div id="source-fields">
+            <div id="source-fields">
+              <div id="source-pdf" class="source-box hidden">
+                <button id="pick-pdf" class="btn btn-secondary">Choose a PDF</button>
+                <div id="pdf-name" class="file-name"></div>
+              </div>
+              <div id="source-text" class="source-box hidden">
+                <label class="source-label" for="create-text">Your text</label>
+                <textarea id="create-text" rows="7" placeholder="Paste or type your module text here..."></textarea>
+                <span class="source-hint-small">Paste notes, a chapter, or any content you want to study.</span>
+              </div>
+              <div id="source-url" class="source-box hidden">
+                <label class="source-label" for="create-url">Website or YouTube link</label>
+                <input id="create-url" type="url" placeholder="https://en.wikipedia.org/..." />
+                <span class="source-hint-small">We\u2019ll read the page and turn it into questions.</span>
+              </div>
+              <div id="create-status" class="auth-error"></div>
+              <button id="create-next" class="btn btn-primary">Next</button>
             </div>
-            <div id="source-url" class="source-box hidden">
-              <label class="source-label" for="create-url">Website or YouTube link</label>
-              <input id="create-url" type="url" placeholder="https://en.wikipedia.org/..." />
-              <span class="source-hint-small">We\u2019ll read the page and turn it into questions.</span>
-            </div>
-            <div id="create-status" class="auth-error"></div>
-            <button id="create-next" class="btn btn-primary">Next</button>
           </div>
 
           <!-- Step 2: question type -->

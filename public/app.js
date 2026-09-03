@@ -134,7 +134,7 @@ fileInput.addEventListener('change', (e) => {
 
 function openCreate(source) {
   if (!requireHearts()) return;
-  createSource = source;
+  createSource = source || null;
   createMode = null;
   createFile = null;
   createText = '';
@@ -146,23 +146,38 @@ function openCreate(source) {
   createStatus2.textContent = '';
   createGenerate.disabled = true;
 
+  createTypePanel.classList.add('hidden');
+  createSourcePanel.classList.remove('hidden');
+  document.querySelectorAll('.type-option').forEach((b) => b.classList.remove('active'));
+
+  if (!createSource) {
+    // source chooser
+    createTitle.textContent = 'What would you like to study from?';
+    sourceHint.textContent = '';
+    document.getElementById('source-chooser').classList.remove('hidden');
+    document.getElementById('source-fields').classList.add('hidden');
+    createStatus.textContent = '';
+    createModal.classList.remove('hidden');
+    return;
+  }
+
+  document.getElementById('source-chooser').classList.add('hidden');
+  document.getElementById('source-fields').classList.remove('hidden');
+
   const titles = { pdf: 'Create a quiz from a PDF', text: 'Create a quiz from text', link: 'Create a quiz from a link' };
   const hints = {
     pdf: 'Upload a PDF and we\u2019ll turn it into a quiz.',
     text: 'Paste your module text below.',
     link: 'Paste a website or YouTube link (e.g. Wikipedia).',
   };
-  createTitle.textContent = titles[source];
-  sourceHint.textContent = hints[source];
-  sourcePdf.classList.toggle('hidden', source !== 'pdf');
-  sourceText.classList.toggle('hidden', source !== 'text');
-  sourceUrl.classList.toggle('hidden', source !== 'link');
-  createTypePanel.classList.add('hidden');
-  createSourcePanel.classList.remove('hidden');
-  document.querySelectorAll('.type-option').forEach((b) => b.classList.remove('active'));
+  createTitle.textContent = titles[createSource];
+  sourceHint.textContent = hints[createSource];
+  sourcePdf.classList.toggle('hidden', createSource !== 'pdf');
+  sourceText.classList.toggle('hidden', createSource !== 'text');
+  sourceUrl.classList.toggle('hidden', createSource !== 'link');
   createModal.classList.remove('hidden');
-  if (source === 'text') createTextEl.focus();
-  else if (source === 'link') createUrlEl.focus();
+  if (createSource === 'text') createTextEl.focus();
+  else if (createSource === 'link') createUrlEl.focus();
 }
 
 function closeCreate() {
@@ -798,7 +813,6 @@ function enterRoomPlay(questions) {
 }
 
 function startRoomPlay() {
-  flashcards = flashcards.length ? flashcards : flashcards;
   results = new Array(flashcards.length).fill(null);
   currentIndex = 0;
   openRoomPlay();
@@ -807,6 +821,8 @@ function startRoomPlay() {
 function openRoomPlay() {
   showScreen(quizScreen);
   attempted = [];
+  endless = false;
+  endlessToggle.classList.remove('active');
   renderHearts();
   renderProgress();
   deckName.textContent = 'Live Competition';
@@ -875,15 +891,26 @@ function renderRoomPlayers() {
 function finishRoomPlay() {
   if (!roomCode) return;
   const final = results.filter((r) => r && r.verdict === 'correct').length;
-  try {
-    supabaseClient.from('room_players').update({ score: final, done: true }).eq('id', myPlayerId);
-  } catch (e) {}
-  showScreen(liveScreen);
-  document.getElementById('live-lobby').classList.add('hidden');
-  document.getElementById('live-room').classList.remove('hidden');
-  document.getElementById('room-wait').textContent = 'Waiting for everyone to finish\u2026';
-  fetchRoomPlayers();
-  showRoomResult();
+  const update = myPlayerId
+    ? supabaseClient.from('room_players').update({ score: final, done: true }).eq('id', myPlayerId)
+    : Promise.resolve();
+  update.then(() => {
+    showScreen(liveScreen);
+    document.getElementById('live-lobby').classList.add('hidden');
+    document.getElementById('live-room').classList.remove('hidden');
+    document.getElementById('room-wait').textContent = 'Waiting for everyone to finish\u2026';
+    return fetchRoomPlayers();
+  }).then(() => {
+    showRoomResult();
+    pollRoomResult();
+  }).catch(() => {
+    showRoomResult();
+  });
+}
+
+function pollRoomResult() {
+  // keep polling so when the opponent finishes, their score shows too
+  startRoomPoll();
 }
 
 function showRoomResult() {
@@ -915,7 +942,10 @@ function wireLive() {
   document.getElementById('nav-live').addEventListener('click', openLive);
   document.getElementById('live-create').addEventListener('click', () => {
     hostingRoom = true;
-    openCreate('pdf');
+    openCreate();
+  });
+  document.querySelectorAll('.src-opt').forEach((btn) => {
+    btn.addEventListener('click', () => openCreate(btn.dataset.src));
   });
   document.getElementById('live-join').addEventListener('click', async () => {
     const code = document.getElementById('live-code-input').value;

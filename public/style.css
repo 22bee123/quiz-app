@@ -3374,3 +3374,42 @@ header h1 {
     grid-template-columns: 1fr;
   }
 }
+
+/* Source chooser (wizard) */
+#source-chooser {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.src-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 18px 8px;
+  border: 1.5px solid #e5e1f6;
+  border-radius: 14px;
+  background: #f8f7ff;
+  color: #3d3a52;
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.src-opt:hover {
+  border-color: #c9bdf5;
+  background: #f1ecff;
+}
+
+.src-icon {
+  font-size: 1.6rem;
+}
+
+.src-sub {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #a09cb8;
+}
