@@ -1325,6 +1325,7 @@ function renderQuestion() {
     deckBlank.classList.remove('hidden');
     deckBlank.innerHTML = renderBlankQuestion(item.question);
     deckFill.classList.remove('hidden');
+    deckSkip.disabled = true;
     setTimeout(() => deckFillInput.focus(), 50);
   }
 
@@ -1442,9 +1443,11 @@ async function checkFill() {
 
   if (verdict === 'correct') {
     deckNext.disabled = false;
+    deckSkip.disabled = true;
     deckSee.classList.add('hidden');
   } else {
     deckNext.disabled = true;
+    deckSkip.disabled = false;
     deckSee.classList.remove('hidden');
   }
 
@@ -1458,10 +1461,9 @@ async function checkFill() {
 function skipFill() {
   const item = currentItem();
   if (item.type === 'choice') return;
-  if (!results[currentIndex]) {
-    markAnswered(currentIndex, 'wrong', 'Skipped', item.answer);
-    playWrong();
-  }
+  const res = results[currentIndex];
+  if (!res || res.verdict === 'correct') return;
+  if (res.verdict !== 'wrong' && res.verdict !== 'partial') return;
   deckFillInput.disabled = true;
   deckCheck.disabled = true;
   deckSee.classList.add('hidden');

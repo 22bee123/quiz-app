@@ -3728,3 +3728,8 @@ header h1 {
   margin-top: 0;
   width: auto;
 }
+
+.deck-fill .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
