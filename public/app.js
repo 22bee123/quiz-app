@@ -133,7 +133,6 @@ fileInput.addEventListener('change', (e) => {
 });
 
 function openCreate(source) {
-  if (!requireHearts()) return;
   createSource = source || null;
   createMode = null;
   createFile = null;
@@ -218,6 +217,11 @@ function createBackStep() {
 
 async function runCreateGenerate() {
   if (!createMode) return;
+  if (!canGenerate()) {
+    openNoHearts();
+    createGenerate.disabled = false;
+    return;
+  }
   createGenerate.disabled = true;
   createStatus2.className = 'auth-error info';
   createStatus2.textContent = 'Generating your quiz with AI\u2026';
@@ -1767,9 +1771,9 @@ function wireHome() {
   document.getElementById('action-link').addEventListener('click', () => openCreate('link'));
   pickPdf.addEventListener('click', () => fileInput.click());
 
-  document.getElementById('study-btn').addEventListener('click', () => { if (requireHearts()) resetToUpload(); });
-  document.getElementById('add-btn').addEventListener('click', () => { if (requireHearts()) openCreate('pdf'); });
-  document.getElementById('myd-add').addEventListener('click', () => { if (requireHearts()) openCreate('pdf'); });
+  document.getElementById('study-btn').addEventListener('click', () => resetToUpload());
+  document.getElementById('add-btn').addEventListener('click', () => openCreate());
+  document.getElementById('myd-add').addEventListener('click', () => openCreate());
   document.getElementById('nav-myd').addEventListener('click', () => {
     const sc = document.querySelector('.sidebar-scroll');
     if (sc) sc.scrollIntoView({ behavior: 'smooth', block: 'start' });
