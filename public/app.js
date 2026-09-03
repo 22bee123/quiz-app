@@ -1442,11 +1442,9 @@ async function checkFill() {
 
   if (verdict === 'correct') {
     deckNext.disabled = false;
-    deckSkip.classList.add('hidden');
     deckSee.classList.add('hidden');
   } else {
     deckNext.disabled = true;
-    deckSkip.classList.remove('hidden');
     deckSee.classList.remove('hidden');
   }
 
@@ -1460,9 +1458,10 @@ async function checkFill() {
 function skipFill() {
   const item = currentItem();
   if (item.type === 'choice') return;
-  if (results[currentIndex] && results[currentIndex].verdict === 'correct') return;
-  markAnswered(currentIndex, 'wrong', 'Skipped', item.answer);
-  playWrong();
+  if (!results[currentIndex]) {
+    markAnswered(currentIndex, 'wrong', 'Skipped', item.answer);
+    playWrong();
+  }
   deckFillInput.disabled = true;
   deckCheck.disabled = true;
   deckSee.classList.add('hidden');
