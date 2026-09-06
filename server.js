@@ -9,8 +9,8 @@ const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash-vision-exp';
 
 const MAX_GEN_CARDS = 100;      // hard ceiling for AI-generated cards
-const PER_CHUNK_CARDS = 20;     // max cards requested per AI call (keeps each response small/safe)
-const CHUNK_TARGET_CHARS = 6000;
+const PER_CHUNK_CARDS = 25;     // max cards requested per AI call (keeps each response small/safe)
+const CHUNK_TARGET_CHARS = 5000;
 
 if (!process.env.DEEPSEEK_API_KEY) {
   console.error('ERROR: DEEPSEEK_API_KEY is not set. Copy .env.example to .env and add your key.');
@@ -99,17 +99,16 @@ app.post('/api/analyze', async (req, res) => {
       const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
       flashcards.push(...normalizeFlashcards(extractJson(raw)));
     } else {
-      // Text import: estimate how many questions the material supports (up to 100), split the
-      // content into balanced batches and ask each in parallel for its proportional share. This
-      // never exceeds the cap and keeps each model response small so it cannot be truncated.
-      const estimated = Math.min(MAX_GEN_CARDS, Math.max(5, Math.floor(text.length / 200)));
-      const partCount = Math.min(10, Math.max(1, Math.ceil(text.length / CHUNK_TARGET_CHARS)));
+      // Text import: split into a few balanced batches (max 4) and ask each batch for as many
+      // questions as that segment's length supports (5–25). Running up to 4 batches in parallel
+      // lets us reach the 100-card ceiling on rich modules without ever truncating one response.
+      const partCount = Math.min(4, Math.max(1, Math.ceil(text.length / CHUNK_TARGET_CHARS)));
       const chunks = splitTextIntoChunks(text, partCount);
 
       const requests = chunks.map((chunk) => {
-        const alloc = Math.max(1, Math.min(PER_CHUNK_CARDS, Math.round((estimated * chunk.length) / text.length)));
-        return callDeepSeek([{ role: 'user', content: buildQuizPrompt(alloc, chunk, null) }], 4000, 0.4)
-          .then((raw) => normalizeFlashcards(extractJson(raw)).slice(0, alloc));
+        const ask = Math.max(5, Math.min(PER_CHUNK_CARDS, Math.round(chunk.length / 130)));
+        return callDeepSeek([{ role: 'user', content: buildQuizPrompt(ask, chunk, null) }], 4000, 0.4)
+          .then((raw) => normalizeFlashcards(extractJson(raw)).slice(0, ask));
       });
 
       const settled = await Promise.allSettled(requests);

@@ -280,7 +280,7 @@ async function runCreateGenerate() {
       payload = res.payload;
       name = createFile.name.replace(/\.pdf$/i, '');
     } else if (createSource === 'text') {
-      payload = { text: createText.trim(), count: quizLength, mode: createMode };
+      payload = { text: createText.trim(), count: 100, mode: createMode };
       name = createText.trim().slice(0, 24);
     } else {
       const sc = await fetch('/api/scrape', {
@@ -296,7 +296,7 @@ async function runCreateGenerate() {
         createGenerate.disabled = false;
         return;
       }
-      payload = { text: scData.text, count: quizLength, mode: createMode };
+      payload = { text: scData.text, count: 100, mode: createMode };
       name = scData.title || createUrl;
     }
 
@@ -320,13 +320,13 @@ async function fetchPdfPayload(file) {
   const text = await extractTextFromPdf(file);
   const hasText = text && text.replace(/\s+/g, ' ').trim().length >= 100;
   if (hasText) {
-    return { payload: { text: text.trim(), count: quizLength, mode: createMode } };
+    return { payload: { text: text.trim(), count: 100, mode: createMode } };
   }
   const images = await renderPdfImages(file);
   if (!images.length) {
     throw new Error('The PDF could not be read. It may be image-based or corrupted.');
   }
-  return { payload: { images, count: quizLength, mode: createMode } };
+  return { payload: { images, count: 100, mode: createMode } };
 }
 
 async function startAnalysis(payload, moduleName, statusEl) {
