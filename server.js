@@ -99,8 +99,14 @@ function extractJson(text) {
 
 async function generateTextChunk(ask, chunk, extraInstruction) {
   const prompt = buildQuizPrompt(ask, chunk, null) + (extraInstruction || '');
-  const raw = await callDeepSeek([{ role: 'user', content: prompt }], 8000, 0.3);
-  return normalizeFlashcards(extractJson(raw)).slice(0, ask);
+  const content = [{ type: 'text', text: prompt }];
+  const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
+  try {
+    return normalizeFlashcards(extractJson(raw)).slice(0, ask);
+  } catch (err) {
+    console.error('[analyze raw reply]', JSON.stringify(String(raw).slice(0, 400)));
+    throw err;
+  }
 }
 
 app.use(express.json({ limit: '5mb' }));
@@ -128,13 +134,13 @@ app.post('/api/analyze', async (req, res) => {
     if (images.length) {
       // Image-based import: single call, ask for as many as the images support.
       // Capped lower than text mode so one reply can't get truncated mid-JSON.
-      const ask = Math.min(30, Math.max(5, images.length * 8));
+      const ask = Math.min(20, Math.max(5, images.length * 8));
       const promptText = buildQuizPrompt(ask, null, images);
       const content = [
         { type: 'text', text: promptText },
         ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
       ];
-      const raw = await callDeepSeek([{ role: 'user', content }], 8000, 0.3);
+      const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
       flashcards.push(...normalizeFlashcards(extractJson(raw)));
     } else {
       // Text import: split into balanced batches (max 7) and ask each batch for a modest,
@@ -199,14 +205,10 @@ app.post('/api/analyze', async (req, res) => {
 });
 
 function buildQuizPrompt(ask, chunk, images) {
-  const role = images
+  const head = images
     ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),'
     : 'You are an expert quiz creator. Based ONLY on the following module content,';
-  const goal = images
-    ? ` create as many quiz questions as the material supports — up to ${ask}.`
-    : ` create up to ${ask} quiz questions that test understanding of the material. Make as many high-quality questions as the content supports; fewer is fine if the material is short — never pad with filler.`;
-
-  return `${role}${goal}
+  return `${head} create exactly ${ask} quiz questions that test understanding of the material.
 
 Mix the question types — aim for about half "flashcard" (fill-in-the-blank) and half "choice" (multiple choice):
 - "flashcard": a fill-in-the-blank question. The question must be a sentence/statement from the module with a blank marked "____" where the key term(s) go (e.g. "The two main stages of photosynthesis are ____ and ____."). The "answer" must be a SHORT, specific value (single term/few words), NEVER a full sentence.
@@ -216,7 +218,6 @@ Requirements:
 - Vary difficulty across the questions.
 - Focus on key concepts, definitions, and important facts.
 - Keep flashcard answers short and specific.
-- Do NOT include any reasoning, explanations, markdown fences, or prose — the entire response must be ONLY the JSON array.
 
 Respond with ONLY a valid JSON array in this exact format (no extra text):
 [
@@ -301,7 +302,7 @@ async function requestChoiceOnly(text, images, cap) {
     } else {
       content = [{ type: 'text', text: buildChoicePrompt(ask, text || '', false) }];
     }
-    const raw = await callDeepSeek([{ role: 'user', content }], 8000, 0.3);
+    const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
     return normalizeFlashcards(extractJson(raw)).filter((f) => f.type === 'choice').slice(0, ask);
   } catch (err) {
     console.error('Choice fallback failed:', err.message);
