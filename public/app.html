@@ -364,13 +364,29 @@
       <!-- Add question modal -->
       <div id="addq-modal" class="modal hidden">
         <div class="modal-backdrop" id="addq-backdrop"></div>
-        <div class="modal-card">
-          <div class="modal-head"><h3>Add a question</h3><button id="addq-close" class="modal-close">&times;</button></div>
-          <label class="field-label">Question</label>
-          <textarea id="addq-question" rows="3" placeholder="Write the question with a ____ blank, or just the question"></textarea>
-          <label class="field-label">Answer</label>
-          <input id="addq-answer" placeholder="Short answer" />
-          <button id="addq-save" class="btn btn-primary">Add to StudyPack</button>
+        <div class="modal-card addq-card">
+          <div class="modal-head">
+            <h3 id="addq-title">Add a question</h3>
+            <button id="addq-close" class="modal-close">&times;</button>
+          </div>
+
+          <div class="aq-group">
+            <label class="aq-label" for="addq-question">
+              <span class="aq-icon">&#128173;</span> Question
+            </label>
+            <textarea id="addq-question" rows="3" placeholder="e.g. The capital of France is ____."></textarea>
+            <span class="aq-hint">Tip: use ____ where the answer goes.</span>
+          </div>
+
+          <div class="aq-group">
+            <label class="aq-label" for="addq-answer">
+              <span class="aq-icon">&#9989;</span> Answer
+            </label>
+            <input id="addq-answer" placeholder="e.g. Paris" />
+            <span class="aq-hint">Keep it short and specific.</span>
+          </div>
+
+          <button id="addq-save" class="btn btn-primary"><span id="addq-save-label">Add to StudyPack</span></button>
         </div>
       </div>
 

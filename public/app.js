@@ -1352,30 +1352,67 @@ function renderPack() {
     const card = document.createElement('div');
     card.className = 'pack-card';
     card.innerHTML = `
+      <div class="pk-menu">
+        <button class="pk-more" title="Options">&#8942;</button>
+        <div class="pk-dropdown hidden">
+          <button class="pk-edit">&#9998;&#65039; Edit</button>
+          <button class="pk-del">&#128465; Delete</button>
+        </div>
+      </div>
       <div class="pk-q">${escapeHtml(it.question)}</div>
       <div class="pk-a">${escapeHtml(it.answer)}</div>
-      <button class="pk-del" title="Delete">&#128465;</button>
     `;
-    card.querySelector('.pk-del').addEventListener('click', () => {
-      updatePack(pack.id, (p) => { p.items.splice(i, 1); });
-      renderPack();
+    const more = card.querySelector('.pk-more');
+    const dd = card.querySelector('.pk-dropdown');
+    const close = () => dd.classList.add('hidden');
+    more.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.pk-dropdown:not(.hidden)').forEach((x) => x.classList.add('hidden'));
+      dd.classList.toggle('hidden');
     });
+    dd.addEventListener('click', (e) => e.stopPropagation());
+    card.querySelector('.pk-edit').addEventListener('click', () => { close(); openEditQ(i); });
+    card.querySelector('.pk-del').addEventListener('click', () => { close(); if (confirm('Delete this question?')) { updatePack(pack.id, (p) => { p.items.splice(i, 1); }); renderPack(); } });
+    card.addEventListener('click', close);
     listEl.appendChild(card);
   });
 }
 
+let addqEditIndex = -1;
+
 function openAddQ() {
   if (!currentPackId) return;
+  addqEditIndex = -1;
+  document.getElementById('addq-title').textContent = 'Add a question';
+  document.getElementById('addq-save-label').textContent = 'Add to StudyPack';
   document.getElementById('addq-question').value = '';
   document.getElementById('addq-answer').value = '';
   document.getElementById('addq-modal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('addq-question').focus(), 60);
+}
+
+function openEditQ(index) {
+  if (!currentPackId) return;
+  const pack = getPack(currentPackId);
+  const it = pack.items[index];
+  if (!it) return;
+  addqEditIndex = index;
+  document.getElementById('addq-title').textContent = 'Edit question';
+  document.getElementById('addq-save-label').textContent = 'Save changes';
+  document.getElementById('addq-question').value = it.question;
+  document.getElementById('addq-answer').value = it.answer;
+  document.getElementById('addq-modal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('addq-question').focus(), 60);
 }
 
 function saveAddQ() {
   const q = document.getElementById('addq-question').value.trim();
   const a = document.getElementById('addq-answer').value.trim();
   if (!q || !a) return;
-  updatePack(currentPackId, (p) => { p.items.push({ question: q, answer: a }); });
+  updatePack(currentPackId, (p) => {
+    if (addqEditIndex >= 0) p.items[addqEditIndex] = { question: q, answer: a };
+    else p.items.push({ question: q, answer: a });
+  });
   document.getElementById('addq-modal').classList.add('hidden');
   renderPack();
 }
