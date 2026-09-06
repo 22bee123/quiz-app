@@ -343,12 +343,13 @@ async function startAnalysis(payload, moduleName, statusEl) {
     savePendingDeck('ready', data.flashcards, moduleName, createMode);
     renderPendingDeck();
     renderJumpBack();
-    addPack(moduleName || 'StudyPack', data.flashcards.map((f) => ({ question: f.question, answer: f.answer })));
+    const newPack = addPack(moduleName || 'StudyPack', data.flashcards.map((f) => ({ question: f.question, answer: f.answer })));
     if (hostingRoom) {
       hostingRoom = false;
       await hostCreateRoom(payload, moduleName, data.flashcards);
     } else {
-      startQuiz();
+      // open the review view so the user can see Q&A, then Start Study
+      openPack(newPack.id);
     }
     return true;
   } catch (err) {
@@ -1473,13 +1474,10 @@ function renderPendingDeck() {
 
 function startPendingDeck() {
   const pending = loadPendingDeck();
-  if (!pending || pending.status !== 'ready' || !pending.flashcards) return;
+  if (!pending || pending.status !== 'ready') return;
   if (!requireHearts()) return;
-  flashcards = pending.flashcards;
-  results = new Array(flashcards.length).fill(null);
-  gradingPromises = {};
-  currentIndex = 0;
-  startQuiz();
+  if (studyPacks.length) openPack(studyPacks[0].id);
+  else resetToUpload();
 }
 
 function currentItem() {
