@@ -352,7 +352,15 @@
             <h1 id="pack-name" class="pack-name">StudyPack</h1>
             <span id="pack-count" class="pack-count">0 cards</span>
           </div>
-          <button id="pack-study" class="pack-study">&#127918; Start Study</button>
+          <div class="pack-actions">
+            <div class="pack-hlwrap">
+              <button id="pack-hl" class="pack-hl-btn" title="Highlighter">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+              </button>
+              <div class="pack-hl-palette hidden" id="pack-hl-palette"></div>
+            </div>
+            <button id="pack-study" class="pack-study">&#127918; Start Study</button>
+          </div>
         </div>
         <div class="pack-toolbar">
           <span class="pack-tab active">Cards <span id="pack-n"></span></span>
@@ -387,12 +395,20 @@
             <span class="aq-hint" id="aq-q-hint">Tip: use ____ where the answer goes.</span>
           </div>
 
-          <div class="aq-group">
+          <div class="aq-group" id="aq-answer-group">
             <label class="aq-label" for="addq-answer">
               <span class="aq-icon">&#9989;</span> <span id="aq-answer-label">Answer</span>
             </label>
             <input id="addq-answer" placeholder="e.g. Paris" />
             <span class="aq-hint" id="aq-a-hint">Keep it short and specific.</span>
+          </div>
+
+          <!-- Multiple choice options manager -->
+          <div class="aq-group hidden" id="aq-options-group">
+            <label class="aq-label">Choices <span class="aq-hint-inline">click the check to mark correct answers</span></label>
+            <div id="aq-options" class="aq-options"></div>
+            <span class="aq-hint" id="aq-options-hint"></span>
+            <button id="aq-add-option" class="aq-add-option">+ Add choice</button>
           </div>
 
           <button id="addq-save" class="btn btn-primary"><span id="addq-save-label">Add to StudyPack</span></button>

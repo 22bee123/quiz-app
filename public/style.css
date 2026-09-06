@@ -4215,3 +4215,198 @@ header h1 {
   border-color: #7b5cff;
   color: #fff;
 }
+
+/* ---------- Pack header actions (highlighter + start study) ---------- */
+.pack-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.pack-hlwrap {
+  position: relative;
+}
+
+.pack-hl-btn {
+  width: 42px;
+  height: 42px;
+  border: 1px solid #e5e1f6;
+  border-radius: 50%;
+  background: #fff;
+  color: #a09cb8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.pack-hl-btn:hover { background: #f1ecff; color: #7b5cff; }
+.pack-hl-btn.on { background: #fef3dd; color: #d97706; border-color: #fcd9a8; }
+
+.pack-hl-palette {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: #fff;
+  border: 1px solid #ece8fb;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(45, 42, 58, 0.18);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 30;
+  white-space: nowrap;
+}
+
+.pack-hl-palette::before {
+  content: 'Highlight';
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: #a09cb8;
+  margin-right: 2px;
+}
+
+.pack-hl-palette.hidden { display: none; }
+
+/* Highlighter cursor while hl-on */
+body.hl-on,
+body.hl-on .pack-list,
+body.hl-on .pk-q,
+body.hl-on .pk-a,
+body.hl-on .hlw {
+  cursor: url('hl-cursor.png') 1 1, crosshair;
+}
+
+body.hl-on .pk-q,
+body.hl-on .pk-a {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body.hl-on .hlw:hover { outline: 1px dashed #7b5cff; }
+
+/* choice answer list inside a card */
+.pk-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px dashed #ece8fb;
+  padding-top: 8px;
+}
+
+.pk-opt { font-size: 0.92rem; color: #6b6b83; }
+.pk-opt.ok { color: #16a34a; font-weight: 700; }
+
+.pk-badge { right: 46px; }
+
+/* dropdown alignment fix */
+.pk-dropdown .pk-del {
+  position: static;
+  right: auto;
+  top: auto;
+  font-size: 0.88rem;
+  color: #3d3a52;
+  width: 100%;
+}
+
+/* Choice options editor (add/edit modal) */
+.aq-hint-inline {
+  font-weight: 600;
+  color: #a09cb8;
+  margin-left: 6px;
+}
+
+.aq-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.aq-option-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f8f7ff;
+  border: 1.5px solid #e5e1f6;
+  border-radius: 12px;
+  padding: 6px 8px;
+  transition: border-color 0.15s;
+}
+
+.aq-option-row.correct { border-color: #86efac; background: #f0fdf4; }
+
+.aq-correct {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid #d9d5f0;
+  background: #fff;
+  color: transparent;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.aq-correct.on { background: #22c55e; border-color: #22c55e; color: #fff; }
+
+.aq-opt-text {
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+}
+
+.aq-opt-del {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #c2bdda;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.aq-opt-del:hover { background: #feecec; color: #dc2626; }
+
+.aq-add-option {
+  margin-top: 8px;
+  border: 1.5px dashed #c9bdf5;
+  background: transparent;
+  color: #7b5cff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 9px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s;
+  width: 100%;
+}
+
+.aq-add-option:hover { background: #f1ecff; }
+
+.deck-multi-check {
+  display: block;
+  margin: 16px auto 0;
+  width: 100%;
+  max-width: 220px;
+}
+
+/* option input inside rows should not stretch full-width (override .aq-group input) */
+#aq-options input.aq-opt-text {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 0.92rem;
+  border: 1.5px solid #e5e1f6;
+  border-radius: 8px;
+  background: #fff;
+  color: #2d2a3a;
+}
+
+

@@ -173,6 +173,7 @@ const createUrlEl = document.getElementById('create-url');
 function showScreen(screen) {
   [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen, friendsScreen, packScreen].forEach((s) => s.classList.add('hidden'));
   screen.classList.remove('hidden');
+  if (screen !== packScreen) resetHighlightMode();
 }
 
 function setStatus(el, msg, type) {
@@ -1331,8 +1332,9 @@ function renderStudyPackList() {
 }
 
 let currentPackId = null;
-let hlCard = null; // pack item index currently in highlight mode
+let hlMode = false; // global highlighter active (toggled from pack header)
 let hlColor = 'yellow';
+let hlDrag = null; // { card, field, from } while dragging across words
 
 const HL = {
   yellow: 'rgba(253,224,71,0.55)',
@@ -1372,6 +1374,8 @@ function openPack(id) {
   document.getElementById('pack-name').textContent = pack.name;
   setActiveNav('myd');
   showScreen(packScreen);
+  resetHighlightMode();
+  renderHlPalette();
   renderPack();
 }
 
@@ -1387,16 +1391,14 @@ function renderPack() {
     return;
   }
   pack.items.forEach((it, i) => {
-    const isHl = hlCard === i;
     const card = document.createElement('div');
-    card.className = 'pack-card' + (isHl ? ' hl-mode' : '') + (it.type === 'choice' ? ' is-choice' : '');
+    card.className = 'pack-card' + (hlMode ? ' hl-mode' : '') + (it.type === 'choice' ? ' is-choice' : '');
     card.dataset.pi = i;
     const palette = Object.keys(HL)
       .map((c) => `<span class="hl-dot ${c === hlColor ? 'active' : ''}" data-c="${c}" style="background:${HL[c]}"></span>`)
       .join('');
     card.innerHTML = `
       <div class="pk-menu">
-        <button class="pk-hl ${isHl ? 'on' : ''}" title="Highlighter">&#129528;</button>
         <button class="pk-more" title="Options">&#8942;</button>
         <div class="pk-dropdown hidden">
           <button class="pk-edit">&#9998;&#65039; Edit</button>
@@ -1404,9 +1406,11 @@ function renderPack() {
         </div>
       </div>
       ${it.type === 'choice' ? '<span class="pk-badge">Multiple Choice</span>' : ''}
-      <div class="pk-q">${tokenText(it.question, it.hq, isHl)}</div>
-      <div class="pk-a">${tokenText(it.answer, it.ha, isHl)}</div>
-      ${isHl ? `<div class="pk-palette">${palette}<span class="pk-palette-hint">click words to highlight</span></div>` : ''}
+      <div class="pk-q">${tokenText(it.question, it.hq, hlMode)}</div>
+      ${it.type === 'choice'
+        ? `<div class="pk-a pk-options">${renderPackOptions(it)}</div>`
+        : `<div class="pk-a">${tokenText(it.answer, it.ha, hlMode)}</div>`}
+      ${hlMode ? `<div class="pk-palette">${palette}<span class="pk-palette-hint">drag or click words to highlight</span></div>` : ''}
     `;
     const more = card.querySelector('.pk-more');
     const dd = card.querySelector('.pk-dropdown');
@@ -1417,12 +1421,6 @@ function renderPack() {
       dd.classList.toggle('hidden');
     });
     dd.addEventListener('click', (e) => e.stopPropagation());
-    card.querySelector('.pk-hl').addEventListener('click', (e) => {
-      e.stopPropagation();
-      close();
-      hlCard = isHl ? null : i;
-      renderPack();
-    });
     card.querySelector('.pk-edit').addEventListener('click', () => { close(); openEditQ(i); });
     card.querySelector('.pk-del').addEventListener('click', () => { close(); if (confirm('Delete this question?')) { updatePack(pack.id, (p) => { p.items.splice(i, 1); }); renderPack(); } });
     card.addEventListener('click', close);
@@ -1430,49 +1428,138 @@ function renderPack() {
   });
 }
 
+function answerList(it) {
+  if (it && it.answers && it.answers.length) return it.answers.slice();
+  if (it && it.answer) return [it.answer];
+  return [];
+}
+
+function renderPackOptions(it) {
+  const correct = answerList(it);
+  if (!correct.length) return '';
+  const opts = it.options && it.options.length ? it.options : correct;
+  return opts
+    .map((o) => `<div class="pk-opt ${correct.includes(o) ? 'ok' : ''}">${correct.includes(o) ? '&#10003; ' : ''}${escapeHtml(o)}</div>`)
+    .join('');
+}
+
 // word/highlighter clicks (delegated)
 document.addEventListener('click', (e) => {
   const dot = e.target.closest('.hl-dot');
   if (dot) {
     hlColor = dot.dataset.c;
+    renderHlPalette();
     renderPack();
-    return;
   }
-  const word = e.target.closest('.hlw');
-  if (word) {
-    const card = word.closest('.pack-card');
-    const pack = getPack(currentPackId);
-    const idx = Number(card.dataset.pi);
-    const item = pack && pack.items[idx];
-    if (!item) return;
-    const field = word.closest('.pk-q') ? 'hq' : 'ha';
-    toggleWordHighlight(item, field, Number(word.dataset.wi));
+});
+
+function hlWordAt(e) {
+  let word = e.target && e.target.closest ? e.target.closest('.hlw') : null;
+  if (!word && typeof document.elementFromPoint === 'function') {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    word = el && el.closest ? el.closest('.hlw') : null;
   }
+  return word;
+}
+
+// highlighter: mousedown/mouseup across tokenized words => drag highlights range, single click toggles
+document.addEventListener('mousedown', (e) => {
+  if (!hlMode) return;
+  const word = hlWordAt(e);
+  if (!word) return;
+  const card = word.closest('.pack-card');
+  if (!card) return;
+  e.preventDefault();
+  hlDrag = { card, field: word.closest('.pk-q') ? 'hq' : 'ha', from: Number(word.dataset.wi) };
+});
+document.addEventListener('mouseup', (e) => {
+  if (!hlMode || !hlDrag) return;
+  const ds = hlDrag;
+  hlDrag = null;
+  const word = hlWordAt(e);
+  if (!word) return;
+  const card2 = word.closest('.pack-card');
+  if (!card2 || card2 !== ds.card) return;
+  const field = word.closest('.pk-q') ? 'hq' : 'ha';
+  if (field !== ds.field) return;
+  const pack = getPack(currentPackId);
+  const item = pack && pack.items[Number(ds.card.dataset.pi)];
+  if (!item) return;
+  const a = Math.min(ds.from, Number(word.dataset.wi));
+  const b = Math.max(ds.from, Number(word.dataset.wi));
+  const map = item[field] || {};
+  if (a === b) {
+    if (map[a] === hlColor) delete map[a];
+    else map[a] = hlColor;
+  } else {
+    for (let w = a; w <= b; w++) map[w] = hlColor;
+  }
+  item[field] = map;
+  updatePack(currentPackId, () => {});
+  renderPack();
 });
 
 let addqEditIndex = -1;
 let addqType = 'flashcard';
+let addqOptions = []; // array of { text, correct }
+
+function escAttr(s) {
+  return escapeHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderAddQOptions() {
+  const wrap = document.getElementById('aq-options');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  addqOptions.forEach((opt, i) => {
+    const row = document.createElement('div');
+    row.className = 'aq-option-row' + (opt.correct ? ' correct' : '');
+    row.innerHTML = `
+      <button class="aq-correct ${opt.correct ? 'on' : ''}" data-i="${i}" title="Mark correct">&#10003;</button>
+      <input class="aq-opt-text" data-i="${i}" value="${escAttr(opt.text)}" placeholder="Choice ${i + 1}" />
+      <button class="aq-opt-del" data-i="${i}" title="Remove">&#10005;</button>
+    `;
+    wrap.appendChild(row);
+  });
+  // mark correct count in hint
+  const cc = addqOptions.filter((o) => o.correct).length;
+  const el = document.getElementById('aq-options-hint');
+  if (el) {
+    el.style.color = '';
+    el.textContent = cc > 1 ? `Correct: ${cc} (select all that apply)` : cc === 1 ? 'Correct: 1' : 'Mark which choice(s) are correct';
+  }
+}
+
+function syncOptionsFromInputs() {
+  document.querySelectorAll('.aq-option-row').forEach((row) => {
+    const i = Number(row.querySelector('.aq-correct').dataset.i);
+    if (addqOptions[i]) addqOptions[i].text = row.querySelector('.aq-opt-text').value;
+  });
+}
 
 function setAddQType(type) {
+  syncOptionsFromInputs();
   addqType = type;
   document.querySelectorAll('.aq-type-opt').forEach((b) => b.classList.toggle('active', b.dataset.t === type));
   const hint = document.getElementById('aq-type-hint');
-  if (hint) hint.textContent = type === 'choice'
-    ? 'Multiple choice: answer is the correct one; other options are auto-built from your cards.'
+  const isChoice = type === 'choice';
+  if (hint) hint.textContent = isChoice
+    ? 'Multiple choice: define your choices and mark the correct one(s).'
     : 'Fill in the blank: the question uses a ____ blank.';
-  const qh = document.getElementById('aq-q-hint');
   const qEl = document.getElementById('addq-question');
   const aEl = document.getElementById('addq-answer');
-  if (type === 'choice') {
-    qEl.placeholder = 'e.g. What is the capital of France?';
-    aEl.placeholder = 'e.g. Paris';
-    if (qh) qh.textContent = 'The correct answer will be the right option.';
-    document.getElementById('aq-answer-label').textContent = 'Correct answer';
+  document.getElementById('aq-answer-group').classList.toggle('hidden', isChoice);
+  document.getElementById('aq-options-group').classList.toggle('hidden', !isChoice);
+  if (isChoice) {
+    qEl.placeholder = 'e.g. Which of the following are inputs of photosynthesis?';
+    aEl.placeholder = 'mark the correct choice(s) below';
+    if (!addqOptions.length) {
+      addqOptions = [{ text: '', correct: true }, { text: '', correct: false }, { text: '', correct: false }, { text: '', correct: false }];
+    }
+    renderAddQOptions();
   } else {
     qEl.placeholder = 'e.g. The capital of France is ____.';
     aEl.placeholder = 'e.g. Paris';
-    if (qh) qh.textContent = 'Tip: use ____ where the answer goes.';
-    document.getElementById('aq-answer-label').textContent = 'Answer';
   }
 }
 
@@ -1481,6 +1568,8 @@ function openAddQ() {
   addqEditIndex = -1;
   document.getElementById('addq-title').textContent = 'Add a question';
   document.getElementById('addq-save-label').textContent = 'Add to StudyPack';
+  addqOptions = [];
+  document.getElementById('aq-options').innerHTML = '';
   setAddQType('flashcard');
   document.getElementById('addq-question').value = '';
   document.getElementById('addq-answer').value = '';
@@ -1496,20 +1585,50 @@ function openEditQ(index) {
   addqEditIndex = index;
   document.getElementById('addq-title').textContent = 'Edit question';
   document.getElementById('addq-save-label').textContent = 'Save changes';
-  setAddQType(it.type === 'choice' ? 'choice' : 'flashcard');
   document.getElementById('addq-question').value = it.question;
-  document.getElementById('addq-answer').value = it.answer;
+  document.getElementById('addq-answer').value = it.answer || '';
+  const isChoice = it.type === 'choice';
+  if (isChoice) {
+    const answers = it.answers && it.answers.length ? it.answers : (it.answer ? [it.answer] : []);
+    let opts = it.options && it.options.length ? it.options.slice() : [];
+    if (!opts.length && answers.length) opts = answers.slice();
+    addqOptions = opts.map((o) => ({ text: o, correct: answers.includes(o) }));
+    if (!addqOptions.length) addqOptions = [{ text: '', correct: true }, { text: '', correct: false }, { text: '', correct: false }, { text: '', correct: false }];
+  } else {
+    addqOptions = [];
+  }
+  document.getElementById('aq-options').innerHTML = '';
+  setAddQType(isChoice ? 'choice' : 'flashcard');
   document.getElementById('addq-modal').classList.remove('hidden');
   setTimeout(() => document.getElementById('addq-question').focus(), 60);
 }
 
 function saveAddQ() {
   const q = document.getElementById('addq-question').value.trim();
-  const a = document.getElementById('addq-answer').value.trim();
-  if (!q || !a) return;
-  const item = addqType === 'choice'
-    ? { type: 'choice', question: q, answer: a, options: undefined }
-    : { type: 'flashcard', question: q, answer: a };
+  let item;
+  if (addqType === 'choice') {
+    syncOptionsFromInputs();
+    const options = addqOptions.map((o) => o.text.trim()).filter(Boolean);
+    const answers = addqOptions.filter((o) => o.correct && o.text.trim()).map((o) => o.text.trim());
+    if (!q) return;
+    if (options.length < 2) {
+      const hint = document.getElementById('aq-options-hint');
+      if (hint) { hint.textContent = 'Add at least 2 choices.'; hint.style.color = '#dc2626'; }
+      return;
+    }
+    if (!answers.length) {
+      const hint = document.getElementById('aq-options-hint');
+      if (hint) { hint.textContent = 'Mark at least one correct choice.'; hint.style.color = '#dc2626'; }
+      return;
+    }
+    const hint = document.getElementById('aq-options-hint');
+    if (hint) { hint.textContent = ''; hint.style.color = ''; }
+    item = { type: 'choice', question: q, options, answers };
+  } else {
+    const a = document.getElementById('addq-answer').value.trim();
+    if (!q || !a) return;
+    item = { type: 'flashcard', question: q, answer: a };
+  }
   updatePack(currentPackId, (p) => {
     if (addqEditIndex >= 0) p.items[addqEditIndex] = item;
     else p.items.push(item);
@@ -1523,11 +1642,15 @@ function startPackQuiz() {
   if (!pack || !pack.items.length) return;
   flashcards = pack.items.map((it) => {
     if (it.type === 'choice') {
+      const answers = answerList(it);
+      const options = it.options && it.options.length >= 2 ? it.options.slice() : makeChoiceOptions(it, pack);
       return {
         type: 'choice',
         question: it.question,
-        options: it.options && it.options.length >= 2 ? it.options.slice() : makeChoiceOptions(it, pack),
-        answer: it.answer,
+        options,
+        answers: answers.length ? answers : (options.includes(it.answer) ? [it.answer] : [options[0]]),
+        answer: answers.length > 1 ? answers.join(' / ') : (answers[0] || it.answer),
+        multi: (answers.length || 1) > 1,
       };
     }
     return { type: 'flashcard', question: it.question, answer: it.answer };
@@ -1542,13 +1665,15 @@ function startPackQuiz() {
 }
 
 function makeChoiceOptions(it, pack) {
+  const used = answerList(it);
   const others = pack.items
-    .map((x) => x.answer)
-    .filter((a) => a && a !== it.answer)
+    .map((x) => (x.type === 'choice' ? answerList(x) : [x.answer]))
+    .flat()
+    .filter((a) => a && !used.includes(a))
     .filter((v, i, arr) => arr.indexOf(v) === i);
   const distractors = shuffle(others).slice(0, 3);
   while (distractors.length < 3) distractors.push(['None of the above', 'Not listed', 'All of the above'][distractors.length]);
-  return shuffle([it.answer, ...distractors]);
+  return shuffle([...used, ...distractors]);
 }
 
 function shuffle(arr) {
@@ -1567,12 +1692,69 @@ function wirePack() {
   document.getElementById('pack-back').addEventListener('click', () => resetToUpload());
   document.getElementById('pack-study').addEventListener('click', () => { if (requireHearts()) startPackQuiz(); });
   document.getElementById('pack-add').addEventListener('click', openAddQ);
+  document.getElementById('pack-hl').addEventListener('click', toggleHighlightMode);
   document.getElementById('addq-save').addEventListener('click', saveAddQ);
   document.getElementById('addq-close').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
   document.getElementById('addq-backdrop').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
+  document.getElementById('aq-add-option').addEventListener('click', () => {
+    syncOptionsFromInputs();
+    addqOptions.push({ text: '', correct: false });
+    renderAddQOptions();
+  });
+  document.getElementById('aq-options').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-i]');
+    if (!btn) return;
+    const i = Number(btn.dataset.i);
+    if (btn.classList.contains('aq-correct')) {
+      addqOptions[i].correct = !addqOptions[i].correct;
+      renderAddQOptions();
+    } else if (btn.classList.contains('aq-opt-del')) {
+      if (addqOptions.length <= 2) return;
+      addqOptions.splice(i, 1);
+      renderAddQOptions();
+    }
+  });
+  document.getElementById('aq-options').addEventListener('input', (e) => {
+    if (!e.target.classList.contains('aq-opt-text')) return;
+    const i = Number(e.target.dataset.i);
+    if (addqOptions[i]) addqOptions[i].text = e.target.value;
+  });
   document.querySelectorAll('.aq-type-opt').forEach((b) => {
     b.addEventListener('click', () => setAddQType(b.dataset.t));
   });
+}
+
+function setHlMode(on) {
+  hlMode = !!on;
+  const btn = document.getElementById('pack-hl');
+  const pal = document.getElementById('pack-hl-palette');
+  if (btn) btn.classList.toggle('on', hlMode);
+  if (pal) pal.classList.toggle('hidden', !hlMode);
+  document.body.classList.toggle('hl-on', hlMode);
+  renderHlPalette();
+  if (!packScreen.classList.contains('hidden')) renderPack();
+}
+
+function toggleHighlightMode() {
+  setHlMode(!hlMode);
+}
+
+function resetHighlightMode() {
+  if (!hlMode) return;
+  hlMode = false;
+  const btn = document.getElementById('pack-hl');
+  const pal = document.getElementById('pack-hl-palette');
+  if (btn) btn.classList.remove('on');
+  if (pal) pal.classList.add('hidden');
+  document.body.classList.remove('hl-on');
+}
+
+function renderHlPalette() {
+  const pal = document.getElementById('pack-hl-palette');
+  if (!pal) return;
+  pal.innerHTML = Object.keys(HL)
+    .map((c) => `<span class="hl-dot ${c === hlColor ? 'active' : ''}" data-c="${c}" style="background:${HL[c]}"></span>`)
+    .join('');
 }
 
 /* ---------------- Pending deck (survives refresh / tab switch) ---------------- */
@@ -1656,7 +1838,7 @@ function renderQuestion() {
   const lb = document.getElementById('live-bar-area');
   if (lb) lb.classList.toggle('hidden', !roomMode);
 
-  deckBadge.textContent = isChoice ? 'MULTIPLE CHOICE' : 'ENUMERATION';
+  deckBadge.textContent = !isChoice ? 'ENUMERATION' : (item.multi ? 'SELECT ALL THAT APPLY' : 'MULTIPLE CHOICE');
   deckBadge.classList.toggle('choice', isChoice);
   deckQuestion.textContent = isChoice ? item.question : '';
   deckFillInput.value = '';
@@ -1684,15 +1866,24 @@ function renderQuestion() {
   if (isChoice) {
     deckChoices.classList.remove('hidden');
     deckChoices.innerHTML = '';
-    const letters = ['A', 'B', 'C', 'D'];
+    const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
     item.options.forEach((opt, oi) => {
       const b = document.createElement('button');
       b.className = 'deck-choice';
       b.dataset.oi = oi;
-      b.innerHTML = `<span class="dc-letter">${letters[oi]}</span><span class="dc-text">${escapeHtml(opt)}</span>`;
-      b.addEventListener('click', () => chooseAnswer(b));
+      b.innerHTML = `<span class="dc-letter">${letters[oi] || (oi + 1)}</span><span class="dc-text">${escapeHtml(opt)}</span>`;
+      b.addEventListener('click', () => (item.multi ? toggleMultiChoice(b) : chooseAnswer(b)));
       deckChoices.appendChild(b);
     });
+    if (item.multi) {
+      const chk = document.createElement('button');
+      chk.id = 'deck-multi-check';
+      chk.className = 'btn btn-primary deck-multi-check';
+      chk.textContent = 'Check answers';
+      chk.disabled = true;
+      chk.addEventListener('click', checkMultiAnswers);
+      deckChoices.appendChild(chk);
+    }
   } else {
     deckChoices.classList.add('hidden');
     deckChoices.innerHTML = '';
@@ -1721,26 +1912,78 @@ function renderBlankQuestion(question) {
   return html;
 }
 
+function correctAnswersOf(item) {
+  if (item.answers && item.answers.length) return item.answers;
+  return item.answer ? [item.answer] : [];
+}
+
+function displayCorrect(item) {
+  return correctAnswersOf(item).join(' / ');
+}
+
+function toggleMultiChoice(b) {
+  if (b.disabled) return;
+  b.classList.toggle('selected');
+  const chk = document.getElementById('deck-multi-check');
+  if (chk) chk.disabled = !deckChoices.querySelector('.deck-choice.selected');
+}
+
+function checkMultiAnswers() {
+  const item = currentItem();
+  const picked = [...deckChoices.querySelectorAll('.deck-choice.selected')].map((b) => item.options[Number(b.dataset.oi)]);
+  const correct = correctAnswersOf(item);
+  const ok = picked.length === correct.length && picked.every((v) => correct.includes(v));
+  deckChoices.querySelectorAll('.deck-choice').forEach((b) => {
+    b.disabled = true;
+    b.classList.remove('selected');
+    const txt = item.options[Number(b.dataset.oi)];
+    if (correct.includes(txt)) b.classList.add('correct');
+    else if (picked.includes(txt)) b.classList.add('wrong');
+  });
+  const chk = document.getElementById('deck-multi-check');
+  if (chk) chk.classList.add('hidden');
+  if (ok) {
+    playCorrect();
+    if (roomMode) bumpRoomScore();
+    deckResult.classList.remove('hidden');
+    deckResult.textContent = 'Correct!';
+    deckResult.className = 'deck-result correct';
+    markAnswered(currentIndex, 'correct', picked.join(', '), displayCorrect(item), item.options);
+  } else {
+    playWrong();
+    const out = loseHeart();
+    if (out) return;
+    deckResult.classList.remove('hidden');
+    deckResult.textContent = `Not quite. Correct answers: ${displayCorrect(item)}`;
+    deckResult.className = 'deck-result wrong';
+    markAnswered(currentIndex, 'wrong', picked.join(', '), displayCorrect(item), item.options);
+  }
+  deckNext.disabled = false;
+}
+
 function revealCorrectChoice() {
   const item = currentItem();
+  const correct = correctAnswersOf(item);
   deckChoices.querySelectorAll('.deck-choice').forEach((b) => {
-    if (item.options[Number(b.dataset.oi)] === item.answer) {
+    if (correct.includes(item.options[Number(b.dataset.oi)])) {
       b.classList.add('correct');
       b.classList.remove('selected', 'wrong');
     }
     b.disabled = true;
   });
   deckResult.classList.remove('hidden');
-  deckResult.textContent = `That was the last option. The correct answer is: ${item.answer}`;
+  deckResult.textContent = `That was the last option. The correct answer is: ${displayCorrect(item)}`;
   deckResult.className = 'deck-result wrong';
-  markAnswered(currentIndex, 'wrong', 'Out of options', item.answer, item.options);
+  markAnswered(currentIndex, 'wrong', 'Out of options', displayCorrect(item), item.options);
   deckNext.disabled = false;
 }
 
 function chooseAnswer(btn) {
   const item = currentItem();
+  if (item.multi) { toggleMultiChoice(btn); return; }
   const oi = Number(btn.dataset.oi);
-  const isCorrect = item.options[oi] === item.answer;
+  const correct = correctAnswersOf(item);
+  const isCorrect = correct.includes(item.options[oi]);
 
   if (isCorrect) {
     playCorrect();
@@ -1749,7 +1992,7 @@ function chooseAnswer(btn) {
     deckResult.classList.remove('hidden');
     deckResult.textContent = 'Correct!';
     deckResult.className = 'deck-result correct';
-    markAnswered(currentIndex, 'correct', item.options[oi], item.answer, item.options);
+    markAnswered(currentIndex, 'correct', item.options[oi], displayCorrect(item), item.options);
     if (roomMode) bumpRoomScore();
     deckNext.disabled = false;
     return;
@@ -1765,7 +2008,7 @@ function chooseAnswer(btn) {
 
   const remaining = item.options
     .map((_, i) => i)
-    .filter((i) => !attempted.includes(i) && item.options[i] !== item.answer);
+    .filter((i) => !attempted.includes(i) && !correct.includes(item.options[i]));
 
   if (remaining.length === 0) {
     // only the correct option is left untried -> auto-reveal
