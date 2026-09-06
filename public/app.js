@@ -30,6 +30,7 @@ const quizScreen = document.getElementById('quiz-screen');
 const resultsScreen = document.getElementById('results-screen');
 const liveScreen = document.getElementById('live-screen');
 const friendsScreen = document.getElementById('friends-screen');
+const packScreen = document.getElementById('pack-screen');
 
 const fileInput = document.getElementById('file-input');
 
@@ -157,7 +158,7 @@ const createTextEl = document.getElementById('create-text');
 const createUrlEl = document.getElementById('create-url');
 
 function showScreen(screen) {
-  [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen, friendsScreen].forEach((s) => s.classList.add('hidden'));
+  [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen, friendsScreen, packScreen].forEach((s) => s.classList.add('hidden'));
   screen.classList.remove('hidden');
 }
 
@@ -342,6 +343,7 @@ async function startAnalysis(payload, moduleName, statusEl) {
     savePendingDeck('ready', data.flashcards, moduleName, createMode);
     renderPendingDeck();
     renderJumpBack();
+    addPack(moduleName || 'StudyPack', data.flashcards.map((f) => ({ question: f.question, answer: f.answer })));
     if (hostingRoom) {
       hostingRoom = false;
       await hostCreateRoom(payload, moduleName, data.flashcards);
@@ -1240,6 +1242,186 @@ function startQuiz() {
   renderQuestion();
 }
 
+/* ---------------- StudyPacks ---------------- */
+
+let studyPacks = [];
+try { studyPacks = JSON.parse(localStorage.getItem('studyPacks') || '[]'); } catch (e) { studyPacks = []; }
+if (!Array.isArray(studyPacks)) studyPacks = [];
+
+function savePacks() {
+  localStorage.setItem('studyPacks', JSON.stringify(studyPacks));
+}
+
+function newPackId() {
+  return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function addPack(name, items) {
+  const pack = {
+    id: newPackId(),
+    name: name || 'StudyPack',
+    items: items.slice(), // [{question, answer}]
+    createdAt: Date.now(),
+  };
+  studyPacks.unshift(pack);
+  savePacks();
+  renderStudyPackList();
+  return pack;
+}
+
+function getPack(id) {
+  return studyPacks.find((p) => p.id === id);
+}
+
+function updatePack(id, mutate) {
+  const p = getPack(id);
+  if (p) {
+    mutate(p);
+    savePacks();
+    renderStudyPackList();
+  }
+}
+
+function renderStudyPackList() {
+  const list = document.getElementById('studypack-list');
+  const empty = document.getElementById('sidebar-history-empty');
+  if (!list) return;
+  list.innerHTML = '';
+  if (empty) empty.classList.toggle('hidden', studyPacks.length > 0);
+
+  studyPacks.slice(0, 20).forEach((pack) => {
+    const item = document.createElement('div');
+    item.className = 'hist-item studypack-item';
+    item.innerHTML = `
+      <span class="hi-dot" style="background:${deckColor(pack.name)}"></span>
+      <button class="hi-main-btn">
+        <span class="hi-name">${escapeHtml(pack.name)}</span>
+        <span class="hi-meta">${pack.items.length} cards</span>
+      </button>
+      <button class="pin-btn" title="Open">&#8250;</button>
+    `;
+    item.querySelector('.hi-main-btn').addEventListener('click', () => openPack(pack.id));
+    item.querySelector('.pin-btn').addEventListener('click', () => openPack(pack.id));
+    list.appendChild(item);
+  });
+}
+
+let currentPackId = null;
+
+function openPack(id) {
+  const pack = getPack(id);
+  if (!pack) return;
+  currentPackId = id;
+  document.getElementById('pack-name').textContent = pack.name;
+  setActiveNav('myd');
+  showScreen(packScreen);
+  renderPack();
+}
+
+function renderPack() {
+  const pack = getPack(currentPackId);
+  const listEl = document.getElementById('pack-list');
+  if (!pack || !listEl) return;
+  document.getElementById('pack-count').textContent = `${pack.items.length} card${pack.items.length === 1 ? '' : 's'}`;
+  document.getElementById('pack-n').textContent = `(${pack.items.length})`;
+  listEl.innerHTML = '';
+  if (!pack.items.length) {
+    listEl.innerHTML = '<p class="pack-empty">No cards yet. Add a question to get started.</p>';
+    return;
+  }
+  pack.items.forEach((it, i) => {
+    const card = document.createElement('div');
+    card.className = 'pack-card';
+    card.innerHTML = `
+      <div class="pk-q">${escapeHtml(it.question)}</div>
+      <div class="pk-a">${escapeHtml(it.answer)}</div>
+      <button class="pk-del" title="Delete">&#128465;</button>
+    `;
+    card.querySelector('.pk-del').addEventListener('click', () => {
+      updatePack(pack.id, (p) => { p.items.splice(i, 1); });
+      renderPack();
+    });
+    listEl.appendChild(card);
+  });
+}
+
+function openAddQ() {
+  if (!currentPackId) return;
+  document.getElementById('addq-question').value = '';
+  document.getElementById('addq-answer').value = '';
+  document.getElementById('addq-modal').classList.remove('hidden');
+}
+
+function saveAddQ() {
+  const q = document.getElementById('addq-question').value.trim();
+  const a = document.getElementById('addq-answer').value.trim();
+  if (!q || !a) return;
+  updatePack(currentPackId, (p) => { p.items.push({ question: q, answer: a }); });
+  document.getElementById('addq-modal').classList.add('hidden');
+  renderPack();
+}
+
+function openQuizMode() {
+  if (!currentPackId || !getPack(currentPackId).items.length) return;
+  document.getElementById('quizmode-modal').classList.remove('hidden');
+}
+
+function startPackQuiz(mode) {
+  const pack = getPack(currentPackId);
+  if (!pack || !pack.items.length) return;
+  document.getElementById('quizmode-modal').classList.add('hidden');
+
+  if (mode === 'choice') {
+    flashcards = pack.items.map((it) => makeChoiceItem(it, pack));
+  } else {
+    flashcards = pack.items.map((it) => ({ type: 'flashcard', question: it.question, answer: it.answer }));
+  }
+  results = new Array(flashcards.length).fill(null);
+  gradingPromises = {};
+  currentIndex = 0;
+  roomMode = false;
+  endless = false;
+  lastModuleName = pack.name;
+  startQuiz();
+}
+
+function makeChoiceItem(it, pack) {
+  const others = pack.items
+    .map((x) => x.answer)
+    .filter((a) => a && a !== it.answer)
+    .filter((v, i, arr) => arr.indexOf(v) === i);
+  const distractors = shuffle(others).slice(0, 3);
+  while (distractors.length < 3) distractors.push(['None of the above', 'Not listed', 'All of the above'][distractors.length]);
+  const options = shuffle([it.answer, ...distractors]);
+  return { type: 'choice', question: it.question, options, answer: it.answer };
+}
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function wirePack() {
+  document.getElementById('nav-myd').addEventListener('click', () => {
+    if (studyPacks.length) { openPack(studyPacks[0].id); }
+  });
+  document.getElementById('pack-back').addEventListener('click', () => resetToUpload());
+  document.getElementById('pack-study').addEventListener('click', openQuizMode);
+  document.getElementById('pack-add').addEventListener('click', openAddQ);
+  document.getElementById('addq-save').addEventListener('click', saveAddQ);
+  document.getElementById('addq-close').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
+  document.getElementById('addq-backdrop').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
+  document.getElementById('quizmode-close').addEventListener('click', () => document.getElementById('quizmode-modal').classList.add('hidden'));
+  document.getElementById('quizmode-backdrop').addEventListener('click', () => document.getElementById('quizmode-modal').classList.add('hidden'));
+  document.querySelectorAll('#quizmode-modal .type-option').forEach((b) => {
+    b.addEventListener('click', () => startPackQuiz(b.dataset.m));
+  });
+}
+
 /* ---------------- Pending deck (survives refresh / tab switch) ---------------- */
 
 function savePendingDeck(status, flashcardsArg, nameArg, modeArg) {
@@ -1952,17 +2134,7 @@ function isPinned(entry) {
 }
 
 function renderSidebarHistory() {
-  const pinned = historyEntries.filter((e) => isPinned(e));
-  const recent = historyEntries.filter((e) => !isPinned(e));
-
-  pinnedWrap.classList.toggle('hidden', pinned.length === 0);
-  recentWrap.classList.toggle('hidden', recent.length === 0);
-  sidebarHistoryEmpty.classList.toggle('hidden', historyEntries.length > 0);
-
-  pinnedList.innerHTML = '';
-  recentList.innerHTML = '';
-  pinned.forEach((entry) => pinnedList.appendChild(buildSidebarHistoryItem(entry)));
-  recent.forEach((entry) => recentList.appendChild(buildSidebarHistoryItem(entry)));
+  // history is now surfaced via StudyPacks in the sidebar; keep historyEntries for jump-back-in/results
 }
 
 function persistPinnedIds() {
@@ -2059,11 +2231,8 @@ function viewHistory(entry) {
 
 function hideHistory() {
   historyEntries = [];
-  pinnedWrap.classList.add('hidden');
-  recentWrap.classList.add('hidden');
-  sidebarHistoryEmpty.classList.remove('hidden');
-  pinnedList.innerHTML = '';
-  recentList.innerHTML = '';
+  const empty = document.getElementById('sidebar-history-empty');
+  if (empty) empty.classList.toggle('hidden', studyPacks.length > 0);
 }
 
 function deckColor(name) {
@@ -2087,10 +2256,12 @@ wireProgress();
 wireHearts();
 wireLive();
 wireFriends();
+wirePack();
 updateFlashcardCountLabel();
 renderHearts();
 renderPendingDeck();
 renderJumpBack();
+renderStudyPackList();
 renderProgress();
 setInterval(renderHearts, 1000);
 
@@ -2105,10 +2276,6 @@ function wireHome() {
   document.getElementById('study-btn').addEventListener('click', () => { if (requireHearts()) resetToUpload(); });
   document.getElementById('add-btn').addEventListener('click', () => { if (requireHearts()) openCreate('pdf'); });
   document.getElementById('myd-add').addEventListener('click', () => { if (requireHearts()) openCreate('pdf'); });
-  document.getElementById('nav-myd').addEventListener('click', () => {
-    const sc = document.querySelector('.sidebar-scroll');
-    if (sc) sc.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
 }
 
 function wireProgress() {

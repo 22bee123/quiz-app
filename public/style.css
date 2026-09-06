@@ -3810,3 +3810,147 @@ header h1 {
   color: #7b5cff;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- StudyPack detail ---------- */
+.pack-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.pack-back {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: 1px solid #e5e1f6;
+  border-radius: 12px;
+  background: #fff;
+  color: #7b5cff;
+  font-size: 1.3rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.pack-back:hover { background: #f1ecff; }
+
+.pack-title-wrap { flex: 1; min-width: 0; }
+
+.pack-name {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #2d2a3a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pack-count {
+  font-size: 0.8rem;
+  color: #8a87a3;
+}
+
+.pack-study {
+  border: none;
+  background: #2d2a3a;
+  color: #fff;
+  font-weight: 800;
+  font-size: 0.9rem;
+  padding: 12px 20px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s;
+}
+
+.pack-study:hover { filter: brightness(1.2); }
+
+.pack-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.pack-tab {
+  font-weight: 800;
+  color: #2d2a3a;
+  font-size: 1rem;
+}
+
+.pack-tab span { color: #a09cb8; font-weight: 600; }
+
+.pack-add {
+  border: 1.5px solid #e5e1f6;
+  background: #fff;
+  color: #7b5cff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 9px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.pack-add:hover { background: #f1ecff; }
+
+.pack-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pack-card {
+  position: relative;
+  background: #fff;
+  border: 1px solid rgba(124, 92, 255, 0.14);
+  border-radius: 16px;
+  padding: 16px 44px 16px 20px;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.pack-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(93, 82, 179, 0.1);
+}
+
+.pk-q {
+  font-weight: 700;
+  font-size: 0.98rem;
+  color: #2d2a3a;
+  margin-bottom: 8px;
+}
+
+.pk-a {
+  font-size: 0.92rem;
+  color: #6b6b83;
+  border-top: 1px dashed #ece8fb;
+  padding-top: 8px;
+}
+
+.pk-del {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  border: none;
+  background: transparent;
+  color: #c2bdda;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.pk-del:hover { color: #dc2626; }
+
+.pack-empty {
+  color: #a09cb8;
+  font-size: 0.92rem;
+  text-align: center;
+  padding: 26px;
+  background: #fff;
+  border: 1px dashed #e5e1f6;
+  border-radius: 16px;
+}

@@ -54,23 +54,8 @@
         <span class="myd-title">StudyPack</span>
         <button class="myd-add" id="myd-add" title="Add a StudyPack">+</button>
       </div>
-      <div id="pinned-wrap" class="hist-section hidden">
-        <div class="hist-section-label">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
-          Pinned
-        </div>
-        <div id="pinned-list" class="hist-list"></div>
-      </div>
-
-      <div id="recent-wrap" class="hist-section">
-        <div class="hist-section-label">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
-          Recent
-        </div>
-        <div id="recent-list" class="hist-list"></div>
-      </div>
-
-      <div id="sidebar-history-empty" class="history-empty hidden">Sign in to see your quiz history</div>
+      <div id="studypack-list" class="hist-list"></div>
+      <div id="sidebar-history-empty" class="history-empty hidden">No StudyPacks yet. Generate or add questions!</div>
     </div>
 
     <div class="sidebar-bottom">
@@ -354,6 +339,53 @@
           <div id="friend-list" class="friend-list"></div>
         </div>
       </section>
+
+      <!-- StudyPack detail screen -->
+      <section id="pack-screen" class="screen hidden">
+        <div class="pack-head">
+          <button id="pack-back" class="pack-back">&#8249;</button>
+          <div class="pack-title-wrap">
+            <h1 id="pack-name" class="pack-name">StudyPack</h1>
+            <span id="pack-count" class="pack-count">0 cards</span>
+          </div>
+          <button id="pack-study" class="pack-study">&#127918; Take quiz</button>
+        </div>
+        <div class="pack-toolbar">
+          <span class="pack-tab active">Cards <span id="pack-n"></span></span>
+          <button id="pack-add" class="pack-add">+ Add question</button>
+        </div>
+        <div id="pack-list" class="pack-list"></div>
+      </section>
+
+      <!-- Add question modal -->
+      <div id="addq-modal" class="modal hidden">
+        <div class="modal-backdrop" id="addq-backdrop"></div>
+        <div class="modal-card">
+          <div class="modal-head"><h3>Add a question</h3><button id="addq-close" class="modal-close">&times;</button></div>
+          <label class="field-label">Question</label>
+          <textarea id="addq-question" rows="3" placeholder="Write the question with a ____ blank, or just the question"></textarea>
+          <label class="field-label">Answer</label>
+          <input id="addq-answer" placeholder="Short answer" />
+          <button id="addq-save" class="btn btn-primary">Add to StudyPack</button>
+        </div>
+      </div>
+
+      <!-- Take-quiz mode modal -->
+      <div id="quizmode-modal" class="modal hidden">
+        <div class="modal-backdrop" id="quizmode-backdrop"></div>
+        <div class="modal-card">
+          <div class="modal-head"><h3>Start a quiz</h3><button id="quizmode-close" class="modal-close">&times;</button></div>
+          <p class="source-hint">Choose how you want to answer.</p>
+          <div class="type-options">
+            <button class="type-option" data-m="flashcard">
+              <span class="to-icon">&#128278;</span><span class="to-title">Fill in the Blank</span><span class="to-sub">Type the answer</span>
+            </button>
+            <button class="type-option" data-m="choice">
+              <span class="to-icon">&#9745;</span><span class="to-title">Multiple Choice</span><span class="to-sub">Pick an option</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
       <!-- Quiz / Deck view -->
       <section id="quiz-screen" class="screen hidden">
