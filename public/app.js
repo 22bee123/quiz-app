@@ -120,18 +120,31 @@ function startCreateLoading() {
   clPct = 4;
   createLoading.classList.remove('hidden');
   setCreateProgress(clPct);
+  setCreateSub();
   if (clTimer) clearInterval(clTimer);
   clTimer = setInterval(() => {
     const step = 0.6 + Math.random() * 1.4;
     clPct = Math.min(92, clPct + step);
     setCreateProgress(clPct);
+    setCreateSub();
   }, 250);
+}
+
+function setCreateSub() {
+  const el = document.getElementById('cl-sub');
+  if (!el) return;
+  let msg = 'Reading your module\u2026';
+  if (clPct >= 30) msg = 'Understanding the content\u2026';
+  if (clPct >= 55) msg = 'Writing your questions\u2026';
+  if (clPct >= 80) msg = 'Almost done\u2026';
+  if (el.textContent !== msg) el.textContent = msg;
 }
 
 function setCreateProgress(pct) {
   const val = Math.round(Math.min(100, pct));
   if (clFill) clFill.style.width = val + '%';
   if (clPercent) clPercent.textContent = val + '%';
+  if (val === 100) setCreateSub();
 }
 
 function completeCreateLoading() {

@@ -202,11 +202,15 @@
 
           <!-- AI loading overlay -->
           <div id="create-loading" class="create-loading hidden">
-            <div class="cl-spinner"></div>
-            <div class="cl-text">Creating your quiz with AI&hellip;</div>
+            <div class="cl-orbit">
+              <span class="cl-ring r1"></span>
+              <span class="cl-ring r2"></span>
+              <span class="cl-core">&#129302;</span>
+            </div>
+            <div class="cl-title">Creating your quiz with AI</div>
             <div class="cl-track"><span id="cl-fill"></span></div>
             <div class="cl-percent" id="cl-percent">0%</div>
-            <div class="cl-sub">Reading your module and writing questions</div>
+            <div class="cl-sub" id="cl-sub">Reading your module&hellip;</div>
           </div>
         </div>
       </div>
