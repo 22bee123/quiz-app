@@ -9,8 +9,8 @@ const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash-vision-exp';
 
 const MAX_GEN_CARDS = 100;      // hard ceiling for AI-generated cards
-const PER_CHUNK_CARDS = 25;     // max cards requested per AI call (keeps each response small/safe)
-const CHUNK_TARGET_CHARS = 5000;
+const PER_CHUNK_CARDS = 15;     // max cards requested per AI call (keeps each response small/safe)
+const CHUNK_TARGET_CHARS = 6000;
 
 if (!process.env.DEEPSEEK_API_KEY) {
   console.error('ERROR: DEEPSEEK_API_KEY is not set. Copy .env.example to .env and add your key.');
@@ -54,15 +54,53 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
   return data.choices[0].message.content;
 }
 
-function extractJson(text) {
-  const match = text.match(/```json\s*([\s\S]*?)```/);
-  const candidate = match ? match[1] : text;
-  const start = candidate.indexOf('[');
-  const end = candidate.lastIndexOf(']');
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error('Could not find a JSON array in the AI response.');
+function tryParseArray(s) {
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) ? v : null;
+  } catch (e) {
+    return null;
   }
-  return JSON.parse(candidate.slice(start, end + 1));
+}
+
+function extractJson(text) {
+  if (!text) throw new Error('Could not find a JSON array in the AI response.');
+
+  const candidates = [];
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  candidates.push(fence ? fence[1] : text);
+  if (fence) candidates.push(text);
+
+  for (const candidate of candidates) {
+    // Collect every '[' index and try from the last one backwards. This lets us skip
+    // prose/reasoning that comes before the real JSON array.
+    const opens = [];
+    for (let i = 0; i < candidate.length; i++) {
+      if (candidate[i] === '[') opens.push(i);
+    }
+    for (let k = opens.length - 1; k >= 0; k--) {
+      const start = opens[k];
+      const closeIdx = candidate.indexOf(']', start);
+      if (closeIdx === -1) continue;
+      const slice = candidate.slice(start, closeIdx + 1);
+      const arr = tryParseArray(slice);
+      if (arr) return arr;
+      // The response may have been cut off mid-way; salvage up to the last complete object.
+      const lastObj = slice.lastIndexOf('}');
+      if (lastObj !== -1 && lastObj > start) {
+        const repaired = tryParseArray(slice.slice(0, lastObj + 1) + ']');
+        if (repaired) return repaired;
+      }
+    }
+  }
+
+  throw new Error('Could not find a JSON array in the AI response.');
+}
+
+async function generateTextChunk(ask, chunk, extraInstruction) {
+  const prompt = buildQuizPrompt(ask, chunk, null) + (extraInstruction || '');
+  const raw = await callDeepSeek([{ role: 'user', content: prompt }], 8000, 0.3);
+  return normalizeFlashcards(extractJson(raw)).slice(0, ask);
 }
 
 app.use(express.json({ limit: '5mb' }));
@@ -90,25 +128,39 @@ app.post('/api/analyze', async (req, res) => {
     if (images.length) {
       // Image-based import: single call, ask for as many as the images support.
       // Capped lower than text mode so one reply can't get truncated mid-JSON.
-      const ask = Math.min(40, Math.max(5, images.length * 10));
+      const ask = Math.min(30, Math.max(5, images.length * 8));
       const promptText = buildQuizPrompt(ask, null, images);
       const content = [
         { type: 'text', text: promptText },
         ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
       ];
-      const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
+      const raw = await callDeepSeek([{ role: 'user', content }], 8000, 0.3);
       flashcards.push(...normalizeFlashcards(extractJson(raw)));
     } else {
-      // Text import: split into a few balanced batches (max 4) and ask each batch for as many
-      // questions as that segment's length supports (5–25). Running up to 4 batches in parallel
-      // lets us reach the 100-card ceiling on rich modules without ever truncating one response.
-      const partCount = Math.min(4, Math.max(1, Math.ceil(text.length / CHUNK_TARGET_CHARS)));
+      // Text import: split into balanced batches (max 7) and ask each batch for a modest,
+      // safe number of cards (5–15). Running batches in parallel reaches the 100-card ceiling
+      // on rich modules while keeping every single AI response short enough to never truncate.
+      const partCount = Math.min(7, Math.max(1, Math.ceil(text.length / CHUNK_TARGET_CHARS)));
       const chunks = splitTextIntoChunks(text, partCount);
 
-      const requests = chunks.map((chunk) => {
-        const ask = Math.max(5, Math.min(PER_CHUNK_CARDS, Math.round(chunk.length / 130)));
-        return callDeepSeek([{ role: 'user', content: buildQuizPrompt(ask, chunk, null) }], 4000, 0.4)
-          .then((raw) => normalizeFlashcards(extractJson(raw)).slice(0, ask));
+      const requests = chunks.map(async (chunk) => {
+        const ask = Math.max(5, Math.min(PER_CHUNK_CARDS, Math.round(chunk.length / 150)));
+        try {
+          return await generateTextChunk(ask, chunk, '');
+        } catch (firstErr) {
+          // Some models occasionally answer with prose instead of JSON — retry once with a
+          // firm reminder before giving up on this chunk.
+          console.error(`Analyze chunk failed, retrying:`, firstErr.message);
+          try {
+            return await generateTextChunk(
+              ask,
+              chunk,
+              '\n\nIMPORTANT: Your previous answer was not valid JSON. Output ONLY the JSON array now, with no explanation, no markdown, and no extra text before or after it.'
+            );
+          } catch (secondErr) {
+            throw new Error(`chunk failed after retry: ${secondErr.message}`);
+          }
+        }
       });
 
       const settled = await Promise.allSettled(requests);
@@ -164,6 +216,7 @@ Requirements:
 - Vary difficulty across the questions.
 - Focus on key concepts, definitions, and important facts.
 - Keep flashcard answers short and specific.
+- Do NOT include any reasoning, explanations, markdown fences, or prose — the entire response must be ONLY the JSON array.
 
 Respond with ONLY a valid JSON array in this exact format (no extra text):
 [
@@ -236,7 +289,7 @@ ${imagesFlag ? 'Module images:' : 'Module content:\n"""' + String(contentText ||
 }
 
 async function requestChoiceOnly(text, images, cap) {
-  const ask = Math.min(cap, 25);
+  const ask = Math.min(cap, 15);
   if (ask <= 0) return [];
   try {
     let content;
@@ -248,7 +301,7 @@ async function requestChoiceOnly(text, images, cap) {
     } else {
       content = [{ type: 'text', text: buildChoicePrompt(ask, text || '', false) }];
     }
-    const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
+    const raw = await callDeepSeek([{ role: 'user', content }], 8000, 0.3);
     return normalizeFlashcards(extractJson(raw)).filter((f) => f.type === 'choice').slice(0, ask);
   } catch (err) {
     console.error('Choice fallback failed:', err.message);
