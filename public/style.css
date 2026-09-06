@@ -3746,20 +3746,20 @@ header h1 {
   animation: cardEnter 0.25s ease;
 }
 
-/* ---------- AI loading overlay ---------- */
+/* ---------- AI loading overlay (full screen) ---------- */
 .create-loading {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  background: linear-gradient(165deg, #ffffff 0%, #f6f3ff 100%);
-  border-radius: 20px;
+  z-index: 3000;
+  background: rgba(238, 240, 255, 0.92);
+  backdrop-filter: blur(8px);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 12px;
   padding: 24px;
   text-align: center;
-  z-index: 5;
 }
 
 .create-loading.hidden {
@@ -3808,7 +3808,7 @@ header h1 {
 }
 
 .cl-title {
-  font-size: 1.1rem;
+  font-size: 1.25rem;
   font-weight: 800;
   color: #2d2a3a;
   letter-spacing: -0.01em;
@@ -3816,13 +3816,13 @@ header h1 {
 
 .cl-track {
   width: 100%;
-  max-width: 240px;
-  height: 12px;
-  background: #ece8fb;
+  max-width: 320px;
+  height: 14px;
+  background: #fff;
   border-radius: 999px;
   overflow: hidden;
-  box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);
-  margin-top: 4px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.08);
+  margin-top: 6px;
 }
 
 .cl-track span {
@@ -3842,7 +3842,7 @@ header h1 {
 }
 
 .cl-percent {
-  font-size: 1.7rem;
+  font-size: 1.9rem;
   font-weight: 800;
   color: #7b5cff;
   font-variant-numeric: tabular-nums;
@@ -3850,7 +3850,7 @@ header h1 {
 }
 
 .cl-sub {
-  font-size: 0.82rem;
+  font-size: 0.9rem;
   color: #8a87a3;
   transition: opacity 0.25s;
 }
