@@ -102,7 +102,7 @@ app.post('/api/analyze', async (req, res) => {
       // Text import: estimate how many questions the material supports (up to 100), split the
       // content into balanced batches and ask each in parallel for its proportional share. This
       // never exceeds the cap and keeps each model response small so it cannot be truncated.
-      const estimated = Math.min(MAX_GEN_CARDS, Math.max(3, Math.floor(text.length / 260)));
+      const estimated = Math.min(MAX_GEN_CARDS, Math.max(5, Math.floor(text.length / 200)));
       const partCount = Math.min(10, Math.max(1, Math.ceil(text.length / CHUNK_TARGET_CHARS)));
       const chunks = splitTextIntoChunks(text, partCount);
 
@@ -124,19 +124,23 @@ app.post('/api/analyze', async (req, res) => {
     }
 
     // De-duplicate (chunks can overlap) and enforce the 100-card ceiling.
-    const seen = new Set();
-    const unique = flashcards.filter((f) => {
-      const key = `${f.type}|${String(f.question || '').toLowerCase().trim()}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    let final = dedupeCards(flashcards);
 
-    if (unique.length === 0) {
+    if (final.length === 0) {
       throw new Error('AI response did not contain valid questions.');
     }
 
-    res.json({ flashcards: unique.slice(0, MAX_GEN_CARDS) });
+    // Guarantee multiple-choice questions appear when the content can support them:
+    // if the first pass produced none, ask once more for choice-only items and merge.
+    if (!final.some((f) => f.type === 'choice')) {
+      const extra = await requestChoiceOnly(text, images, MAX_GEN_CARDS - final.length);
+      if (extra.length) final = dedupeCards([...final, ...extra]);
+      if (final.length === 0) {
+        throw new Error('AI response did not contain valid questions.');
+      }
+    }
+
+    res.json({ flashcards: final.slice(0, MAX_GEN_CARDS) });
   } catch (err) {
     console.error('Analyze error:', err.message);
     res.status(500).json({ error: `Failed to generate flashcards: ${err.message}` });
@@ -170,32 +174,87 @@ Respond with ONLY a valid JSON array in this exact format (no extra text):
 ${images ? 'Module images:' : 'Module content:\n"""' + String(chunk || '').slice(0, 30000) + '"""'}`;
 }
 
+function dedupeCards(list) {
+  const seen = new Set();
+  const out = [];
+  for (const f of list) {
+    if (!f) continue;
+    const key = `${f.type}|${String(f.question || '').toLowerCase().trim()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(f);
+  }
+  return out;
+}
+
 function normalizeFlashcards(list) {
   if (!Array.isArray(list)) return [];
-  return list
-    .filter((f) => {
-      if (!f || typeof f.question !== 'string') return false;
-      if (f.type === 'choice') {
-        return Array.isArray(f.options) && f.options.length >= 2 && typeof f.answer === 'string' && f.options.includes(f.answer);
-      }
-      return f.type === 'flashcard' && typeof f.answer === 'string';
-    })
-    .map((f) => {
-      if (f.type === 'choice') {
-        return {
-          type: 'choice',
-          question: f.question.trim(),
-          options: f.options.map((o) => String(o).trim()).slice(0, 4),
-          answer: String(f.answer).trim(),
-        };
-      }
-      return {
-        type: 'flashcard',
-        question: f.question.trim(),
-        answer: f.answer.trim(),
-      };
-    })
-    .filter((f) => f.question && (f.type === 'flashcard' ? f.answer : f.answer && f.options.length >= 2));
+  const out = [];
+  for (const f of list) {
+    if (!f || typeof f !== 'object') continue;
+    const type = f.type;
+    const question = typeof f.question === 'string' ? f.question.trim() : '';
+    if (!question) continue;
+
+    if (type === 'flashcard') {
+      const answer = typeof f.answer === 'string' ? f.answer.trim() : '';
+      if (answer) out.push({ type, question, answer });
+      continue;
+    }
+
+    if (type === 'choice') {
+      const options = (Array.isArray(f.options) ? f.options : [])
+        .map((o) => String(o).trim())
+        .filter(Boolean);
+      const uniq = [...new Set(options)].slice(0, 4);
+      if (uniq.length < 2) continue;
+      const rawAnswer = typeof f.answer === 'string' ? f.answer.trim() : '';
+      if (!rawAnswer) continue;
+      // Match the answer to one of the options case/space-insensitively so a
+      // slightly different spelling never makes us silently drop the whole card.
+      const canonical = uniq.find((o) => o.toLowerCase() === rawAnswer.toLowerCase());
+      if (!canonical) continue;
+      out.push({ type, question, options: uniq, answer: canonical });
+    }
+  }
+  return out;
+}
+
+function buildChoicePrompt(ask, contentText, imagesFlag) {
+  const role = imagesFlag
+    ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),'
+    : 'You are an expert quiz creator. Based ONLY on the following module content,';
+  return `${role} create up to ${ask} MULTIPLE-CHOICE questions (as many as the content supports; fewer is fine if the material is short — never pad with filler). Do NOT create any flashcard items — every single question must be multiple choice.
+
+For each question include exactly 4 options and exactly one correct answer:
+- "question": a standalone question (NOT a fill-in-the-blank sentence).
+- "options": an array of exactly 4 short answer strings.
+- "answer": the one correct option, spelled EXACTLY like that option (same case and spacing).
+
+Respond with ONLY a valid JSON array (no extra text):
+[ { "type": "choice", "question": "...?", "options": ["a", "b", "c", "d"], "answer": "a" } ]
+${imagesFlag ? 'Module images:' : 'Module content:\n"""' + String(contentText || '').slice(0, 30000) + '"""'}`;
+}
+
+async function requestChoiceOnly(text, images, cap) {
+  const ask = Math.min(cap, 25);
+  if (ask <= 0) return [];
+  try {
+    let content;
+    if (images && images.length) {
+      content = [
+        { type: 'text', text: buildChoicePrompt(ask, null, true) },
+        ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+      ];
+    } else {
+      content = [{ type: 'text', text: buildChoicePrompt(ask, text || '', false) }];
+    }
+    const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
+    return normalizeFlashcards(extractJson(raw)).filter((f) => f.type === 'choice').slice(0, ask);
+  } catch (err) {
+    console.error('Choice fallback failed:', err.message);
+    return [];
+  }
 }
 
 // Split content into up to `parts` balanced segments, cutting on sentence/word boundaries.

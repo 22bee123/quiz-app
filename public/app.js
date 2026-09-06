@@ -352,15 +352,16 @@ async function startAnalysis(payload, moduleName, statusEl) {
     if (!res.ok) {
       throw new Error(data.error || 'Analysis failed.');
     }
-    flashcards = data.flashcards;
-    results = new Array(flashcards.length).fill(null);
+    const cards = ensureMixedChoice(data.flashcards);
+    flashcards = cards;
+    results = new Array(cards.length).fill(null);
     gradingPromises = {};
     currentIndex = 0;
     lastModuleName = moduleName || 'Quiz';
-    savePendingDeck('ready', data.flashcards, moduleName, createMode);
+    savePendingDeck('ready', cards, moduleName, createMode);
     renderPendingDeck();
     renderJumpBack();
-    const newPack = addPack(moduleName || 'StudyPack', data.flashcards.map((f) => ({
+    const newPack = addPack(moduleName || 'StudyPack', cards.map((f) => ({
       type: f.type === 'choice' ? 'choice' : 'flashcard',
       question: f.question,
       answer: f.answer,
@@ -368,7 +369,7 @@ async function startAnalysis(payload, moduleName, statusEl) {
     })));
     if (hostingRoom) {
       hostingRoom = false;
-      await hostCreateRoom(payload, moduleName, data.flashcards);
+      await hostCreateRoom(payload, moduleName, cards);
     } else {
       // open the review view so the user can see Q&A, then Start Study
       openPack(newPack.id);
@@ -1678,6 +1679,43 @@ function makeChoiceOptions(it, pack) {
   const distractors = shuffle(others).slice(0, 3);
   while (distractors.length < 3) distractors.push(['None of the above', 'Not listed', 'All of the above'][distractors.length]);
   return shuffle([...used, ...distractors]);
+}
+
+// Guarantee the generated set contains multiple choice cards whenever the content
+// allows, by converting fill-in-the-blank cards into complete-the-sentence MC cards.
+function ensureMixedChoice(items) {
+  const res = (Array.isArray(items) ? items : []).map((f) => Object.assign({}, f));
+  if (!res.length) return res;
+
+  const choiceCount = res.filter((f) => f.type === 'choice').length;
+  const target = Math.max(1, Math.floor(res.length / 2));
+  let need = target - choiceCount;
+  if (need <= 0) return res;
+
+  const answers = [];
+  res.forEach((f) => {
+    const a = f.type === 'choice' ? (answerList(f)[0] || f.answer) : f.answer;
+    if (a) answers.push(String(a).trim());
+  });
+  const uniqueAnswers = [...new Set(answers.filter(Boolean))];
+
+  for (let i = 0; i < res.length && need > 0; i++) {
+    const f = res[i];
+    if (!f || f.type !== 'flashcard' || !f.answer) continue;
+    if (!/_{2,}/.test(f.question)) continue;
+    const others = uniqueAnswers.filter((a) => a.toLowerCase() !== String(f.answer).toLowerCase());
+    if (others.length < 3) continue;
+    const distractors = shuffle(others).slice(0, 3);
+    const stem = f.question.replace(/_+/g, '_____');
+    res[i] = {
+      type: 'choice',
+      question: `Which option best completes this statement: ${stem}`,
+      options: shuffle([f.answer, ...distractors]),
+      answer: f.answer,
+    };
+    need--;
+  }
+  return res;
 }
 
 function shuffle(arr) {
