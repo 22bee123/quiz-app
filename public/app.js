@@ -1254,8 +1254,7 @@ function wireFriends() {
 }
 
 function startQuiz() {
-  uploadScreen.classList.add('hidden');
-  quizScreen.classList.remove('hidden');
+  showScreen(quizScreen);
   endless = false;
   endlessToggle.classList.remove('active');
   attempted = [];
@@ -1414,11 +1413,13 @@ function renderPack() {
     `;
     const more = card.querySelector('.pk-more');
     const dd = card.querySelector('.pk-dropdown');
-    const close = () => dd.classList.add('hidden');
+    const close = () => { dd.classList.add('hidden'); card.classList.remove('menu-open'); };
     more.addEventListener('click', (e) => {
       e.stopPropagation();
       document.querySelectorAll('.pk-dropdown:not(.hidden)').forEach((x) => x.classList.add('hidden'));
-      dd.classList.toggle('hidden');
+      document.querySelectorAll('.pack-card.menu-open').forEach((c) => c.classList.remove('menu-open'));
+      const opened = dd.classList.toggle('hidden') === false;
+      if (opened) card.classList.add('menu-open');
     });
     dd.addEventListener('click', (e) => e.stopPropagation());
     card.querySelector('.pk-edit').addEventListener('click', () => { close(); openEditQ(i); });
@@ -2029,7 +2030,66 @@ function safeHint(answer) {
   return h;
 }
 
-async function checkFill() {
+function normAnswer(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function levDist(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const n = b.length + 1;
+  let prev = new Array(n);
+  let cur = new Array(n);
+  for (let j = 0; j < n; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    cur[0] = i;
+    for (let j = 1; j < n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    const t = prev; prev = cur; cur = t;
+  }
+  return prev[n - 1];
+}
+
+// Local, offline answer grading (no AI, no tokens): case/space/punctuation
+// insensitive, tolerates small typos, and flags partial answers.
+function gradeLocally(user, correct) {
+  const u = normAnswer(user);
+  const c = normAnswer(correct);
+  if (!c) return 'wrong';
+  if (!u) return 'wrong';
+  if (u === c) return 'correct';
+
+  const cl = c.length;
+  // typed a slightly longer phrase that fully contains the answer
+  if (u.includes(c)) return 'correct';
+  // typed a prefix that covers most of the answer
+  if (c.includes(u) && u.length >= Math.max(3, cl * 0.7)) return 'correct';
+
+  const d = levDist(u, c);
+  if (d <= Math.max(2, Math.floor(cl * 0.15))) return 'correct';
+
+  // typed a short word/phrase that is a piece of a longer correct answer
+  if (c.includes(u) && u.length >= 3) return 'partial';
+
+  const su = u.split(' ');
+  const sc = c.split(' ');
+  let hits = 0;
+  sc.forEach((w) => { if (su.includes(w)) hits++; });
+  const sim = sc.length ? hits / sc.length : 0;
+  if (sim >= 0.6 || d <= Math.max(4, Math.floor(cl * 0.35))) return 'partial';
+  return 'wrong';
+}
+
+function checkFill() {
   const item = currentItem();
   if (item.type === 'choice') return;
   const answer = deckFillInput.value.trim();
@@ -2040,21 +2100,7 @@ async function checkFill() {
     return;
   }
   deckCheck.disabled = true;
-  deckResult.classList.remove('hidden');
-  deckResult.textContent = 'Checking\u2026';
-  deckResult.className = 'deck-result';
-  let verdict = 'wrong';
-  try {
-    const res = await fetch('/api/grade', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: item.question, correctAnswer: item.answer, userAnswer: answer }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      verdict = data.verdict || 'wrong';
-    }
-  } catch (e) {}
+  const verdict = gradeLocally(answer, item.answer);
 
   markAnswered(currentIndex, verdict, answer, item.answer);
   if (verdict === 'correct') playCorrect();

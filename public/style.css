@@ -3961,6 +3961,12 @@ header h1 {
   box-shadow: 0 10px 22px rgba(93, 82, 179, 0.1);
 }
 
+.pack-card.menu-open {
+  z-index: 20;
+  transform: none;
+  box-shadow: 0 16px 34px rgba(93, 82, 179, 0.16);
+}
+
 .pk-q {
   font-weight: 700;
   font-size: 0.98rem;
