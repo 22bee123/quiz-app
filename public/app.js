@@ -359,7 +359,12 @@ async function startAnalysis(payload, moduleName, statusEl) {
     savePendingDeck('ready', data.flashcards, moduleName, createMode);
     renderPendingDeck();
     renderJumpBack();
-    const newPack = addPack(moduleName || 'StudyPack', data.flashcards.map((f) => ({ question: f.question, answer: f.answer })));
+    const newPack = addPack(moduleName || 'StudyPack', data.flashcards.map((f) => ({
+      type: f.type === 'choice' ? 'choice' : 'flashcard',
+      question: f.question,
+      answer: f.answer,
+      options: f.type === 'choice' ? f.options : undefined,
+    })));
     if (hostingRoom) {
       hostingRoom = false;
       await hostCreateRoom(payload, moduleName, data.flashcards);
@@ -1326,6 +1331,39 @@ function renderStudyPackList() {
 }
 
 let currentPackId = null;
+let hlCard = null; // pack item index currently in highlight mode
+let hlColor = 'yellow';
+
+const HL = {
+  yellow: 'rgba(253,224,71,0.55)',
+  green: 'rgba(74,222,128,0.5)',
+  pink: 'rgba(244,114,182,0.5)',
+  blue: 'rgba(96,165,250,0.5)',
+};
+
+function tokenText(text, map, clickable) {
+  const words = String(text).split(' ');
+  return words
+    .map((wd, wi) => {
+      const color = map && map[wi];
+      if (clickable) {
+        const css = color ? `background:${HL[color]};` : '';
+        return `<span class="hlw" data-wi="${wi}"${color ? ` data-c="${color}"` : ''} style="${css}">${escapeHtml(wd)}</span>`;
+      }
+      const css = color ? `background:${HL[color]};` : '';
+      return `<span class="hloff" style="${css}">${escapeHtml(wd)}</span>`;
+    })
+    .join(' ');
+}
+
+function toggleWordHighlight(item, field, wi) {
+  const map = item[field] || {};
+  if (map[wi] === hlColor) delete map[wi];
+  else map[wi] = hlColor;
+  item[field] = map;
+  updatePack(currentPackId, () => {});
+  renderPack();
+}
 
 function openPack(id) {
   const pack = getPack(id);
@@ -1349,18 +1387,26 @@ function renderPack() {
     return;
   }
   pack.items.forEach((it, i) => {
+    const isHl = hlCard === i;
     const card = document.createElement('div');
-    card.className = 'pack-card';
+    card.className = 'pack-card' + (isHl ? ' hl-mode' : '') + (it.type === 'choice' ? ' is-choice' : '');
+    card.dataset.pi = i;
+    const palette = Object.keys(HL)
+      .map((c) => `<span class="hl-dot ${c === hlColor ? 'active' : ''}" data-c="${c}" style="background:${HL[c]}"></span>`)
+      .join('');
     card.innerHTML = `
       <div class="pk-menu">
+        <button class="pk-hl ${isHl ? 'on' : ''}" title="Highlighter">&#129528;</button>
         <button class="pk-more" title="Options">&#8942;</button>
         <div class="pk-dropdown hidden">
           <button class="pk-edit">&#9998;&#65039; Edit</button>
           <button class="pk-del">&#128465; Delete</button>
         </div>
       </div>
-      <div class="pk-q">${escapeHtml(it.question)}</div>
-      <div class="pk-a">${escapeHtml(it.answer)}</div>
+      ${it.type === 'choice' ? '<span class="pk-badge">Multiple Choice</span>' : ''}
+      <div class="pk-q">${tokenText(it.question, it.hq, isHl)}</div>
+      <div class="pk-a">${tokenText(it.answer, it.ha, isHl)}</div>
+      ${isHl ? `<div class="pk-palette">${palette}<span class="pk-palette-hint">click words to highlight</span></div>` : ''}
     `;
     const more = card.querySelector('.pk-more');
     const dd = card.querySelector('.pk-dropdown');
@@ -1371,6 +1417,12 @@ function renderPack() {
       dd.classList.toggle('hidden');
     });
     dd.addEventListener('click', (e) => e.stopPropagation());
+    card.querySelector('.pk-hl').addEventListener('click', (e) => {
+      e.stopPropagation();
+      close();
+      hlCard = isHl ? null : i;
+      renderPack();
+    });
     card.querySelector('.pk-edit').addEventListener('click', () => { close(); openEditQ(i); });
     card.querySelector('.pk-del').addEventListener('click', () => { close(); if (confirm('Delete this question?')) { updatePack(pack.id, (p) => { p.items.splice(i, 1); }); renderPack(); } });
     card.addEventListener('click', close);
@@ -1378,13 +1430,58 @@ function renderPack() {
   });
 }
 
+// word/highlighter clicks (delegated)
+document.addEventListener('click', (e) => {
+  const dot = e.target.closest('.hl-dot');
+  if (dot) {
+    hlColor = dot.dataset.c;
+    renderPack();
+    return;
+  }
+  const word = e.target.closest('.hlw');
+  if (word) {
+    const card = word.closest('.pack-card');
+    const pack = getPack(currentPackId);
+    const idx = Number(card.dataset.pi);
+    const item = pack && pack.items[idx];
+    if (!item) return;
+    const field = word.closest('.pk-q') ? 'hq' : 'ha';
+    toggleWordHighlight(item, field, Number(word.dataset.wi));
+  }
+});
+
 let addqEditIndex = -1;
+let addqType = 'flashcard';
+
+function setAddQType(type) {
+  addqType = type;
+  document.querySelectorAll('.aq-type-opt').forEach((b) => b.classList.toggle('active', b.dataset.t === type));
+  const hint = document.getElementById('aq-type-hint');
+  if (hint) hint.textContent = type === 'choice'
+    ? 'Multiple choice: answer is the correct one; other options are auto-built from your cards.'
+    : 'Fill in the blank: the question uses a ____ blank.';
+  const qh = document.getElementById('aq-q-hint');
+  const qEl = document.getElementById('addq-question');
+  const aEl = document.getElementById('addq-answer');
+  if (type === 'choice') {
+    qEl.placeholder = 'e.g. What is the capital of France?';
+    aEl.placeholder = 'e.g. Paris';
+    if (qh) qh.textContent = 'The correct answer will be the right option.';
+    document.getElementById('aq-answer-label').textContent = 'Correct answer';
+  } else {
+    qEl.placeholder = 'e.g. The capital of France is ____.';
+    aEl.placeholder = 'e.g. Paris';
+    if (qh) qh.textContent = 'Tip: use ____ where the answer goes.';
+    document.getElementById('aq-answer-label').textContent = 'Answer';
+  }
+}
 
 function openAddQ() {
   if (!currentPackId) return;
   addqEditIndex = -1;
   document.getElementById('addq-title').textContent = 'Add a question';
   document.getElementById('addq-save-label').textContent = 'Add to StudyPack';
+  setAddQType('flashcard');
   document.getElementById('addq-question').value = '';
   document.getElementById('addq-answer').value = '';
   document.getElementById('addq-modal').classList.remove('hidden');
@@ -1399,6 +1496,7 @@ function openEditQ(index) {
   addqEditIndex = index;
   document.getElementById('addq-title').textContent = 'Edit question';
   document.getElementById('addq-save-label').textContent = 'Save changes';
+  setAddQType(it.type === 'choice' ? 'choice' : 'flashcard');
   document.getElementById('addq-question').value = it.question;
   document.getElementById('addq-answer').value = it.answer;
   document.getElementById('addq-modal').classList.remove('hidden');
@@ -1409,29 +1507,31 @@ function saveAddQ() {
   const q = document.getElementById('addq-question').value.trim();
   const a = document.getElementById('addq-answer').value.trim();
   if (!q || !a) return;
+  const item = addqType === 'choice'
+    ? { type: 'choice', question: q, answer: a, options: undefined }
+    : { type: 'flashcard', question: q, answer: a };
   updatePack(currentPackId, (p) => {
-    if (addqEditIndex >= 0) p.items[addqEditIndex] = { question: q, answer: a };
-    else p.items.push({ question: q, answer: a });
+    if (addqEditIndex >= 0) p.items[addqEditIndex] = item;
+    else p.items.push(item);
   });
   document.getElementById('addq-modal').classList.add('hidden');
   renderPack();
 }
 
-function openQuizMode() {
-  if (!currentPackId || !getPack(currentPackId).items.length) return;
-  document.getElementById('quizmode-modal').classList.remove('hidden');
-}
-
-function startPackQuiz(mode) {
+function startPackQuiz() {
   const pack = getPack(currentPackId);
   if (!pack || !pack.items.length) return;
-  document.getElementById('quizmode-modal').classList.add('hidden');
-
-  if (mode === 'choice') {
-    flashcards = pack.items.map((it) => makeChoiceItem(it, pack));
-  } else {
-    flashcards = pack.items.map((it) => ({ type: 'flashcard', question: it.question, answer: it.answer }));
-  }
+  flashcards = pack.items.map((it) => {
+    if (it.type === 'choice') {
+      return {
+        type: 'choice',
+        question: it.question,
+        options: it.options && it.options.length >= 2 ? it.options.slice() : makeChoiceOptions(it, pack),
+        answer: it.answer,
+      };
+    }
+    return { type: 'flashcard', question: it.question, answer: it.answer };
+  });
   results = new Array(flashcards.length).fill(null);
   gradingPromises = {};
   currentIndex = 0;
@@ -1441,15 +1541,14 @@ function startPackQuiz(mode) {
   startQuiz();
 }
 
-function makeChoiceItem(it, pack) {
+function makeChoiceOptions(it, pack) {
   const others = pack.items
     .map((x) => x.answer)
     .filter((a) => a && a !== it.answer)
     .filter((v, i, arr) => arr.indexOf(v) === i);
   const distractors = shuffle(others).slice(0, 3);
   while (distractors.length < 3) distractors.push(['None of the above', 'Not listed', 'All of the above'][distractors.length]);
-  const options = shuffle([it.answer, ...distractors]);
-  return { type: 'choice', question: it.question, options, answer: it.answer };
+  return shuffle([it.answer, ...distractors]);
 }
 
 function shuffle(arr) {
@@ -1466,15 +1565,13 @@ function wirePack() {
     if (studyPacks.length) { openPack(studyPacks[0].id); }
   });
   document.getElementById('pack-back').addEventListener('click', () => resetToUpload());
-  document.getElementById('pack-study').addEventListener('click', openQuizMode);
+  document.getElementById('pack-study').addEventListener('click', () => { if (requireHearts()) startPackQuiz(); });
   document.getElementById('pack-add').addEventListener('click', openAddQ);
   document.getElementById('addq-save').addEventListener('click', saveAddQ);
   document.getElementById('addq-close').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
   document.getElementById('addq-backdrop').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
-  document.getElementById('quizmode-close').addEventListener('click', () => document.getElementById('quizmode-modal').classList.add('hidden'));
-  document.getElementById('quizmode-backdrop').addEventListener('click', () => document.getElementById('quizmode-modal').classList.add('hidden'));
-  document.querySelectorAll('#quizmode-modal .type-option').forEach((b) => {
-    b.addEventListener('click', () => startPackQuiz(b.dataset.m));
+  document.querySelectorAll('.aq-type-opt').forEach((b) => {
+    b.addEventListener('click', () => setAddQType(b.dataset.t));
   });
 }
 

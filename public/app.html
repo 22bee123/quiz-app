@@ -371,39 +371,31 @@
           </div>
 
           <div class="aq-group">
+            <label class="aq-label">Question type</label>
+            <div class="aq-type">
+              <button class="aq-type-opt active" data-t="flashcard">&#128278; Fill in the Blank</button>
+              <button class="aq-type-opt" data-t="choice">&#9745; Multiple Choice</button>
+            </div>
+            <span class="aq-hint" id="aq-type-hint">Fill in the blank: question uses a ____ blank.</span>
+          </div>
+
+          <div class="aq-group">
             <label class="aq-label" for="addq-question">
               <span class="aq-icon">&#128173;</span> Question
             </label>
             <textarea id="addq-question" rows="3" placeholder="e.g. The capital of France is ____."></textarea>
-            <span class="aq-hint">Tip: use ____ where the answer goes.</span>
+            <span class="aq-hint" id="aq-q-hint">Tip: use ____ where the answer goes.</span>
           </div>
 
           <div class="aq-group">
             <label class="aq-label" for="addq-answer">
-              <span class="aq-icon">&#9989;</span> Answer
+              <span class="aq-icon">&#9989;</span> <span id="aq-answer-label">Answer</span>
             </label>
             <input id="addq-answer" placeholder="e.g. Paris" />
-            <span class="aq-hint">Keep it short and specific.</span>
+            <span class="aq-hint" id="aq-a-hint">Keep it short and specific.</span>
           </div>
 
           <button id="addq-save" class="btn btn-primary"><span id="addq-save-label">Add to StudyPack</span></button>
-        </div>
-      </div>
-
-      <!-- Take-quiz mode modal -->
-      <div id="quizmode-modal" class="modal hidden">
-        <div class="modal-backdrop" id="quizmode-backdrop"></div>
-        <div class="modal-card">
-          <div class="modal-head"><h3>Start a quiz</h3><button id="quizmode-close" class="modal-close">&times;</button></div>
-          <p class="source-hint">Choose how you want to answer.</p>
-          <div class="type-options">
-            <button class="type-option" data-m="flashcard">
-              <span class="to-icon">&#128278;</span><span class="to-title">Fill in the Blank</span><span class="to-sub">Type the answer</span>
-            </button>
-            <button class="type-option" data-m="choice">
-              <span class="to-icon">&#9745;</span><span class="to-title">Multiple Choice</span><span class="to-sub">Pick an option</span>
-            </button>
-          </div>
         </div>
       </div>
 

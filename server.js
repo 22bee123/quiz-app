@@ -82,40 +82,23 @@ app.post('/api/analyze', async (req, res) => {
       return res.status(400).json({ error: 'The PDF appears to contain no readable text. It may be a scanned/image-based document.' });
     }
 
-    const mode = req.body.mode === 'choice' ? 'choice' : 'flashcard';
+    const prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} quiz questions that test understanding of the material.
 
-    let prompt;
-    if (mode === 'choice') {
-      prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} multiple-choice quiz questions that test understanding of the material.
-
-Each question must have exactly 4 options and one correct answer.
+Mix the question types — aim for about half "flashcard" (fill-in-the-blank) and half "choice" (multiple choice):
+- "flashcard": a fill-in-the-blank question. The question must be a sentence/statement from the module with a blank marked "____" where the key term(s) go (e.g. "The two main stages of photosynthesis are ____ and ____."). The "answer" must be a SHORT, specific value (single term/few words), NEVER a full sentence.
+- "choice": a multiple-choice question with exactly 4 options and one correct "answer" (which must be one of the options).
 
 Requirements:
-- Questions must be answerable based only on the module.
 - Vary difficulty across the questions.
 - Focus on key concepts, definitions, and important facts.
+- Keep flashcard answers short and specific.
 
 Respond with ONLY a valid JSON array in this exact format (no extra text):
 [
+  { "type": "flashcard", "question": "... ____ ...", "answer": "short answer" },
   { "type": "choice", "question": "...", "options": ["a", "b", "c", "d"], "answer": "a" }
 ]
 ${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 30000 ? text.slice(0, 30000) : text) + '"""'}`;
-    } else {
-      prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} FILL-IN-THE-BLANK flashcards (quiz questions) from the module.
-
-Requirements:
-- Write each question as a statement/sentence from the module with a blank marked as "____" in place of the key term(s) or item(s) (e.g. "The two main stages of photosynthesis are ____ and ____.").
-- The blank must be filled by a SHORT, specific answer — a single term, a few words, or a short enumerated list. NEVER a full sentence.
-- Keep the answer as short and specific as possible.
-- Vary difficulty across the questions.
-- Focus on key concepts, definitions, and important facts.
-
-Respond with ONLY a valid JSON array in this exact format (no extra text):
-[
-  { "type": "flashcard", "question": "... ____ ...", "answer": "short answer" }
-]
-${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 30000 ? text.slice(0, 30000) : text) + '"""'}`;
-    }
 
     let content;
     if (images.length) {
@@ -137,14 +120,14 @@ ${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 300
     const clean = flashcards
       .filter((f) => {
         if (!f || typeof f.question !== 'string') return false;
-        if (mode === 'choice') {
-          return f.type === 'choice' && Array.isArray(f.options) && f.options.length >= 2 && typeof f.answer === 'string' && f.options.includes(f.answer);
+        if (f.type === 'choice') {
+          return Array.isArray(f.options) && f.options.length >= 2 && typeof f.answer === 'string' && f.options.includes(f.answer);
         }
         return f.type === 'flashcard' && typeof f.answer === 'string';
       })
       .slice(0, count)
       .map((f) => {
-        if (mode === 'choice') {
+        if (f.type === 'choice') {
           return {
             type: 'choice',
             question: f.question.trim(),
