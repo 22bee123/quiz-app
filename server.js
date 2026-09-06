@@ -8,6 +8,10 @@ const PORT = process.env.PORT || 3000;
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash-vision-exp';
 
+const MAX_GEN_CARDS = 100;      // hard ceiling for AI-generated cards
+const PER_CHUNK_CARDS = 20;     // max cards requested per AI call (keeps each response small/safe)
+const CHUNK_TARGET_CHARS = 6000;
+
 if (!process.env.DEEPSEEK_API_KEY) {
   console.error('ERROR: DEEPSEEK_API_KEY is not set. Copy .env.example to .env and add your key.');
   process.exit(1);
@@ -67,7 +71,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.post('/api/analyze', async (req, res) => {
   try {
     const text = typeof req.body.text === 'string' ? req.body.text.replace(/\s+/g, ' ').trim() : '';
-    const count = Math.min(Math.max(parseInt(req.body.count, 10) || 10, 5), 20);
     const images = Array.isArray(req.body.images)
       ? req.body.images
           .filter((s) => typeof s === 'string' && s.startsWith('data:image/'))
@@ -82,7 +85,73 @@ app.post('/api/analyze', async (req, res) => {
       return res.status(400).json({ error: 'The PDF appears to contain no readable text. It may be a scanned/image-based document.' });
     }
 
-    const prompt = `${images.length ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),' : 'You are an expert quiz creator. Based ONLY on the following module content,'} create exactly ${count} quiz questions that test understanding of the material.
+    const flashcards = [];
+
+    if (images.length) {
+      // Image-based import: single call, ask for as many as the images support.
+      // Capped lower than text mode so one reply can't get truncated mid-JSON.
+      const ask = Math.min(40, Math.max(5, images.length * 10));
+      const promptText = buildQuizPrompt(ask, null, images);
+      const content = [
+        { type: 'text', text: promptText },
+        ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+      ];
+      const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
+      flashcards.push(...normalizeFlashcards(extractJson(raw)));
+    } else {
+      // Text import: estimate how many questions the material supports (up to 100), split the
+      // content into balanced batches and ask each in parallel for its proportional share. This
+      // never exceeds the cap and keeps each model response small so it cannot be truncated.
+      const estimated = Math.min(MAX_GEN_CARDS, Math.max(3, Math.floor(text.length / 260)));
+      const partCount = Math.min(10, Math.max(1, Math.ceil(text.length / CHUNK_TARGET_CHARS)));
+      const chunks = splitTextIntoChunks(text, partCount);
+
+      const requests = chunks.map((chunk) => {
+        const alloc = Math.max(1, Math.min(PER_CHUNK_CARDS, Math.round((estimated * chunk.length) / text.length)));
+        return callDeepSeek([{ role: 'user', content: buildQuizPrompt(alloc, chunk, null) }], 4000, 0.4)
+          .then((raw) => normalizeFlashcards(extractJson(raw)).slice(0, alloc));
+      });
+
+      const settled = await Promise.allSettled(requests);
+      settled.forEach((result, i) => {
+        if (result.status === 'fulfilled') {
+          flashcards.push(...result.value);
+        } else {
+          // Keep the questions we did get instead of failing the whole import.
+          console.error(`Analyze chunk ${i + 1} failed:`, result.reason && result.reason.message);
+        }
+      });
+    }
+
+    // De-duplicate (chunks can overlap) and enforce the 100-card ceiling.
+    const seen = new Set();
+    const unique = flashcards.filter((f) => {
+      const key = `${f.type}|${String(f.question || '').toLowerCase().trim()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    if (unique.length === 0) {
+      throw new Error('AI response did not contain valid questions.');
+    }
+
+    res.json({ flashcards: unique.slice(0, MAX_GEN_CARDS) });
+  } catch (err) {
+    console.error('Analyze error:', err.message);
+    res.status(500).json({ error: `Failed to generate flashcards: ${err.message}` });
+  }
+});
+
+function buildQuizPrompt(ask, chunk, images) {
+  const role = images
+    ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),'
+    : 'You are an expert quiz creator. Based ONLY on the following module content,';
+  const goal = images
+    ? ` create as many quiz questions as the material supports — up to ${ask}.`
+    : ` create up to ${ask} quiz questions that test understanding of the material. Make as many high-quality questions as the content supports; fewer is fine if the material is short — never pad with filler.`;
+
+  return `${role}${goal}
 
 Mix the question types — aim for about half "flashcard" (fill-in-the-blank) and half "choice" (multiple choice):
 - "flashcard": a fill-in-the-blank question. The question must be a sentence/statement from the module with a blank marked "____" where the key term(s) go (e.g. "The two main stages of photosynthesis are ____ and ____."). The "answer" must be a SHORT, specific value (single term/few words), NEVER a full sentence.
@@ -98,60 +167,67 @@ Respond with ONLY a valid JSON array in this exact format (no extra text):
   { "type": "flashcard", "question": "... ____ ...", "answer": "short answer" },
   { "type": "choice", "question": "...", "options": ["a", "b", "c", "d"], "answer": "a" }
 ]
-${images.length ? 'Module images:' : 'Module content:\n"""' + (text.length > 30000 ? text.slice(0, 30000) : text) + '"""'}`;
+${images ? 'Module images:' : 'Module content:\n"""' + String(chunk || '').slice(0, 30000) + '"""'}`;
+}
 
-    let content;
-    if (images.length) {
-      content = [
-        { type: 'text', text: prompt },
-        ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
-      ];
-    } else {
-      content = [{ type: 'text', text: prompt }];
-    }
-
-    const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
-    const flashcards = extractJson(raw);
-
-    if (!Array.isArray(flashcards) || flashcards.length === 0) {
-      throw new Error('AI returned an empty flashcard list.');
-    }
-
-    const clean = flashcards
-      .filter((f) => {
-        if (!f || typeof f.question !== 'string') return false;
-        if (f.type === 'choice') {
-          return Array.isArray(f.options) && f.options.length >= 2 && typeof f.answer === 'string' && f.options.includes(f.answer);
-        }
-        return f.type === 'flashcard' && typeof f.answer === 'string';
-      })
-      .slice(0, count)
-      .map((f) => {
-        if (f.type === 'choice') {
-          return {
-            type: 'choice',
-            question: f.question.trim(),
-            options: f.options.map((o) => String(o).trim()).slice(0, 4),
-            answer: String(f.answer).trim(),
-          };
-        }
+function normalizeFlashcards(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((f) => {
+      if (!f || typeof f.question !== 'string') return false;
+      if (f.type === 'choice') {
+        return Array.isArray(f.options) && f.options.length >= 2 && typeof f.answer === 'string' && f.options.includes(f.answer);
+      }
+      return f.type === 'flashcard' && typeof f.answer === 'string';
+    })
+    .map((f) => {
+      if (f.type === 'choice') {
         return {
-          type: 'flashcard',
+          type: 'choice',
           question: f.question.trim(),
-          answer: f.answer.trim(),
+          options: f.options.map((o) => String(o).trim()).slice(0, 4),
+          answer: String(f.answer).trim(),
         };
-      });
+      }
+      return {
+        type: 'flashcard',
+        question: f.question.trim(),
+        answer: f.answer.trim(),
+      };
+    })
+    .filter((f) => f.question && (f.type === 'flashcard' ? f.answer : f.answer && f.options.length >= 2));
+}
 
-    if (clean.length === 0) {
-      throw new Error('AI response did not contain valid questions.');
+// Split content into up to `parts` balanced segments, cutting on sentence/word boundaries.
+function splitTextIntoChunks(str, parts) {
+  if (!str) return [];
+  if (parts <= 1 || str.length < CHUNK_TARGET_CHARS) return [str];
+
+  const len = str.length;
+  const out = [];
+  let start = 0;
+  for (let k = 1; k < parts; k++) {
+    const cut = Math.round((len / parts) * k);
+    const from = Math.max(start + 200, cut - 150);
+    const to = Math.min(len - 1, cut + 150);
+    let best = -1;
+    for (let i = to; i >= from; i--) {
+      if (/[.!?]\s/.test(str.slice(i - 1, i + 1))) { best = i; break; }
     }
-
-    res.json({ flashcards: clean });
-  } catch (err) {
-    console.error('Analyze error:', err.message);
-    res.status(500).json({ error: `Failed to generate flashcards: ${err.message}` });
+    if (best === -1) {
+      for (let i = to; i >= from; i--) {
+        if (str[i] === ' ') { best = i; break; }
+      }
+    }
+    if (best === -1) best = cut;
+    const piece = str.slice(start, best).trim();
+    if (piece.length >= 80) out.push(piece);
+    start = best;
   }
-});
+  const tail = str.slice(start).trim();
+  if (tail.length >= 80) out.push(tail);
+  return out.length ? out : [str];
+}
 
 function htmlToText(html) {
   return html
