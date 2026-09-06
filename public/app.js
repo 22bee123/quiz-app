@@ -1406,9 +1406,13 @@ function renderPack() {
       </div>
       ${it.type === 'choice' ? '<span class="pk-badge">Multiple Choice</span>' : ''}
       <div class="pk-q">${tokenText(it.question, it.hq, hlMode)}</div>
-      ${it.type === 'choice'
-        ? `<div class="pk-a pk-options">${renderPackOptions(it)}</div>`
-        : `<div class="pk-a">${tokenText(it.answer, it.ha, hlMode)}</div>`}
+      <div class="pk-a">
+        <div class="pk-answers">
+          ${it.type === 'choice'
+            ? renderPackOptions(it)
+            : renderAnswerRow(it.answer, it.ha)}
+        </div>
+      </div>
       ${hlMode ? `<div class="pk-palette">${palette}<span class="pk-palette-hint">drag or click words to highlight</span></div>` : ''}
     `;
     const more = card.querySelector('.pk-more');
@@ -1440,8 +1444,15 @@ function renderPackOptions(it) {
   if (!correct.length) return '';
   const opts = it.options && it.options.length ? it.options : correct;
   return opts
-    .map((o) => `<div class="pk-opt ${correct.includes(o) ? 'ok' : ''}">${correct.includes(o) ? '&#10003; ' : ''}${escapeHtml(o)}</div>`)
+    .map((o) => {
+      const ok = correct.includes(o);
+      return `<div class="pk-opt ${ok ? 'ok' : 'no'}"><span class="pk-ic ${ok ? 'ok' : 'no'}">${ok ? '&#10003;' : '&#10005;'}</span><span class="pk-opt-txt">${escapeHtml(o)}</span></div>`;
+    })
     .join('');
+}
+
+function renderAnswerRow(text, map) {
+  return `<div class="pk-opt ok"><span class="pk-ic ok">&#10003;</span><span class="pk-opt-txt">${tokenText(text, map, hlMode)}</span></div>`;
 }
 
 // word/highlighter clicks (delegated)
