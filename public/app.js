@@ -240,9 +240,12 @@ function createNextStep() {
     }
     createUrl = val;
   }
+  // No separate type step: generate enumeration Q&A automatically.
+  // The mode (fill-in-the-blank / multiple choice) is chosen at "Start Study".
+  createMode = hostingRoom ? 'choice' : 'flashcard';
   createSourcePanel.classList.add('hidden');
-  createTypePanel.classList.remove('hidden');
-  createStatus2.textContent = '';
+  createTypePanel.classList.add('hidden');
+  runCreateGenerate();
 }
 
 function createBackStep() {
@@ -286,7 +289,7 @@ async function runCreateGenerate() {
     const ok = await startAnalysis(payload, name, createStatus2);
     completeCreateLoading();
     if (ok) {
-      setTimeout(() => { stopCreateLoading(); closeCreate(); }, 400);
+      stopCreateLoading();
     } else {
       setTimeout(() => { stopCreateLoading(); }, 350);
       createGenerate.disabled = false;
@@ -350,6 +353,8 @@ async function startAnalysis(payload, moduleName, statusEl) {
     } else {
       // open the review view so the user can see Q&A, then Start Study
       openPack(newPack.id);
+      closeCreate();
+      stopCreateLoading();
     }
     return true;
   } catch (err) {
@@ -2028,10 +2033,10 @@ function wireSidebar() {
     });
   });
 
-  document.querySelectorAll('.type-option').forEach((btn) => {
+  document.querySelectorAll('#create-type-panel .type-option').forEach((btn) => {
     btn.addEventListener('click', () => {
       createMode = btn.dataset.mode;
-      document.querySelectorAll('.type-option').forEach((b) => b.classList.toggle('active', b === btn));
+      document.querySelectorAll('#create-type-panel .type-option').forEach((b) => b.classList.toggle('active', b === btn));
       createGenerate.disabled = false;
     });
   });
