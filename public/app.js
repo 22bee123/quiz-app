@@ -186,6 +186,15 @@ const estimateAll = document.getElementById('estimate-all');
 const estimateBack = document.getElementById('estimate-back');
 const estimateStatus = document.getElementById('estimate-status');
 const clCancel = document.getElementById('cl-cancel');
+const genError = document.getElementById('gen-error');
+const genErrorTitle = document.getElementById('gen-error-title');
+const genErrorMsg = document.getElementById('gen-error-msg');
+const genDetails = document.getElementById('gen-details');
+const genDetailsToggle = document.getElementById('gen-details-toggle');
+const genRetry = document.getElementById('gen-retry');
+const genReduce = document.getElementById('gen-reduce');
+const genCopy = document.getElementById('gen-copy');
+const genDifferent = document.getElementById('gen-different');
 const sourceHint = document.getElementById('source-hint');
 const sourcePdf = document.getElementById('source-pdf');
 const sourceText = document.getElementById('source-text');
@@ -349,6 +358,8 @@ function estimateQuestionCount(content) {
 
 function showEstimatePanel() {
   const estimate = estimateQuestionCount(pendingContent);
+  hideGenerationError();
+  lastGenError = null;
   createSourcePanel.classList.add('hidden');
   createTypePanel.classList.add('hidden');
   estimatePanel.classList.remove('hidden');
@@ -410,15 +421,45 @@ function splitTextForGeneration(str, parts) {
 async function callGenerate(body) {
   const controller = new AbortController();
   if (genState) genState.controller = controller;
-  const res = await fetch('/api/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: controller.signal,
-  });
+  let res;
+  try {
+    res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (netErr) {
+    if (netErr && netErr.name === 'AbortError') throw netErr;
+    const e = new Error('Could not reach the server.');
+    e.code = 'NETWORK';
+    e.detail = netErr && netErr.message;
+    throw e;
+  }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Generation failed.');
+  if (!res.ok) {
+    const e = new Error(data.error || 'Generation failed.');
+    e.code = data.code || 'UNKNOWN';
+    e.detail = data.detail || data.error || '';
+    throw e;
+  }
   return Array.isArray(data.flashcards) ? data.flashcards : [];
+}
+
+// Retry a single batch once with half the size before giving up (unless the error
+// is clearly not size-related, e.g. auth/model/network/rate-limit).
+const RETRYABLE_CODES = ['PARSE', 'UNKNOWN', 'TIMEOUT', 'TOO_LARGE', 'EMPTY'];
+async function callGenerateWithFallback(body, ask) {
+  try {
+    return await callGenerate(Object.assign({}, body, { count: ask }));
+  } catch (err) {
+    if (err && err.name === 'AbortError') throw err;
+    const smaller = Math.max(5, Math.floor(ask / 2));
+    if (RETRYABLE_CODES.includes(err.code) && smaller < ask) {
+      return await callGenerate(Object.assign({}, body, { count: smaller }));
+    }
+    throw err;
+  }
 }
 
 function updateGenerationProgress(done, total) {
@@ -427,16 +468,62 @@ function updateGenerationProgress(done, total) {
   setLoadingSub('Generating question ' + Math.min(done + 1, total) + ' of ' + total + '…');
 }
 
+const GEN_ERROR_COPY = {
+  AUTH: ['Buck cannot reach the AI right now.', 'API key invalid — check your DeepSeek settings.'],
+  RATE: ['Buck got a little overwhelmed.', "We're being rate-limited. Let's try that again in a moment."],
+  MODEL: ["Buck's AI model isn't available.", 'The configured model could not be found — check DEEPSEEK_MODEL (should be deepseek-flash).'],
+  TIMEOUT: ['That took a little too long.', 'The request timed out — try generating fewer questions.'],
+  TOO_LARGE: ['That content is a bit heavy.', 'The PDF is too large for one request — try a smaller file or fewer questions.'],
+  PARSE: ['Buck got a little tongue-tied.', 'The AI returned malformed data. Tap Try again and Buck will retry.'],
+  EMPTY: ['Buck could not write questions this time.', 'The AI returned no usable questions. Give it another go?'],
+  NETWORK: ['Buck lost the connection.', 'Check your internet connection and try again.'],
+  NO_HEARTS: ['Buck is out of hearts.', 'Wait for a heart to refill, then try again.'],
+  UNKNOWN: ['Buck could not write questions this time.', 'Something unexpected happened. Try again, or reduce the count.'],
+};
+
+let lastGenError = null;
+let lastGenerationCount = 0;
+
+function showGenerationError(err) {
+  const code = (err && err.code) || 'UNKNOWN';
+  const copy = GEN_ERROR_COPY[code] || GEN_ERROR_COPY.UNKNOWN;
+  genErrorTitle.textContent = copy[0];
+  genErrorMsg.textContent = copy[1];
+
+  const detail = [
+    'Buck the Duck — generation error',
+    'code: ' + code,
+    'message: ' + ((err && err.detail) || (err && err.message) || 'unknown'),
+    'source: ' + ((pendingContent && pendingContent.name) || 'n/a'),
+    'requested: ' + (lastGenerationCount || 'n/a') + ' questions',
+    'type: ' + ((pendingContent && pendingContent.images) ? 'image PDF' : 'text'),
+    'time: ' + new Date().toISOString(),
+  ].join('\n');
+  genDetails.textContent = detail;
+
+  genError.classList.remove('hidden');
+  genDetails.classList.add('hidden');
+  genDetailsToggle.textContent = 'Show details';
+  try { genError.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) {}
+}
+
+function hideGenerationError() {
+  genError.classList.add('hidden');
+}
+
 async function startGeneration(count) {
   if (!pendingContent) return;
   if (!canGenerate()) {
-    showEstimateErr('No hearts left. Next \u2665 in ' + heartTimerLabel() + '.');
+    lastGenerationCount = count;
+    showGenerationError({ code: 'NO_HEARTS' });
     return;
   }
 
   const target = Math.min(count, pendingContent.images ? 40 : 200);
+  lastGenerationCount = target;
+  lastGenError = null;
+  hideGenerationError();
   savePendingDeck('generating', pendingContent.name, createMode);
-  estimatePanel.classList.add('hidden');
   startCreateLoading(true);
   clCancel.classList.remove('hidden');
   setLoadingSub('Warming up Buck…');
@@ -446,7 +533,7 @@ async function startGeneration(count) {
   try {
     if (pendingContent.images && pendingContent.images.length) {
       updateGenerationProgress(0, target);
-      const cards = await callGenerate({ images: pendingContent.images, count: Math.min(target, 15) });
+      const cards = await callGenerateWithFallback({ images: pendingContent.images }, Math.min(target, 15));
       collected.push(...cards);
       updateGenerationProgress(collected.length, target);
     } else {
@@ -455,7 +542,7 @@ async function startGeneration(count) {
         if (genState.cancelled) break;
         const ask = Math.min(15, plan.total - collected.length);
         updateGenerationProgress(collected.length, plan.total);
-        const cards = await callGenerate({ text: plan.chunks[i], count: ask });
+        const cards = await callGenerateWithFallback({ text: plan.chunks[i] }, ask);
         collected.push(...cards);
         updateGenerationProgress(collected.length, plan.total);
       }
@@ -463,15 +550,26 @@ async function startGeneration(count) {
   } catch (err) {
     const aborted = err && err.name === 'AbortError';
     if (!aborted && genState && !genState.cancelled) {
-      console.warn('Generation error:', err.message);
-      showToast(err.message, 'wrong');
+      console.warn('Generation error:', err.code || '', err.message);
+      lastGenError = err;
     }
   }
 
-  const partial = !genState || genState.cancelled || collected.length < target;
+  const cancelled = genState ? genState.cancelled : true;
+  const partial = cancelled || collected.length < target;
   const finalCards = ensureMixedChoice(collected.slice(0, target));
   genState = null;
   clCancel.classList.add('hidden');
+  stopCreateLoading();
+
+  if (!finalCards.length) {
+    // Nothing usable — show the actionable error state, keep the user on the estimate panel.
+    showGenerationError(lastGenError || { code: 'EMPTY' });
+    showEstimatePanel();
+    genError.classList.remove('hidden');
+    return;
+  }
+
   await finalizeGeneration(finalCards, pendingContent.name, partial);
 }
 
@@ -479,7 +577,7 @@ async function finalizeGeneration(cards, name, partial) {
   stopCreateLoading();
   if (!cards || !cards.length) {
     showEstimatePanel();
-    showEstimateErr('Buck could not write questions this time. Give it another go?');
+    showGenerationError(lastGenError || { code: 'EMPTY' });
     return;
   }
   flashcards = cards;
@@ -3577,6 +3675,44 @@ function wireSidebar() {
     estimatePanel.classList.add('hidden');
     createSourcePanel.classList.remove('hidden');
   });
+
+  genRetry.addEventListener('click', () => {
+    const n = lastGenerationCount || parseInt(estimateSlider.value, 10) || estimateQuestionCount(pendingContent || {});
+    startGeneration(n);
+  });
+  genReduce.addEventListener('click', () => {
+    const max = parseInt(estimateSlider.max, 10) || 10;
+    const n = Math.max(5, Math.min(10, max));
+    estimateSlider.value = n;
+    updateEstimateLabel();
+    startGeneration(n);
+  });
+  genDetailsToggle.addEventListener('click', () => {
+    const hidden = genDetails.classList.toggle('hidden');
+    genDetailsToggle.textContent = hidden ? 'Show details' : 'Hide details';
+  });
+  genCopy.addEventListener('click', async () => {
+    const text = genDetails.textContent || '';
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Error details copied 📋', 'correct');
+    } catch (e) {
+      showToast('Could not copy — details are shown above.', 'wrong');
+    }
+  });
+  genDifferent.addEventListener('click', () => {
+    hideGenerationError();
+    estimatePanel.classList.add('hidden');
+    createSourcePanel.classList.remove('hidden');
+    createGenerate.disabled = false;
+    createGenerate.textContent = 'Generate';
+    if (createSource === 'pdf') {
+      createFile = null;
+      pdfName.textContent = '';
+      try { fileInput.value = ''; } catch (e) {}
+    }
+  });
+
   clCancel.addEventListener('click', () => {
     if (!genState) return;
     genState.cancelled = true;

@@ -391,6 +391,26 @@
               <button id="estimate-all" class="btn btn-secondary">Generate all</button>
               <button id="estimate-generate" class="btn btn-primary">Generate 87</button>
             </div>
+
+            <div id="gen-error" class="gen-error hidden" role="alert">
+              <div class="gen-error-head">
+                <span class="gen-error-icon" aria-hidden="true">&#129414;</span>
+                <div>
+                  <p class="gen-error-title" id="gen-error-title">Buck could not write questions this time.</p>
+                  <p class="gen-error-msg" id="gen-error-msg">Give it another go?</p>
+                </div>
+              </div>
+              <div class="gen-error-actions">
+                <button id="gen-retry" class="btn btn-primary">Try again</button>
+                <button id="gen-reduce" class="btn btn-secondary">Reduce to 10 questions</button>
+              </div>
+              <div class="gen-error-links">
+                <button id="gen-details-toggle" class="link-btn">Show details</button>
+                <button id="gen-copy" class="link-btn">Copy error details</button>
+                <button id="gen-different" class="link-btn">Choose a different PDF</button>
+              </div>
+              <pre id="gen-details" class="gen-details hidden"></pre>
+            </div>
           </div>
 
           <!-- Step 2: question type -->

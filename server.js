@@ -63,7 +63,7 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
     clearTimeout(timer);
 
     // Rate limit / transient server errors → retry with exponential backoff.
-    if (response.status === 429 || response.status === 503) {
+    if (response.status === 429 || response.status === 503 || response.status === 500 || response.status === 502 || response.status === 504) {
       const errText = await response.text().catch(() => '');
       lastErr = new Error(`DeepSeek API error (${response.status}): ${errText}`);
       console.warn(`DeepSeek ${response.status}; retry ${attempt + 1}/${maxAttempts - 1} in ${Math.round(backoffDelay(attempt) / 1000)}s`);
@@ -95,6 +95,39 @@ function tryParseArray(s) {
   }
 }
 
+function tryParseQuestionsObject(s) {
+  try {
+    const v = JSON.parse(s);
+    if (!v || typeof v !== 'object') return null;
+    for (const key of ['questions', 'flashcards', 'items', 'data', 'results']) {
+      if (Array.isArray(v[key])) return v[key];
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+const SYSTEM_PROMPT = {
+  role: 'system',
+  content:
+    'You are Buck, a friendly study assistant. Always respond with valid JSON exactly as instructed, with no markdown fences and no text before or after the JSON.',
+};
+
+// Map an upstream/parse error to a stable code the UI can act on.
+function classifyError(err) {
+  const m = String((err && err.message) || '').toLowerCase();
+  if (err && err.code) return err.code;
+  if (m.includes('authentication') || m.includes('invalid api key') || m.includes('401') || m.includes('api key')) return 'AUTH';
+  if (m.includes('overwhelmed') || m.includes('429') || m.includes('rate limit')) return 'RATE';
+  if (m.includes('model') && (m.includes('not exist') || m.includes('not found') || m.includes('invalid'))) return 'MODEL';
+  if (m.includes('timed out') || m.includes('timeout') || m.includes('aborted')) return 'TIMEOUT';
+  if (m.includes('context') || m.includes('too long') || m.includes('maximum') || m.includes('413')) return 'TOO_LARGE';
+  if (m.includes('json')) return 'PARSE';
+  if (m.includes('did not contain valid questions')) return 'EMPTY';
+  return 'UNKNOWN';
+}
+
 function extractJson(text) {
   if (!text) throw new Error('Could not find a JSON array in the AI response.');
 
@@ -124,6 +157,19 @@ function extractJson(text) {
         if (repaired) return repaired;
       }
     }
+
+    // JSON object mode: { "questions": [...] } / { "flashcards": [...] }
+    const objs = [];
+    for (let i = 0; i < candidate.length; i++) {
+      if (candidate[i] === '{') objs.push(i);
+    }
+    for (let k = objs.length - 1; k >= 0; k--) {
+      const start = objs[k];
+      const end = candidate.lastIndexOf('}');
+      if (end <= start) continue;
+      const parsed = tryParseQuestionsObject(candidate.slice(start, end + 1));
+      if (parsed) return parsed;
+    }
   }
 
   throw new Error('Could not find a JSON array in the AI response.');
@@ -132,11 +178,12 @@ function extractJson(text) {
 async function generateTextChunk(ask, chunk, extraInstruction) {
   const prompt = buildQuizPrompt(ask, chunk, null) + (extraInstruction || '');
   const content = [{ type: 'text', text: prompt }];
-  const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
+  const maxTokens = Math.min(8000, Math.max(2000, ask * 200));
+  const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4);
   try {
     return normalizeFlashcards(extractJson(raw)).slice(0, ask);
   } catch (err) {
-    console.error('[analyze raw reply]', JSON.stringify(String(raw).slice(0, 400)));
+    console.error('[analyze raw reply]', JSON.stringify(String(raw).slice(0, 500)));
     throw err;
   }
 }
@@ -172,7 +219,7 @@ app.post('/api/analyze', async (req, res) => {
         { type: 'text', text: promptText },
         ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
       ];
-      const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
+      const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(2000, ask * 200)), 0.4);
       flashcards.push(...normalizeFlashcards(extractJson(raw)));
     } else {
       // Text import: split into balanced batches (max 7) and ask each batch for a modest,
@@ -231,8 +278,14 @@ app.post('/api/analyze', async (req, res) => {
 
     res.json({ flashcards: final.slice(0, MAX_GEN_CARDS) });
   } catch (err) {
-    console.error('Analyze error:', err.message);
-    res.status(500).json({ error: `Failed to generate flashcards: ${err.message}` });
+    const code = classifyError(err);
+    console.error('Analyze error:', code, err.message);
+    const rateLimited = code === 'RATE';
+    res.status(rateLimited ? 429 : 500).json({
+      error: rateLimited ? RATE_LIMIT_FRIENDLY : `Failed to generate flashcards: ${err.message}`,
+      code,
+      detail: err.message,
+    });
   }
 });
 
@@ -252,25 +305,43 @@ app.post('/api/generate', async (req, res) => {
     }
 
     let cards;
+    const maxTokens = Math.min(8000, Math.max(1500, count * 200));
+    const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
+
     if (images.length) {
       const content = [
         { type: 'text', text: buildQuizPrompt(count, null, images) },
         ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
       ];
-      const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
-      cards = normalizeFlashcards(extractJson(raw));
+      if (debug) console.log(`[generate] images=${images.length} count=${count} model=${DEEPSEEK_MODEL} maxTokens=${maxTokens}`);
+      const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4);
+      try {
+        cards = normalizeFlashcards(extractJson(raw));
+      } catch (parseErr) {
+        console.error('[generate raw reply]', JSON.stringify(String(raw).slice(0, 500)));
+        throw parseErr;
+      }
     } else {
       const prompt = buildQuizPrompt(count, text, null);
-      const raw = await callDeepSeek([{ role: 'user', content: [{ type: 'text', text: prompt }] }], 4000, 0.4);
-      cards = normalizeFlashcards(extractJson(raw));
+      if (debug) console.log(`[generate] chars=${text.length} count=${count} model=${DEEPSEEK_MODEL} maxTokens=${maxTokens}`);
+      const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content: [{ type: 'text', text: prompt }] }], maxTokens, 0.4);
+      try {
+        cards = normalizeFlashcards(extractJson(raw));
+      } catch (parseErr) {
+        console.error('[generate raw reply]', JSON.stringify(String(raw).slice(0, 500)));
+        throw parseErr;
+      }
     }
 
     res.json({ flashcards: cards.slice(0, count) });
   } catch (err) {
-    const rateLimited = err.message === RATE_LIMIT_FRIENDLY;
-    if (!rateLimited) console.error('Generate error:', err.message);
+    const code = classifyError(err);
+    const rateLimited = code === 'RATE';
+    if (!rateLimited) console.error('Generate error:', code, err.message);
     res.status(rateLimited ? 429 : 500).json({
       error: rateLimited ? RATE_LIMIT_FRIENDLY : `Failed to generate questions: ${err.message}`,
+      code,
+      detail: err.message,
     });
   }
 });
@@ -385,7 +456,7 @@ async function requestChoiceOnly(text, images, cap) {
     } else {
       content = [{ type: 'text', text: buildChoicePrompt(ask, text || '', false) }];
     }
-    const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
+    const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(2000, ask * 200)), 0.4);
     return normalizeFlashcards(extractJson(raw)).filter((f) => f.type === 'choice').slice(0, ask);
   } catch (err) {
     console.error('Choice fallback failed:', err.message);

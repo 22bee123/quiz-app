@@ -5764,6 +5764,57 @@ html[data-theme='dark'] .hi-del:hover {
   color: #fecaca;
 }
 
+/* ---- Generation error state (actionable) ---- */
+.gen-error {
+  margin-top: 16px;
+  background: #fff5f5;
+  border: 1.5px solid #f3c9c9;
+  border-radius: 16px;
+  padding: 16px;
+  text-align: left;
+  animation: popIn 0.25s ease both;
+}
+
+.gen-error-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.gen-error-icon { font-size: 1.6rem; line-height: 1; }
+.gen-error-title { font-weight: 900; color: #b91c1c; font-size: 0.95rem; margin-bottom: 3px; }
+.gen-error-msg { font-size: 0.85rem; color: #8a6a55; }
+
+.gen-error-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.gen-error-actions .btn { flex: 1 1 150px; margin-top: 0; }
+
+.gen-error-links { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; }
+
+.gen-details {
+  margin-top: 12px;
+  background: #2f211a;
+  color: #f3e7db;
+  padding: 12px;
+  border-radius: 12px;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  max-height: 190px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+html[data-theme='dark'] .gen-error {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+html[data-theme='dark'] .gen-error-title { color: #fecaca; }
+html[data-theme='dark'] .gen-error-msg { color: #cbb4a2; }
+
+
 
 
 
