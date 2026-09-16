@@ -194,6 +194,11 @@
         <span class="nav-emoji">&#129309;</span>
         <span class="nav-label">Friends</span>
       </button>
+      <button class="nav-item" id="nav-messages" title="Messages">
+        <span class="nav-emoji">&#128172;</span>
+        <span class="nav-label">Messages</span>
+        <span class="nav-badge hidden" id="nav-messages-badge">0</span>
+      </button>
     </nav>
 
     <button class="study-btn" id="study-btn">
@@ -781,40 +786,105 @@
 
       <!-- Friends screen -->
       <section id="friends-screen" class="screen hidden">
-        <div class="friends-head">
-          <h1 class="friends-title">&#129309; Friends</h1>
-          <p class="friends-sub">Find players by their global username, add friends, and see their stats.</p>
-        </div>
-
-        <div class="card my-handle">
-          <span class="mh-label">Your global username</span>
-          <div class="mh-row">
-            <span class="mh-at">@</span>
-            <input id="my-username" class="mh-input" maxlength="20" placeholder="set a username" autocomplete="off" />
-            <button id="save-username" class="btn btn-primary">Save</button>
+        <div class="friends-shell">
+          <div class="friends-head">
+            <h1 class="friends-title">&#129309; Friends</h1>
+            <p class="friends-sub">Find study buddies, manage requests, and message your friends.</p>
           </div>
-          <div class="mh-stats" id="my-stats"></div>
-        </div>
 
-        <div class="friend-search card">
-          <div class="friend-search-row">
-            <span class="fs-icon">&#128269;</span>
-            <input id="friend-query" class="friend-query" placeholder="Search by username or email..." autocomplete="off" />
-            <button id="friend-search-btn" class="btn btn-primary">Search</button>
+          <div class="friends-grid">
+            <!-- Main column -->
+            <div class="friends-main">
+              <div class="friend-search card">
+                <div class="friend-search-row">
+                  <span class="fs-icon" aria-hidden="true">&#128269;</span>
+                  <input id="friend-query" class="friend-query signup-input" placeholder="Search by @username or email&hellip;" autocomplete="off" aria-label="Search users" />
+                  <button id="friend-search-btn" class="fs-go" aria-label="Search">&#10132;</button>
+                </div>
+                <div id="friend-search-results" class="friend-search-results"></div>
+              </div>
+
+              <div class="friend-section card hidden" id="friend-requests-section">
+                <div class="fs-toolbar">
+                  <h3 class="fs-title">Requests <span class="fs-count" id="friend-requests-count"></span></h3>
+                </div>
+                <div id="friend-requests" class="friend-list"></div>
+                <button type="button" class="link-btn hidden" id="requests-toggle">Show all requests</button>
+              </div>
+
+              <div class="friend-section card">
+                <div class="fs-toolbar">
+                  <h3 class="fs-title">Your friends</h3>
+                  <select id="friend-sort" class="fs-select" aria-label="Sort friends">
+                    <option value="online">Online first</option>
+                    <option value="recent">Recently active</option>
+                    <option value="az">A&ndash;Z</option>
+                  </select>
+                </div>
+                <div class="fs-chips" id="friend-filters" role="tablist" aria-label="Filter friends">
+                  <button type="button" class="fs-chip active" data-filter="all" role="tab" aria-selected="true">All</button>
+                  <button type="button" class="fs-chip" data-filter="online" role="tab" aria-selected="false">Online</button>
+                  <button type="button" class="fs-chip" data-filter="recent" role="tab" aria-selected="false">Recently added</button>
+                </div>
+                <div id="friend-list" class="friend-list"></div>
+              </div>
+            </div>
+
+            <!-- Side column -->
+            <aside class="friends-side">
+              <div class="card my-handle">
+                <span class="mh-label">Your global username</span>
+                <div class="mh-row">
+                  <span class="mh-at">@</span>
+                  <input id="my-username" class="mh-input signup-input" maxlength="20" placeholder="set a username" autocomplete="off" />
+                  <button id="save-username" class="btn btn-primary hidden">Save</button>
+                </div>
+                <div class="mh-actions">
+                  <button type="button" class="link-btn" id="copy-username">&#128203; Copy my username</button>
+                  <button type="button" class="link-btn" id="share-profile">&#128279; Share profile link</button>
+                </div>
+              </div>
+              <div class="card my-stats-card">
+                <h3 class="fs-title">Your stats</h3>
+                <div class="mh-stats" id="my-stats"></div>
+              </div>
+              <button class="btn btn-primary" id="invite-friend">+ Invite a friend</button>
+            </aside>
           </div>
-          <div id="friend-search-results" class="friend-search-results"></div>
-        </div>
-
-        <div class="friend-section card">
-          <h3 class="fs-title">Requests</h3>
-          <div id="friend-requests" class="friend-list"></div>
-        </div>
-
-        <div class="friend-section card">
-          <h3 class="fs-title">Your friends</h3>
-          <div id="friend-list" class="friend-list"></div>
         </div>
       </section>
+
+      <!-- Direct messages panel -->
+      <div id="chat-backdrop" class="chat-backdrop hidden"></div>
+      <aside id="chat-panel" class="chat-panel hidden" role="dialog" aria-label="Messages">
+        <div class="chat-head">
+          <button class="chat-back" id="chat-back" aria-label="Back">&#8249;</button>
+          <span class="chat-avatar" id="chat-avatar" aria-hidden="true"></span>
+          <div class="chat-who">
+            <span class="chat-name" id="chat-name">Messages</span>
+            <span class="chat-status" id="chat-status"></span>
+          </div>
+          <button class="chat-menu-btn" id="chat-menu-btn" aria-label="Chat options" aria-expanded="false">&#8942;</button>
+          <div class="chat-menu hidden" id="chat-menu">
+            <button id="chat-view-profile">View profile</button>
+            <button id="chat-mute">Mute</button>
+            <button id="chat-clear">Clear chat</button>
+          </div>
+        </div>
+
+        <div class="chat-body">
+          <div class="chat-list" id="chat-list"></div>
+          <div class="chat-thread hidden" id="chat-thread" aria-live="polite"></div>
+        </div>
+
+        <div class="chat-typing hidden" id="chat-typing" aria-live="polite"></div>
+        <div class="chat-emoji-pop hidden" id="chat-emoji-pop"></div>
+        <div class="chat-input-wrap hidden" id="chat-input-wrap">
+          <button type="button" class="chat-emoji" id="chat-emoji" aria-label="Insert emoji">&#128522;</button>
+          <textarea id="chat-input" class="chat-input" rows="1" placeholder="Write a message&hellip;" aria-label="Message"></textarea>
+          <button type="button" class="chat-send hidden" id="chat-send" aria-label="Send message">&#10148;</button>
+        </div>
+      </aside>
 
       <!-- StudyPack detail screen -->
       <section id="pack-screen" class="screen hidden">
@@ -825,6 +895,12 @@
             <span id="pack-count" class="pack-count">0 cards</span>
           </div>
           <div class="pack-actions">
+            <div class="pack-hlwrap">
+              <button id="pack-hl" class="pack-hl-btn" title="Highlighter">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+              </button>
+              <div class="pack-hl-palette hidden" id="pack-hl-palette"></div>
+            </div>
             <button id="pack-study" class="pack-study">&#127918; Start Study</button>
           </div>
         </div>
@@ -974,11 +1050,6 @@
       <p class="auth-hint">You can always add or edit your own questions afterwards &mdash; there is no limit on manually added cards.</p>
     </div>
   </div>
-
-  <!-- Floating highlight palette (appears above selected text) -->
-  <div id="hl-float" class="hl-float hidden" role="toolbar" aria-label="Highlight colors"></div>
-  <button id="hl-remove" class="hl-remove hidden" type="button" aria-label="Remove highlight">&#10005;</button>
-  <div id="hl-live" class="sr-only" role="status" aria-live="polite"></div>
 
   <script src="/vendor/supabase.js"></script>
   <script src="app.js"></script>

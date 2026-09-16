@@ -86,6 +86,7 @@ const navProgress = document.getElementById('nav-progress');
 const navMyd = document.getElementById('nav-myd');
 const navLive = document.getElementById('nav-live');
 const navFriends = document.getElementById('nav-friends');
+const navMessages = document.getElementById('nav-messages');
 const navAccount = document.getElementById('nav-account');
 const navAvatar = document.getElementById('nav-avatar');
 const navAccountName = document.getElementById('nav-account-name');
@@ -1394,6 +1395,16 @@ function wireLive() {
 
 /* ---------------- Friends ---------------- */
 
+let friendSort = 'online';
+let friendFilter = 'all';
+let myFriends = [];
+let incomingReqs = [];
+let outgoingReqs = [];
+let requestsExpanded = false;
+let friendsSearchTimer = null;
+let outgoingIds = new Set();
+let friendProfilesById = {};
+
 function openFriends() {
   if (!currentUser) {
     showAuthGate();
@@ -1401,19 +1412,49 @@ function openFriends() {
   }
   setActiveNav('friends');
   showScreen(friendsScreen);
-  document.getElementById('friend-query').value = '';
-  document.getElementById('friend-search-results').innerHTML = '';
+  const q = document.getElementById('friend-query');
+  if (q) q.value = '';
+  const res = document.getElementById('friend-search-results');
+  if (res) res.innerHTML = '';
   loadMyProfile();
   loadFriends();
+  startMessagePolling();
 }
 
 function nameOf(p) {
-  return p.username || p.email || 'Unknown';
+  if (!p) return 'Unknown';
+  return p.username || p.full_name || p.email || 'Unknown';
+}
+
+function atName(p) {
+  if (!p) return '@unknown';
+  if (p.username) return '@' + p.username;
+  if (p.email) return '@' + String(p.email).split('@')[0];
+  return '@user';
 }
 
 function statsHtml(p) {
-  const level = Math.floor((p.xp || 0) / 100) + 1;
-  return `<span class="ps-badge">Lv ${level}</span><span class="ps-xp">${p.xp || 0} XP</span><span class="ps-streak">\u{1F525} ${p.streak || 0}</span>`;
+  const level = Math.floor(((p && p.xp) || 0) / 100) + 1;
+  return '<span class="ps-badge">Lv ' + level + '</span><span class="ps-xp">' + ((p && p.xp) || 0) + ' XP</span><span class="ps-streak">\u{1F525} ' + ((p && p.streak) || 0) + '</span>';
+}
+
+function avatarUrlOf(p) {
+  return (p && (p.avatar_url || p.avatar)) || '';
+}
+
+function avatarInner(p) {
+  const url = avatarUrlOf(p);
+  if (url) return '<img src="' + escapeHtml(url) + '" alt="" />';
+  return escapeHtml(((nameOf(p) || '?')[0] || '?').toUpperCase());
+}
+
+function isOnline(p) {
+  if (!p) return false;
+  if (typeof p.online === 'boolean') return p.online;
+  const s = String(p.id || p.username || p.email || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % 5 < 2; // deterministic ~40% for a lively demo
 }
 
 async function loadMyProfile() {
@@ -1424,7 +1465,13 @@ async function loadMyProfile() {
     const input = document.getElementById('my-username');
     if (input && !input.dataset.touched) input.value = data.username || '';
     const stats = document.getElementById('my-stats');
-    if (stats) stats.innerHTML = statsHtml({ xp: data.xp, streak: data.streak }) || '';
+    if (stats) {
+      const level = Math.floor((data.xp || 0) / 100) + 1;
+      stats.innerHTML =
+        '<span class="ps-badge">\u2B50 Lv ' + level + '</span>' +
+        '<span class="ps-badge">\u2728 ' + (data.xp || 0) + ' XP</span>' +
+        '<span class="ps-streak">\u{1F525} ' + (data.streak || 0) + '-day streak</span>';
+    }
     const cache = getProfileCache();
     if (data.username) cache.username = data.username;
     if (data.email) cache.email = data.email;
@@ -1445,71 +1492,111 @@ async function saveMyUsername() {
   try {
     const { error } = await supabaseClient.from('profiles').update({ username }).eq('id', currentUser.id);
     if (error) {
-      if (/unique/i.test(error.message)) {
-        alert('That username is already taken. Try another.');
-      }
+      if (/unique/i.test(error.message)) showToast('That username is already taken — try another.', 'wrong');
+      else showToast('Could not save your username.', 'wrong');
+      return;
     }
+    const cache = getProfileCache();
+    cache.username = username;
+    saveProfileCache(cache);
+    updateAuthUI();
+    document.getElementById('save-username').classList.add('hidden');
+    showToast('Username saved! You are @' + username + ' 🦆', 'correct');
   } catch (e) {}
 }
 
+/* ---------------- Search ---------------- */
+
+function setSaveUsernameDirty() {
+  const input = document.getElementById('my-username');
+  const btn = document.getElementById('save-username');
+  if (!input || !btn) return;
+  const saved = (getProfileCache().username || '');
+  const dirty = input.value.trim() && input.value.trim() !== saved;
+  btn.classList.toggle('hidden', !dirty);
+}
+
+function searchFriendsDebounced() {
+  clearTimeout(friendsSearchTimer);
+  friendsSearchTimer = setTimeout(() => searchFriends(), 300);
+}
+
 async function searchFriends() {
-  const q = document.getElementById('friend-query').value.trim();
+  const q = (document.getElementById('friend-query').value || '').trim();
   const resultsEl = document.getElementById('friend-search-results');
-  if (!q || !supabaseClient) {
+  if (!resultsEl) return;
+  if (!q || q.length < 2) {
     resultsEl.innerHTML = '';
     return;
   }
-  resultsEl.innerHTML = '<p class="friend-empty">Searching&hellip;</p>';
+  if (!supabaseClient || !currentUser) {
+    resultsEl.innerHTML = '<p class="friend-empty">Sign in to search for study buddies.</p>';
+    return;
+  }
+  resultsEl.innerHTML = '<p class="friend-empty">Searching\u2026</p>';
   try {
+    const clean = q.replace(/^@/, '');
     const { data, error } = await supabaseClient
       .from('profiles')
       .select('*')
-      .or(`email.ilike.%${q}%,username.ilike.%${q}%`)
+      .or('email.ilike.%' + clean + '%,username.ilike.%' + clean + '%')
       .limit(10);
     if (error) throw error;
     const list = (data || []).filter((p) => p.id !== currentUser.id);
-    resultsEl.innerHTML = list.length ? '' : '<p class="friend-empty">No users found.</p>';
+    resultsEl.innerHTML = '';
+    if (!list.length) {
+      resultsEl.innerHTML = '<p class="friend-empty">Buck couldn\u2019t find anyone with that username.</p>';
+      return;
+    }
     list.forEach((p) => resultsEl.appendChild(buildSearchResult(p)));
   } catch (err) {
-    resultsEl.innerHTML = '<p class="friend-empty">Search failed.</p>';
+    resultsEl.innerHTML = '<p class="friend-empty">Search failed — try again in a moment.</p>';
   }
 }
 
 function buildSearchResult(profile) {
   const el = document.createElement('div');
   el.className = 'friend-row';
-  el.innerHTML = `
-    <span class="fr-avatar">${escapeHtml((profile.username || profile.email || '?')[0].toUpperCase())}</span>
-    <span class="fr-info">
-      <span class="fr-name">${escapeHtml(nameOf(profile))}</span>
-      <span class="fr-sub">${escapeHtml(profile.email || '')}</span>
-      <span class="fr-stats">${statsHtml(profile)}</span>
-    </span>
-    <button class="btn btn-primary fr-btn">Add friend</button>
-  `;
-  el.querySelector('.fr-btn').addEventListener('click', async () => {
-    const btn = el.querySelector('.fr-btn');
-    btn.disabled = true;
-    btn.textContent = 'Sending\u2026';
-    try {
-      const { error } = await supabaseClient.from('friendships').insert({
-        requester_id: currentUser.id,
-        requester_email: currentUser.email,
-        addressee_id: profile.id,
-        addressee_email: profile.email,
-        status: 'pending',
-      });
-      if (error) {
-        btn.textContent = error.message.includes('duplicate') ? 'Request sent' : 'Failed';
-      } else {
-        btn.textContent = 'Request sent \u2713';
+  const pending = outgoingIds.has(profile.id);
+  const isFriend = myFriends.some((f) => f.id === profile.id);
+  el.innerHTML =
+    '<span class="fr-avatar sm">' + avatarInner(profile) + '</span>' +
+    '<span class="fr-info"><span class="fr-name">' + escapeHtml(nameOf(profile)) + '</span>' +
+    '<span class="fr-sub">' + escapeHtml(atName(profile)) + '</span>' +
+    '<span class="fr-stats">' + statsHtml(profile) + '</span></span>' +
+    '<span class="fr-actions">' +
+    (isFriend
+      ? '<span class="fr-friend">Friends \u2713</span>'
+      : pending
+        ? '<span class="fr-pending">Pending</span>'
+        : '<button class="fr-msg-btn" type="button">Add</button>') +
+    '</span>';
+  const btn = el.querySelector('button.fr-msg-btn');
+  if (btn) {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Sending\u2026';
+      try {
+        const { error } = await supabaseClient.from('friendships').insert({
+          requester_id: currentUser.id,
+          requester_email: currentUser.email,
+          addressee_id: profile.id,
+          addressee_email: profile.email,
+          status: 'pending',
+        });
+        if (error && !String(error.message).includes('duplicate')) throw error;
+        outgoingIds.add(profile.id);
+        btn.outerHTML = '<span class="fr-pending">Pending</span>';
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Failed';
       }
-    } catch (e) {
-      btn.textContent = 'Failed';
-    }
-  });
+    });
+  }
   return el;
 }
+
+/* ---------------- Requests + friends list ---------------- */
 
 async function loadFriends() {
   if (!supabaseClient || !currentUser) return;
@@ -1519,96 +1606,567 @@ async function loadFriends() {
     const { data: all, error } = await supabaseClient
       .from('friendships')
       .select('*')
-      .or(`requester_id.eq.${currentUser.id},addressee_id.eq.${currentUser.id}`)
+      .or('requester_id.eq.' + currentUser.id + ',addressee_id.eq.' + currentUser.id)
       .order('created_at', { ascending: false });
     if (error) throw error;
 
-    const incoming = (all || []).filter((f) => f.addressee_id === currentUser.id && f.status === 'pending');
-    const outgoing = (all || []).filter((f) => f.requester_id === currentUser.id && f.status === 'pending');
-    const friendIds = (all || []).filter((f) => f.status === 'accepted').map((f) =>
-      f.requester_id === currentUser.id ? f.addressee_id : f.requester_id
-    );
+    incomingReqs = (all || []).filter((f) => f.addressee_id === currentUser.id && f.status === 'pending');
+    outgoingReqs = (all || []).filter((f) => f.requester_id === currentUser.id && f.status === 'pending');
+    const accepted = (all || []).filter((f) => f.status === 'accepted');
+    const friendIds = accepted.map((f) => (f.requester_id === currentUser.id ? f.addressee_id : f.requester_id));
+    outgoingIds = new Set(outgoingReqs.map((f) => f.addressee_id));
 
-    requestsEl.innerHTML = '';
-    if (!incoming.length && !outgoing.length) {
-      requestsEl.innerHTML = '<p class="friend-empty">No requests right now.</p>';
+    const ids = Array.from(new Set(friendIds.concat(incomingReqs.map((f) => f.requester_id)).concat(outgoingReqs.map((f) => f.addressee_id))));
+    friendProfilesById = {};
+    if (ids.length) {
+      const { data: profiles } = await supabaseClient.from('profiles').select('*').in('id', ids);
+      (profiles || []).forEach((p) => (friendProfilesById[p.id] = p));
     }
-    incoming.forEach((f) => requestsEl.appendChild(buildRequestRow(f, 'incoming')));
-    outgoing.forEach((f) => requestsEl.appendChild(buildRequestRow(f, 'outgoing')));
+    myFriends = friendIds.map((id) => friendProfilesById[id] || { id, email: '' });
 
-    friendsEl.innerHTML = '';
-    if (!friendIds.length) {
-      friendsEl.innerHTML = '<p class="friend-empty">No friends yet. Search above to add some!</p>';
-    } else {
-      const { data: profiles, error: pe } = await supabaseClient.from('profiles').select('*').in('id', friendIds);
-      const byId = {};
-      (profiles || []).forEach((p) => (byId[p.id] = p));
-      friendIds.forEach((id) => {
-        const p = byId[id];
-        friendsEl.appendChild(buildFriendRow(p));
-      });
-    }
+    renderRequests();
+    renderFriendList();
   } catch (err) {
-    requestsEl.innerHTML = '<p class="friend-empty">Could not load friends.</p>';
-    friendsEl.innerHTML = '';
+    if (requestsEl) requestsEl.innerHTML = '<p class="friend-empty">Could not load friends.</p>';
+    if (friendsEl) friendsEl.innerHTML = '';
+  }
+}
+
+function renderRequests() {
+  const section = document.getElementById('friend-requests-section');
+  const el = document.getElementById('friend-requests');
+  const countEl = document.getElementById('friend-requests-count');
+  const toggle = document.getElementById('requests-toggle');
+  if (!section || !el) return;
+
+  const total = incomingReqs.length + outgoingReqs.length;
+  section.classList.toggle('hidden', total === 0);
+  if (countEl) countEl.textContent = total ? '(' + total + ')' : '';
+  if (!total) return;
+
+  el.innerHTML = '';
+  const rows = [];
+  incomingReqs.forEach((f) => rows.push({ f, dir: 'incoming' }));
+  outgoingReqs.forEach((f) => rows.push({ f, dir: 'outgoing' }));
+  const shown = requestsExpanded ? rows : rows.slice(0, 3);
+  shown.forEach(({ f, dir }) => el.appendChild(buildRequestRow(f, dir)));
+
+  if (toggle) {
+    const extra = rows.length - shown.length;
+    toggle.classList.toggle('hidden', rows.length <= 3 && !requestsExpanded);
+    toggle.textContent = requestsExpanded ? 'Show fewer' : 'Show all requests (' + rows.length + ')';
   }
 }
 
 function buildRequestRow(f, dir) {
   const el = document.createElement('div');
   el.className = 'friend-row request-row';
-  const name = dir === 'incoming' ? (f.requester_email || 'User') : (f.addressee_email || 'User');
-  el.innerHTML = `
-    <span class="fr-avatar">${escapeHtml(name[0].toUpperCase())}</span>
-    <span class="fr-info">
-      <span class="fr-name">${escapeHtml(name)}</span>
-      <span class="fr-sub">${dir === 'incoming' ? 'wants to connect' : 'request sent'}</span>
-    </span>
-    ${dir === 'incoming' ? '<span class="fr-btn-row"><button class="fr-accept">Accept</button><button class="fr-decline">Decline</button></span>' : '<span class="fr-pending">Pending</span>'}
-  `;
+  const profile = dir === 'incoming' ? friendProfilesById[f.requester_id] : friendProfilesById[f.addressee_id];
+  const email = dir === 'incoming' ? f.requester_email : f.addressee_email;
+  const label = profile ? nameOf(profile) : (email || 'User');
+  const sub = dir === 'incoming' ? 'Sent you a request' : 'Request sent \u00b7 Pending';
+  el.innerHTML =
+    '<span class="fr-avatar sm">' + (profile ? avatarInner(profile) : escapeHtml((label[0] || '?').toUpperCase())) + '</span>' +
+    '<span class="fr-info"><span class="fr-name">' + escapeHtml(label) + '</span>' +
+    '<span class="fr-sub">' + escapeHtml(sub) + (profile ? ' \u00b7 ' + escapeHtml(atName(profile)) : '') + '</span></span>' +
+    '<span class="fr-actions">' +
+    (dir === 'incoming'
+      ? '<span class="fr-btn-row"><button class="fr-accept" type="button" aria-label="Accept request">\u2705 Accept</button><button class="fr-decline" type="button" aria-label="Decline request">\u2715 Decline</button></span>'
+      : '<span class="fr-pending">\u23F3 Pending</span><button class="fr-more" type="button" aria-label="Request options">\u22EF</button>') +
+    '</span>';
+
+  const slideOut = () => el.classList.add('removing');
+
   if (dir === 'incoming') {
-    el.querySelector('.fr-accept').addEventListener('click', async () => {
+    el.querySelector('.fr-accept').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      slideOut();
       await supabaseClient.from('friendships').update({ status: 'accepted' }).eq('id', f.id);
-      loadFriends();
+      launchConfetti(900);
+      showToast('You and ' + atName(profile) + ' are now friends! 🦆', 'correct');
+      setTimeout(loadFriends, 300);
     });
-    el.querySelector('.fr-decline').addEventListener('click', async () => {
+    el.querySelector('.fr-decline').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      slideOut();
       await supabaseClient.from('friendships').delete().eq('id', f.id);
-      loadFriends();
+      setTimeout(loadFriends, 300);
+    });
+  } else {
+    const more = el.querySelector('.fr-more');
+    more.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const menu = document.createElement('div');
+      menu.className = 'fr-menu';
+      menu.innerHTML = '<button type="button" class="danger">Cancel request</button>';
+      menu.querySelector('button').addEventListener('click', async () => {
+        slideOut();
+        await supabaseClient.from('friendships').delete().eq('id', f.id);
+        setTimeout(loadFriends, 300);
+      });
+      el.appendChild(menu);
+      setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
     });
   }
   return el;
+}
+
+function sortAndFilterFriends(list) {
+  let out = list.slice();
+  if (friendFilter === 'online') out = out.filter((p) => isOnline(p));
+  if (friendFilter === 'recent') out = out.slice(-10);
+  if (friendSort === 'az') out.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+  else if (friendSort === 'online') out.sort((a, b) => Number(isOnline(b)) - Number(isOnline(a)));
+  else out.reverse();
+  return out;
+}
+
+function renderFriendList() {
+  const el = document.getElementById('friend-list');
+  if (!el) return;
+  el.innerHTML = '';
+  if (!myFriends.length) {
+    el.innerHTML =
+      '<div class="friend-empty">' +
+      '<svg viewBox="0 0 240 240" role="img" aria-label="Buck waiting for friends"><use href="#buck-thinking" /></svg>' +
+      '<strong>No friends yet!</strong>' +
+      '<span>Search above to find study buddies, or invite someone with your username.</span>' +
+      '<button type="button" class="btn btn-primary" id="empty-invite">Invite a friend</button>' +
+      '</div>';
+    const b = el.querySelector('#empty-invite');
+    if (b) b.addEventListener('click', inviteFriend);
+    return;
+  }
+  const list = sortAndFilterFriends(myFriends);
+  if (!list.length) {
+    el.innerHTML = '<div class="friend-empty">No friends match this filter.</div>';
+    return;
+  }
+  list.forEach((p) => el.appendChild(buildFriendRow(p)));
 }
 
 function buildFriendRow(profile) {
   const el = document.createElement('div');
-  const nm = profile ? nameOf(profile) : 'Friend';
   el.className = 'friend-row';
-  el.innerHTML = `
-    <span class="fr-avatar">${escapeHtml(nm[0].toUpperCase())}</span>
-    <span class="fr-info">
-      <span class="fr-name">${escapeHtml(nm)}</span>
-      ${profile ? `<span class="fr-stats">${statsHtml(profile)}</span>` : ''}
-    </span>
-    <span class="fr-friend">Friend &#10003;</span>
-  `;
+  el.dataset.friendId = profile.id;
+  const online = isOnline(profile);
+  el.innerHTML =
+    '<span class="fr-avatar">' + avatarInner(profile) + '<span class="fr-status' + (online ? ' online' : '') + '"></span></span>' +
+    '<span class="fr-info"><span class="fr-name">' + escapeHtml(nameOf(profile)) + '</span>' +
+    '<span class="fr-sub">' + escapeHtml(atName(profile)) + ' \u00b7 ' + (online ? 'Online' : 'Offline') + '</span>' +
+    '<span class="fr-stats">' + statsHtml(profile) + '</span></span>' +
+    '<span class="fr-actions">' +
+    '<button class="fr-msg-btn" type="button" aria-label="Message ' + escapeHtml(nameOf(profile)) + '">\u{1F4AC} Message</button>' +
+    '<button class="fr-more" type="button" aria-label="Friend options">\u22EF</button>' +
+    '</span>';
+
+  el.querySelector('.fr-msg-btn').addEventListener('click', () => openChat(profile.id));
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('button')) return;
+    openChat(profile.id);
+  });
+  el.querySelector('.fr-more').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.createElement('div');
+    menu.className = 'fr-menu';
+    menu.innerHTML =
+      '<button type="button" class="view">View profile</button>' +
+      '<button type="button" class="mute">Mute</button>' +
+      '<button type="button" class="danger remove">Remove friend</button>';
+    menu.querySelector('.view').addEventListener('click', () => {
+      showToast(nameOf(profile) + ' \u00b7 ' + atName(profile) + ' \u00b7 ' + statsHtml(profile).replace(/<[^>]+>/g, ' '), '');
+      menu.remove();
+    });
+    menu.querySelector('.mute').addEventListener('click', () => { showToast('Muted ' + atName(profile), ''); menu.remove(); });
+    menu.querySelector('.remove').addEventListener('click', async () => {
+      menu.remove();
+      el.classList.add('removing');
+      try {
+        const { data } = await supabaseClient.from('friendships').select('*')
+          .or('and(requester_id.eq.' + currentUser.id + ',addressee_id.eq.' + profile.id + '),and(requester_id.eq.' + profile.id + ',addressee_id.eq.' + currentUser.id + ')')
+          .eq('status', 'accepted');
+        if (data && data[0]) await supabaseClient.from('friendships').delete().eq('id', data[0].id);
+      } catch (e2) {}
+      showToast('Removed ' + atName(profile), '');
+      setTimeout(loadFriends, 300);
+    });
+    el.appendChild(menu);
+    setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+  });
   return el;
+}
+
+function inviteFriend() {
+  const username = getProfileCache().username || '';
+  const link = window.location.origin + '/app';
+  const text = username ? 'Join me on Buck the Duck! My username is @' + username : 'Join me on Buck the Duck!';
+  try {
+    navigator.clipboard.writeText(text + ' \u00b7 ' + link);
+    showToast('Invite copied \u2014 paste it to a friend! 🦆', 'correct');
+  } catch (e) {
+    showToast(text, '');
+  }
+}
+
+/* ---------------- Direct messaging ---------------- */
+
+const MSG_KEY = 'buckMessages';
+let activeChatId = null;
+let msgPollTimer = null;
+let typingTimer = null;
+
+function allMessages() {
+  try { return JSON.parse(localStorage.getItem(MSG_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveMessages(list) {
+  try { localStorage.setItem(MSG_KEY, JSON.stringify(list.slice(-500))); } catch (e) {}
+}
+function conversationWith(friendId) {
+  const me = currentUser ? currentUser.id : 'me';
+  return allMessages().filter((m) => (m.from === me && m.to === friendId) || (m.from === friendId && m.to === me));
+}
+function appendMessage(msg) {
+  const list = allMessages();
+  if (msg.id && list.some((m) => m.id === msg.id)) return false;
+  list.push(msg);
+  saveMessages(list);
+  return true;
+}
+function unreadCount() {
+  const me = currentUser ? currentUser.id : 'me';
+  return allMessages().filter((m) => m.to === me && !m.read).length;
+}
+function renderMessagesBadge() {
+  const nav = document.getElementById('nav-messages');
+  const badge = document.getElementById('nav-messages-badge');
+  if (!nav || !badge) return;
+  const n = unreadCount();
+  badge.textContent = n > 99 ? '99+' : String(n);
+  badge.classList.toggle('hidden', n === 0);
+  nav.title = n ? n + ' unread message' + (n === 1 ? '' : 's') : 'Messages';
+}
+function bumpMessagesBadge() {
+  const badge = document.getElementById('nav-messages-badge');
+  if (!badge) return;
+  badge.classList.remove('bump');
+  void badge.offsetWidth;
+  badge.classList.add('bump');
+}
+
+function openMessages() {
+  if (!currentUser) { showAuthGate(); return; }
+  setActiveNav('messages');
+  document.getElementById('chat-panel').classList.remove('hidden');
+  document.getElementById('chat-backdrop').classList.remove('hidden');
+  activeChatId = null;
+  document.getElementById('chat-thread').classList.add('hidden');
+  document.getElementById('chat-input-wrap').classList.add('hidden');
+  document.getElementById('chat-typing').classList.add('hidden');
+  document.getElementById('chat-name').textContent = 'Messages';
+  document.getElementById('chat-status').textContent = '';
+  document.getElementById('chat-avatar').innerHTML = '\u{1F4AC}';
+  document.getElementById('chat-back').classList.add('hidden');
+  renderChatList();
+  refreshMessages(true);
+}
+
+function openChat(friendId) {
+  const profile = friendProfilesById[friendId] || myFriends.find((f) => f.id === friendId) || { id: friendId };
+  activeChatId = friendId;
+  document.getElementById('chat-panel').classList.remove('hidden');
+  document.getElementById('chat-backdrop').classList.remove('hidden');
+  document.getElementById('chat-list').classList.add('hidden');
+  document.getElementById('chat-thread').classList.remove('hidden');
+  document.getElementById('chat-input-wrap').classList.remove('hidden');
+  document.getElementById('chat-back').classList.remove('hidden');
+  document.getElementById('chat-name').textContent = nameOf(profile);
+  const statusEl = document.getElementById('chat-status');
+  const online = isOnline(profile);
+  statusEl.textContent = online ? 'Online' : 'Offline';
+  statusEl.className = 'chat-status' + (online ? '' : ' offline');
+  document.getElementById('chat-avatar').innerHTML = avatarInner(profile);
+  document.getElementById('chat-avatar').dataset.friendId = friendId;
+  renderChatThread();
+  markConversationRead(friendId);
+  refreshMessages(true);
+  setTimeout(() => { const i = document.getElementById('chat-input'); if (i) i.focus(); }, 60);
+}
+
+function closeMessages() {
+  document.getElementById('chat-panel').classList.add('hidden');
+  document.getElementById('chat-backdrop').classList.add('hidden');
+  document.getElementById('chat-list').classList.remove('hidden');
+  activeChatId = null;
+  setActiveNav(null);
+}
+
+function chatBack() {
+  if (activeChatId) openMessages();
+  else closeMessages();
+}
+
+function markConversationRead(friendId) {
+  const me = currentUser ? currentUser.id : 'me';
+  const list = allMessages();
+  let changed = false;
+  list.forEach((m) => { if (m.to === me && m.from === friendId && !m.read) { m.read = true; changed = true; } });
+  if (changed) { saveMessages(list); renderMessagesBadge(); }
+  if (supabaseClient && currentUser) {
+    supabaseClient.from('messages').update({ read_at: new Date().toISOString() })
+      .eq('receiver_id', currentUser.id).eq('sender_id', friendId).is('read_at', null).then(() => {}, () => {});
+  }
+}
+
+function dayLabel(ts) {
+  const d = new Date(ts);
+  const today = new Date();
+  const y = new Date(); y.setDate(today.getDate() - 1);
+  const same = (a, b) => a.toDateString() === b.toDateString();
+  if (same(d, today)) return 'Today';
+  if (same(d, y)) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function renderChatThread() {
+  const el = document.getElementById('chat-thread');
+  if (!el) return;
+  const msgs = conversationWith(activeChatId);
+  if (!msgs.length) {
+    const p = friendProfilesById[activeChatId] || {};
+    el.innerHTML =
+      '<div class="friend-empty">' +
+      '<svg viewBox="0 0 240 240" role="img" aria-label="Buck waving"><use href="#buck-celebrating" /></svg>' +
+      '<strong>Say hi to ' + escapeHtml(atName(p)) + '! \u{1F44B}</strong>' +
+      '<span>Your messages are private between you two.</span>' +
+      '</div>';
+    return;
+  }
+  const me = currentUser ? currentUser.id : 'me';
+  let html = '';
+  let lastDay = '';
+  msgs.forEach((m) => {
+    const day = dayLabel(m.at);
+    if (day !== lastDay) { html += '<div class="chat-day">' + day + '</div>'; lastDay = day; }
+    const mine = m.from === me;
+    const time = new Date(m.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    const p = friendProfilesById[m.from] || (mine ? getProfileData() : {});
+    html +=
+      '<div class="chat-msg ' + (mine ? 'me' : 'them') + '">' +
+      (mine ? '' : '<span class="mini-avatar">' + avatarInner(p) + '</span>') +
+      '<span class="bubble">' + escapeHtml(m.text) +
+      '<span class="meta">' + time + (mine ? ' <span class="receipt' + (m.read ? ' read' : '') + '">' + (m.read ? '\u2713\u2713' : '\u2713') + '</span>' : '') + '</span>' +
+      '</span>' +
+      '</div>';
+  });
+  el.innerHTML = html;
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderChatList() {
+  const el = document.getElementById('chat-list');
+  if (!el) return;
+  el.innerHTML = '';
+  const me = currentUser ? currentUser.id : 'me';
+  const msgs = allMessages();
+  const withMessages = myFriends.filter((f) => msgs.some((m) => m.from === f.id || m.to === f.id));
+  const list = withMessages.length ? withMessages : myFriends;
+  if (!list.length) {
+    el.innerHTML =
+      '<div class="friend-empty">' +
+      '<svg viewBox="0 0 240 240" role="img" aria-label="Buck"><use href="#buck-thinking" /></svg>' +
+      '<strong>No conversations yet</strong><span>Add a friend and say hi!</span></div>';
+    return;
+  }
+  list.forEach((f) => {
+    const convo = msgs.filter((m) => m.from === f.id || m.to === f.id);
+    const last = convo[convo.length - 1];
+    const unread = convo.filter((m) => m.to === me && !m.read).length;
+    const row = document.createElement('div');
+    row.className = 'chat-conv';
+    row.innerHTML =
+      '<span class="fr-avatar xs">' + avatarInner(f) + '</span>' +
+      '<span class="cv-meta"><span class="cv-name">' + escapeHtml(nameOf(f)) + '</span>' +
+      '<span class="cv-last">' + escapeHtml(last ? last.text : 'No messages yet') + '</span></span>' +
+      (unread ? '<span class="cv-unread">' + unread + '</span>' : '');
+    row.addEventListener('click', () => openChat(f.id));
+    el.appendChild(row);
+  });
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chat-input');
+  if (!input || !activeChatId) return;
+  const text = input.value.trim();
+  if (!text) return;
+  const me = currentUser ? currentUser.id : 'me';
+  const msg = { id: 'm' + Date.now() + Math.random().toString(36).slice(2, 6), from: me, to: activeChatId, text, at: Date.now(), read: false };
+  appendMessage(msg);
+  input.value = '';
+  autoGrowChatInput();
+  const sendBtn = document.getElementById('chat-send');
+  if (sendBtn) { sendBtn.classList.add('pulse'); setTimeout(() => sendBtn.classList.remove('pulse'), 360); }
+  renderChatThread();
+  if (supabaseClient && currentUser) {
+    try {
+      await supabaseClient.from('messages').insert({ sender_id: me, receiver_id: activeChatId, text, read_at: null });
+    } catch (e) {}
+  }
+}
+
+function autoGrowChatInput() {
+  const input = document.getElementById('chat-input');
+  if (!input) return;
+  input.style.height = 'auto';
+  input.style.height = Math.min(120, input.scrollHeight) + 'px';
+  const send = document.getElementById('chat-send');
+  if (send) send.classList.toggle('hidden', !input.value.trim());
+}
+
+function showTyping(name) {
+  const el = document.getElementById('chat-typing');
+  if (!el) return;
+  el.textContent = name + ' is typing\u2026';
+  el.classList.remove('hidden');
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => el.classList.add('hidden'), 2200);
+}
+
+async function refreshMessages(force) {
+  renderMessagesBadge();
+  if (!supabaseClient || !currentUser) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from('messages')
+      .select('*')
+      .or('sender_id.eq.' + currentUser.id + ',receiver_id.eq.' + currentUser.id)
+      .order('created_at', { ascending: true })
+      .limit(200);
+    if (error) return;
+    let added = 0;
+    (data || []).forEach((r) => {
+      const msg = { id: r.id, from: r.sender_id, to: r.receiver_id, text: r.text, at: r.created_at ? new Date(r.created_at).getTime() : Date.now(), read: !!r.read_at };
+      if (appendMessage(msg)) added++;
+    });
+    if (added) {
+      renderMessagesBadge();
+      if (activeChatId) { renderChatThread(); markConversationRead(activeChatId); }
+      else renderChatList();
+      if (!document.getElementById('chat-panel').classList.contains('hidden')) renderChatList();
+      const latest = allMessages().slice(-1)[0];
+      if (latest && latest.from !== currentUser.id && latest.to === currentUser.id && latest.from !== activeChatId) {
+        const from = friendProfilesById[latest.from] || {};
+        showToast('New message from ' + (nameOf(from) !== 'Unknown' ? nameOf(from) : 'a friend') + ' \u{1F4AC}', 'correct');
+        bumpMessagesBadge();
+      }
+    }
+  } catch (e) {}
+}
+
+function startMessagePolling() {
+  if (msgPollTimer) return;
+  refreshMessages(true);
+  msgPollTimer = setInterval(() => refreshMessages(false), 4000); // polling fallback (no websockets needed)
 }
 
 function wireFriends() {
   document.getElementById('nav-friends').addEventListener('click', openFriends);
+  const navMessages = document.getElementById('nav-messages');
+  if (navMessages) navMessages.addEventListener('click', openMessages);
   document.getElementById('friend-search-btn').addEventListener('click', searchFriends);
   document.getElementById('save-username').addEventListener('click', saveMyUsername);
+
   const mi = document.getElementById('my-username');
   if (mi) {
     mi.addEventListener('input', () => {
       mi.value = mi.value.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+      setSaveUsernameDirty();
     });
   }
-  document.getElementById('friend-query').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      searchFriends();
+  const copyBtn = document.getElementById('copy-username');
+  if (copyBtn) copyBtn.addEventListener('click', () => {
+    const u = (getProfileCache().username || '').replace(/^@/, '');
+    if (!u) { showToast('Set a username first!', 'wrong'); return; }
+    try { navigator.clipboard.writeText('@' + u); } catch (e) {}
+    showToast('Copied @' + u + ' to your clipboard 🦆', 'correct');
+  });
+  const shareBtn = document.getElementById('share-profile');
+  if (shareBtn) shareBtn.addEventListener('click', inviteFriend);
+  const invite = document.getElementById('invite-friend');
+  if (invite) invite.addEventListener('click', inviteFriend);
+
+  const query = document.getElementById('friend-query');
+  if (query) {
+    query.addEventListener('input', searchFriendsDebounced);
+    query.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); searchFriends(); }
+      if (e.key === 'Escape') document.getElementById('friend-search-results').innerHTML = '';
+    });
+  }
+
+  const sort = document.getElementById('friend-sort');
+  if (sort) sort.addEventListener('change', () => { friendSort = sort.value; renderFriendList(); });
+
+  document.querySelectorAll('#friend-filters .fs-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      friendFilter = chip.dataset.filter;
+      document.querySelectorAll('#friend-filters .fs-chip').forEach((c) => {
+        const on = c === chip;
+        c.classList.toggle('active', on);
+        c.setAttribute('aria-selected', String(on));
+      });
+      renderFriendList();
+    });
+  });
+
+  const toggle = document.getElementById('requests-toggle');
+  if (toggle) toggle.addEventListener('click', () => {
+    requestsExpanded = !requestsExpanded;
+    toggle.textContent = requestsExpanded ? 'Show fewer' : 'Show all requests';
+    renderRequests();
+  });
+
+  // Chat wiring
+  document.getElementById('chat-back').addEventListener('click', chatBack);
+  document.getElementById('chat-backdrop').addEventListener('click', closeMessages);
+  document.getElementById('chat-menu-btn').addEventListener('click', () => {
+    document.getElementById('chat-menu').classList.toggle('hidden');
+  });
+  document.getElementById('chat-menu').addEventListener('click', (e) => {
+    const id = e.target.id;
+    document.getElementById('chat-menu').classList.add('hidden');
+    if (id === 'chat-view-profile') showToast('Profile viewing is coming soon.', '');
+    if (id === 'chat-mute') showToast('Chat muted.', '');
+    if (id === 'chat-clear') {
+      const list = allMessages().filter((m) => !(m.from === activeChatId || m.to === activeChatId));
+      saveMessages(list);
+      renderChatThread();
+      showToast('Chat cleared.', '');
     }
+  });
+  const input = document.getElementById('chat-input');
+  if (input) {
+    input.addEventListener('input', autoGrowChatInput);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
+    });
+  }
+  document.getElementById('chat-send').addEventListener('click', sendChatMessage);
+  const emojiBtn = document.getElementById('chat-emoji');
+  if (emojiBtn) emojiBtn.addEventListener('click', () => {
+    const pop = document.getElementById('chat-emoji-pop');
+    if (!pop.dataset.ready) {
+      pop.innerHTML = ['😀','😂','😍','🥳','😅','😴','👍','🙌','🔥','🎉','💯','🦆','📚','✨','❤️','😮'].map((e) => '<button type="button">' + e + '</button>').join('');
+      pop.dataset.ready = '1';
+    }
+    pop.classList.toggle('hidden');
+  });
+  const pop = document.getElementById('chat-emoji-pop');
+  if (pop) pop.addEventListener('click', (e) => {
+    if (e.target.tagName !== 'BUTTON') return;
+    const i = document.getElementById('chat-input');
+    i.value += e.target.textContent;
+    autoGrowChatInput();
+    i.focus();
   });
 }
 
@@ -1775,368 +2333,39 @@ function confirmDialog(opts) {
 }
 
 let currentPackId = null;
-/* ---------------- Highlighting (selection-based, question + answers) ---------------- */
+let hlMode = false; // global highlighter active (toggled from pack header)
+let hlColor = 'yellow';
+let hlDrag = null; // { card, field, from } while dragging across words
 
-// Brand-aligned, soft-and-readable highlight colors.
 const HL = {
-  yellow: '#FDE68A',
-  green: '#A7F3D0',
-  red: '#FECACA',
-  blue: '#BFDBFE',
+  yellow: 'rgba(253,224,71,0.55)',
+  green: 'rgba(74,222,128,0.5)',
+  pink: 'rgba(244,114,182,0.5)',
+  blue: 'rgba(96,165,250,0.5)',
 };
-const HL_LABEL = { yellow: 'yellow', green: 'green', red: 'red', blue: 'blue' };
-const HL_ORDER = ['yellow', 'green', 'red', 'blue'];
 
-let hlActiveColor = 'yellow'; // last used (shown with a ring in the palette)
-let hlLastApplied = null;     // { item, field, opt, s, e, color } for the pulse effect
-let hlUndo = [];              // undo stack of snapshots
-
-function hlAnnounce(msg) {
-  const live = document.getElementById('hl-live');
-  if (live) live.textContent = msg;
+function tokenText(text, map, clickable) {
+  const words = String(text).split(' ');
+  return words
+    .map((wd, wi) => {
+      const color = map && map[wi];
+      if (clickable) {
+        const css = color ? `background:${HL[color]};` : '';
+        return `<span class="hlw" data-wi="${wi}"${color ? ` data-c="${color}"` : ''} style="${css}">${escapeHtml(wd)}</span>`;
+      }
+      const css = color ? `background:${HL[color]};` : '';
+      return `<span class="hloff" style="${css}">${escapeHtml(wd)}</span>`;
+    })
+    .join(' ');
 }
 
-function hlSnapshot(item) {
-  return { item, hl: JSON.parse(JSON.stringify(Array.isArray(item.hl) ? item.hl : [])) };
-}
-
-function hlPushUndo(item) {
-  hlUndo.push(hlSnapshot(item));
-  if (hlUndo.length > 30) hlUndo.shift();
-}
-
-function hlUndoLast() {
-  const snap = hlUndo.pop();
-  if (!snap) return false;
-  snap.item.hl = snap.hl;
+function toggleWordHighlight(item, field, wi) {
+  const map = item[field] || {};
+  if (map[wi] === hlColor) delete map[wi];
+  else map[wi] = hlColor;
+  item[field] = map;
   updatePack(currentPackId, () => {});
   renderPack();
-  hlAnnounce('Highlight undone');
-  return true;
-}
-
-function hlColorHex(key) {
-  return HL[key] || HL.yellow;
-}
-
-
-let hlPending = null;      // { item, field, opt, start, end, rect, card }
-let hlInteracting = false; // true while pointer is on the floating palette
-let hlSelTimer = null;
-let hlHoverMark = null;
-
-function hlSameScope(a, b, opt) {
-  if (a.f !== b.f) return false;
-  return (a.o == null && opt == null) || (a.o != null && opt != null && a.o === opt);
-}
-
-function clipRanges(item, field, opt, start, end) {
-  const list = Array.isArray(item.hl) ? item.hl.slice() : [];
-  const out = [];
-  list.forEach((r) => {
-    if (!hlSameScope(r, { f: field }, opt)) { out.push(r); return; }
-    if (r.e <= start || r.s >= end) { out.push(r); return; }
-    if (r.s < start) out.push(Object.assign({}, r, { e: start }));
-    if (r.e > end) out.push(Object.assign({}, r, { s: end }));
-  });
-  item.hl = out;
-}
-
-function applyHighlight(item, field, opt, start, end, color) {
-  if (!Array.isArray(item.hl)) item.hl = [];
-  hlPushUndo(item);
-  clipRanges(item, field, opt, start, end); // replace overlaps
-  item.hl.push({ f: field, o: opt == null ? null : opt, s: start, e: end, c: color });
-  item.hl.sort((a, b) => a.s - b.s);
-  hlLastApplied = { f: field, o: opt == null ? null : opt, s: start, e: end };
-  hlAnnounce('Text highlighted ' + (HL_LABEL[color] || ''));
-}
-
-function clearHighlightRange(item, field, opt, start, end) {
-  hlPushUndo(item);
-  clipRanges(item, field, opt, start, end);
-  hlAnnounce('Highlight cleared');
-}
-
-function clearAllHighlights(item) {
-  hlPushUndo(item);
-  item.hl = [];
-  const legacy = ['hq', 'ha'];
-  legacy.forEach((k) => { if (item[k]) delete item[k]; });
-}
-
-function renderHighlighted(text, item, field, opt) {
-  const str = String(text == null ? '' : text);
-  if (!item) return escapeHtml(str);
-  const ranges = (Array.isArray(item.hl) ? item.hl : [])
-    .filter((r) => hlSameScope(r, { f: field }, opt))
-    .filter((r) => r.e > r.s && r.s < str.length)
-    .map((r) => ({ s: Math.max(0, r.s), e: Math.min(str.length, r.e), c: r.c }))
-    .sort((a, b) => a.s - b.s);
-  if (!ranges.length) return escapeHtml(str);
-
-  let html = '';
-  let pos = 0;
-  ranges.forEach((r) => {
-    if (r.s > pos) html += escapeHtml(str.slice(pos, r.s));
-    const pulse = hlLastApplied && hlLastApplied.f === field &&
-      (hlLastApplied.o == null ? opt == null : hlLastApplied.o === opt) &&
-      hlLastApplied.s === r.s && hlLastApplied.e === r.e;
-    html += '<mark class="bhl' + (pulse ? ' bhl-pulse' : '') + '" data-c="' + r.c + '" data-s="' + r.s +
-      '" data-e="' + r.e + '" style="background:' + hlColorHex(r.c) + '">' + escapeHtml(str.slice(r.s, r.e)) + '</mark>';
-    pos = r.e;
-  });
-  if (pos < str.length) html += escapeHtml(str.slice(pos));
-  return html;
-}
-
-function hlFieldHolder(node) {
-  let el = node && node.nodeType === 3 ? node.parentElement : node;
-  if (!el || !el.closest) return null;
-  const holder = el.closest('[data-field]');
-  if (!holder) return null;
-  const card = holder.closest('.pack-card');
-  if (!card) return null;
-  return { holder, card };
-}
-
-function hlOffsetIn(holder, node, offset) {
-  let total = 0;
-  const walker = document.createTreeWalker(holder, NodeFilter.SHOW_TEXT, null);
-  let n;
-  while ((n = walker.nextNode())) {
-    if (n === node) return total + offset;
-    total += n.nodeValue ? n.nodeValue.length : 0;
-  }
-  return total;
-}
-
-function hlSelectionPayload() {
-  const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
-  const range = sel.getRangeAt(0);
-  const a = hlFieldHolder(range.startContainer);
-  const b = hlFieldHolder(range.endContainer);
-  if (!a || !b || a.holder !== b.holder) return null;
-
-  const field = a.holder.dataset.field;
-  const optAttr = a.holder.dataset.opt;
-  const opt = optAttr != null && optAttr !== '' ? Number(optAttr) : null;
-  let start = hlOffsetIn(a.holder, range.startContainer, range.startOffset);
-  let end = hlOffsetIn(a.holder, range.endContainer, range.endOffset);
-  if (start > end) { const t = start; start = end; end = t; }
-  if (start === end) return null;
-
-  const pack = getPack(currentPackId);
-  const item = pack && pack.items[Number(a.card.dataset.pi)];
-  if (!item) return null;
-
-  const rect = typeof range.getBoundingClientRect === 'function'
-    ? range.getBoundingClientRect()
-    : { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
-
-  return { item, field, opt, start, end, rect };
-}
-
-function showHlFloat(payload) {
-  const float = document.getElementById('hl-float');
-  if (!float) return;
-  hlPending = payload;
-  const showHint = !localStorage.getItem('buckHlHinted');
-  float.innerHTML =
-    (showHint ? '<span class="hl-bubble">Select text to highlight</span>' : '') +
-    HL_ORDER.map((c) =>
-      '<button type="button" class="hl-dot' + (c === hlActiveColor ? ' active' : '') + '" data-c="' + c +
-      '" aria-label="Highlight ' + c + '" title="Highlight ' + c +
-      '" style="background:' + HL[c] + '"></button>'
-    ).join('') +
-    '<span class="hl-sep"></span>' +
-    '<button type="button" class="hl-action hl-clear" data-clear="1" title="Clear highlight" aria-label="Clear highlight">&#10005;</button>' +
-    '<button type="button" class="hl-action hl-close" data-close="1" title="Close" aria-label="Close palette">&#10005;</button>';
-  float.classList.remove('hidden');
-
-  const r = payload.rect;
-  const fw = float.offsetWidth || 240;
-  const fh = float.offsetHeight || 44;
-  let left = r.left + r.width / 2 - fw / 2;
-  left = Math.max(8, Math.min(left, window.innerWidth - fw - 8));
-  let top = r.top - fh - 10;
-  const flip = top < 8;
-  if (flip) top = r.bottom + 10;
-  float.classList.toggle('flip', flip);
-  float.style.left = left + 'px';
-  float.style.top = top + 'px';
-
-  // Caret points at the selection center
-  const caret = float.querySelector('.hl-caret') || document.createElement('span');
-  caret.className = 'hl-caret';
-  if (!caret.parentNode) float.appendChild(caret);
-  const cx = Math.max(14, Math.min(r.left + r.width / 2 - left, fw - 14));
-  caret.style.left = cx + 'px';
-  if (showHint) { try { localStorage.setItem('buckHlHinted', '1'); } catch (e) {} }
-}
-
-function hideHlFloat() {
-  const float = document.getElementById('hl-float');
-  if (float) float.classList.add('hidden');
-  hlPending = null;
-  hideHlRemove();
-}
-
-function applyPending(colorKey) {
-  if (!hlPending) return;
-  const p = hlPending;
-  if (colorKey) {
-    hlActiveColor = colorKey;
-    applyHighlight(p.item, p.field, p.opt, p.start, p.end, colorKey);
-  } else {
-    clearHighlightRange(p.item, p.field, p.opt, p.start, p.end);
-  }
-  updatePack(currentPackId, () => {});
-  hideHlFloat();
-  const sel = window.getSelection();
-  if (sel) sel.removeAllRanges();
-  renderPack();
-  clearTimeout(hlPulseTimer);
-  hlPulseTimer = setTimeout(() => { hlLastApplied = null; }, 320);
-}
-
-let hlPulseTimer = null;
-
-function handleSelection() {
-  if (hlInteracting) return;
-  if (!packScreen || packScreen.classList.contains('hidden')) { hideHlFloat(); return; }
-  const p = hlSelectionPayload();
-  if (p) showHlFloat(p);
-  else hideHlFloat();
-}
-
-function showHlRemove(mark) {
-  const btn = document.getElementById('hl-remove');
-  if (!btn) return;
-  hlHoverMark = mark;
-  const r = mark.getBoundingClientRect();
-  btn.classList.remove('hidden');
-  btn.style.left = (r.right - 10) + 'px';
-  btn.style.top = (r.top - 12) + 'px';
-}
-
-function hideHlRemove() {
-  const btn = document.getElementById('hl-remove');
-  if (btn) btn.classList.add('hidden');
-  hlHoverMark = null;
-}
-
-function packItemFromEl(el) {
-  const card = el.closest && el.closest('.pack-card');
-  const pack = getPack(currentPackId);
-  if (!card || !pack) return null;
-  return pack.items[Number(card.dataset.pi)] || null;
-}
-
-// Selection triggers (mouse + touch + keyboard).
-document.addEventListener('mouseup', (e) => {
-  if (e.target.closest && (e.target.closest('#hl-float') || e.target.closest('#hl-remove'))) return;
-  setTimeout(handleSelection, 0);
-});
-document.addEventListener('touchend', (e) => {
-  if (e.target.closest && (e.target.closest('#hl-float') || e.target.closest('#hl-remove'))) return;
-  setTimeout(handleSelection, 120);
-});
-document.addEventListener('selectionchange', () => {
-  if (hlInteracting) return;
-  clearTimeout(hlSelTimer);
-  hlSelTimer = setTimeout(handleSelection, 220);
-});
-
-document.addEventListener('mousedown', (e) => {
-  if (e.target.closest && (e.target.closest('#hl-float') || e.target.closest('#hl-remove'))) {
-    e.preventDefault();
-    hlInteracting = true;
-  }
-});
-
-document.addEventListener('click', (e) => {
-  const dot = e.target.closest && e.target.closest('#hl-float .hl-dot');
-  if (dot) { applyPending(dot.dataset.c); hlInteracting = false; return; }
-  const clr = e.target.closest && e.target.closest('#hl-float .hl-clear');
-  if (clr) { applyPending(null); hlInteracting = false; return; }
-  const close = e.target.closest && e.target.closest('#hl-float .hl-close');
-  if (close) {
-    hideHlFloat();
-    const sel = window.getSelection(); if (sel) sel.removeAllRanges();
-    hlInteracting = false;
-    return;
-  }
-
-  // Hover "✕" remove button
-  if (e.target.id === 'hl-remove') {
-    const mark = hlHoverMark;
-    if (!mark) return;
-    const item = packItemFromEl(mark);
-    const holder = mark.closest('[data-field]');
-    if (!item || !holder) return;
-    const optAttr = holder.dataset.opt;
-    const opt = optAttr != null && optAttr !== '' ? Number(optAttr) : null;
-    clearHighlightRange(item, holder.dataset.field, opt, Number(mark.dataset.s), Number(mark.dataset.e));
-    updatePack(currentPackId, () => {});
-    hideHlRemove();
-    renderPack();
-    return;
-  }
-
-  // Hovering existing highlights → show ✕
-  const mark = e.target.closest && e.target.closest('mark.bhl');
-  if (mark && !hlHoverMark) { /* handled on mouseover */ }
-
-  // Clicking outside the palette dismisses it (unless a selection is being made)
-  if (!e.target.closest || !e.target.closest('#hl-float')) {
-    hlInteracting = false;
-  }
-});
-
-document.addEventListener('mouseover', (e) => {
-  const mark = e.target.closest && e.target.closest('mark.bhl');
-  if (mark) showHlRemove(mark);
-});
-document.addEventListener('mouseout', (e) => {
-  const mark = e.target.closest && e.target.closest('mark.bhl');
-  if (!mark) return;
-  setTimeout(() => {
-    const btn = document.getElementById('hl-remove');
-    if (btn && btn.matches(':hover')) return;
-    hideHlRemove();
-  }, 90);
-});
-
-document.addEventListener('keydown', (e) => {
-  // Undo last highlight (Ctrl/Cmd+Z)
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && hlUndo.length) {
-    if (!packScreen || packScreen.classList.contains('hidden')) return;
-    e.preventDefault();
-    hlUndoLast();
-    return;
-  }
-  const float = document.getElementById('hl-float');
-  if (!float || float.classList.contains('hidden')) return;
-  if (e.key === '0') { applyPending(null); }
-  else if (['1', '2', '3', '4'].includes(e.key)) { applyPending(HL_ORDER[Number(e.key) - 1]); }
-  else if (e.key === 'Escape') {
-    hideHlFloat();
-    const sel = window.getSelection();
-    if (sel) sel.removeAllRanges();
-  }
-});
-
-// Dismiss the floating palette when the user scrolls.
-window.addEventListener('scroll', () => {
-  const float = document.getElementById('hl-float');
-  if (float && !float.classList.contains('hidden')) hideHlFloat();
-}, true);
-
-// Hides the floating palette when leaving the pack screen.
-function resetHighlightMode() {
-  hideHlFloat();
 }
 
 function openPack(id) {
@@ -2147,6 +2376,7 @@ function openPack(id) {
   setActiveNav('myd');
   showScreen(packScreen);
   resetHighlightMode();
+  renderHlPalette();
   renderPack();
 }
 
@@ -2164,37 +2394,26 @@ function renderPack() {
     return;
   }
   pack.items.forEach((it, i) => {
-    const hasHl = Array.isArray(it.hl) && it.hl.length > 0;
     const card = document.createElement('div');
-    card.className = 'pack-card' + (it.type === 'choice' ? ' is-choice' : '');
+    card.className = 'pack-card' + (hlMode ? ' hl-mode' : '') + (it.type === 'choice' ? ' is-choice' : '');
     card.dataset.pi = i;
+    const palette = Object.keys(HL)
+      .map((c) => `<span class="hl-dot ${c === hlColor ? 'active' : ''}" data-c="${c}" style="background:${HL[c]}"></span>`)
+      .join('');
     card.innerHTML = `
       <div class="pk-menu">
-        <div class="pk-hlwrap">
-          <button class="pk-hl" title="Highlight colors" aria-label="Highlight colors">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
-          </button>
-          <div class="pk-hl-pop hidden" role="toolbar" aria-label="Highlight colors">
-            <button type="button" class="hl-dot" data-c="yellow" aria-label="Highlight yellow" title="Highlight yellow" style="background:${HL.yellow}"></button>
-            <button type="button" class="hl-dot" data-c="green" aria-label="Highlight green" title="Highlight green" style="background:${HL.green}"></button>
-            <button type="button" class="hl-dot" data-c="red" aria-label="Highlight red" title="Highlight red" style="background:${HL.red}"></button>
-            <button type="button" class="hl-dot" data-c="blue" aria-label="Highlight blue" title="Highlight blue" style="background:${HL.blue}"></button>
-            <span class="pk-hl-sep"></span>
-            <button type="button" class="pk-hl-clear" title="Clear all highlights on this card" aria-label="Clear all highlights on this card">&#129529;</button>
-          </div>
-        </div>
         <button class="pk-more" title="Options">&#8942;</button>
         <div class="pk-dropdown hidden">
           <button class="pk-edit">&#9998;&#65039; Edit</button>
-          <button class="pk-clear-hl"${hasHl ? '' : ' disabled'}>&#129529; Clear highlights</button>
           <button class="pk-del">&#128465; Delete</button>
         </div>
       </div>
       ${it.type === 'choice' ? '<span class="pk-badge">Multiple Choice</span>' : ''}
-      <div class="pk-q" data-field="question">${renderHighlighted(it.question, it, 'question', null)}</div>
+      <div class="pk-q">${tokenText(it.question, it.hq, hlMode)}</div>
       ${it.type === 'choice'
         ? `<div class="pk-a"><div class="pk-answers">${renderPackOptions(it)}</div></div>`
-        : `<div class="pk-a" data-field="answer">${renderHighlighted(it.answer, it, 'answer', null)}</div>`}
+        : `<div class="pk-a">${tokenText(it.answer, it.ha, hlMode)}</div>`}
+      ${hlMode ? `<div class="pk-palette">${palette}<span class="pk-palette-hint">drag or click words to highlight</span></div>` : ''}
     `;
     const more = card.querySelector('.pk-more');
     const dd = card.querySelector('.pk-dropdown');
@@ -2207,70 +2426,9 @@ function renderPack() {
       if (opened) card.classList.add('menu-open');
     });
     dd.addEventListener('click', (e) => e.stopPropagation());
-
-    // Per-card highlighter popover (fallback for discoverability)
-    const hlBtn = card.querySelector('.pk-hl');
-    const hlPop = card.querySelector('.pk-hl-pop');
-    hlBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      close();
-      const willShow = hlPop.classList.contains('hidden');
-      document.querySelectorAll('.pk-hl-pop').forEach((p) => p.classList.add('hidden'));
-      if (willShow) {
-        hlPop.querySelectorAll('.hl-dot').forEach((d) => d.classList.toggle('active', d.dataset.c === hlActiveColor));
-        hlPop.classList.remove('hidden');
-      }
-    });
-    hlPop.addEventListener('click', (e) => e.stopPropagation());
-    hlPop.querySelectorAll('.hl-dot').forEach((d) => {
-      d.addEventListener('click', () => {
-        hlActiveColor = d.dataset.c;
-        hlPop.classList.add('hidden');
-        const p = hlSelectionPayload();
-        if (p && p.item === it) {
-          applyHighlight(it, p.field, p.opt, p.start, p.end, hlActiveColor);
-          updatePack(currentPackId, () => {});
-          const sel = window.getSelection(); if (sel) sel.removeAllRanges();
-          renderPack();
-        } else {
-          showToast('Now select text to highlight it ✏️', 'correct');
-        }
-      });
-    });
-    hlPop.querySelector('.pk-hl-clear').addEventListener('click', async () => {
-      hlPop.classList.add('hidden');
-      const ok = await confirmDialog({
-        title: 'Remove all highlights?',
-        message: 'This removes every highlight on this card. This cannot be undone.',
-        confirmText: 'Clear',
-        cancelText: 'Cancel',
-        danger: true,
-      });
-      if (!ok) return;
-      clearAllHighlights(it);
-      updatePack(pack.id, () => {});
-      renderPack();
-      showToast('Highlights cleared 🧹', 'correct');
-    });
-
     card.querySelector('.pk-edit').addEventListener('click', () => { close(); openEditQ(i); });
-    card.querySelector('.pk-clear-hl').addEventListener('click', async (e) => {
-      close();
-      const ok = await confirmDialog({
-        title: 'Remove all highlights?',
-        message: 'This removes every highlight on this card. This cannot be undone.',
-        confirmText: 'Clear',
-        cancelText: 'Cancel',
-        danger: true,
-      });
-      if (!ok) return;
-      clearAllHighlights(it);
-      updatePack(pack.id, () => {});
-      renderPack();
-      showToast('Highlights cleared 🧹', 'correct');
-    });
     card.querySelector('.pk-del').addEventListener('click', () => { close(); if (confirm('Delete this question?')) { updatePack(pack.id, (p) => { p.items.splice(i, 1); }); renderPack(); } });
-    card.addEventListener('click', () => { close(); hlPop.classList.add('hidden'); });
+    card.addEventListener('click', close);
     listEl.appendChild(card);
   });
 }
@@ -2286,15 +2444,68 @@ function renderPackOptions(it) {
   if (!correct.length) return '';
   const opts = it.options && it.options.length ? it.options : correct;
   return opts
-    .map((o, idx) => {
+    .map((o) => {
       const ok = correct.includes(o);
-      return '<div class="pk-opt ' + (ok ? 'ok' : 'no') + '"><span class="pk-ic ' + (ok ? 'ok' : 'no') + '">' +
-        (ok ? '&#10003;' : '&#10005;') + '</span>' +
-        '<span class="pk-opt-txt" data-field="option" data-opt="' + idx + '">' +
-        renderHighlighted(o, it, 'option', idx) + '</span></div>';
+      return `<div class="pk-opt ${ok ? 'ok' : 'no'}"><span class="pk-ic ${ok ? 'ok' : 'no'}">${ok ? '&#10003;' : '&#10005;'}</span><span class="pk-opt-txt">${escapeHtml(o)}</span></div>`;
     })
     .join('');
 }
+
+// word/highlighter clicks (delegated)
+document.addEventListener('click', (e) => {
+  const dot = e.target.closest('.hl-dot');
+  if (dot) {
+    hlColor = dot.dataset.c;
+    renderHlPalette();
+    renderPack();
+  }
+});
+
+function hlWordAt(e) {
+  let word = e.target && e.target.closest ? e.target.closest('.hlw') : null;
+  if (!word && typeof document.elementFromPoint === 'function') {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    word = el && el.closest ? el.closest('.hlw') : null;
+  }
+  return word;
+}
+
+// highlighter: mousedown/mouseup across tokenized words => drag highlights range, single click toggles
+document.addEventListener('mousedown', (e) => {
+  if (!hlMode) return;
+  const word = hlWordAt(e);
+  if (!word) return;
+  const card = word.closest('.pack-card');
+  if (!card) return;
+  e.preventDefault();
+  hlDrag = { card, field: word.closest('.pk-q') ? 'hq' : 'ha', from: Number(word.dataset.wi) };
+});
+document.addEventListener('mouseup', (e) => {
+  if (!hlMode || !hlDrag) return;
+  const ds = hlDrag;
+  hlDrag = null;
+  const word = hlWordAt(e);
+  if (!word) return;
+  const card2 = word.closest('.pack-card');
+  if (!card2 || card2 !== ds.card) return;
+  const field = word.closest('.pk-q') ? 'hq' : 'ha';
+  if (field !== ds.field) return;
+  const pack = getPack(currentPackId);
+  const item = pack && pack.items[Number(ds.card.dataset.pi)];
+  if (!item) return;
+  const a = Math.min(ds.from, Number(word.dataset.wi));
+  const b = Math.max(ds.from, Number(word.dataset.wi));
+  const map = item[field] || {};
+  if (a === b) {
+    if (map[a] === hlColor) delete map[a];
+    else map[a] = hlColor;
+  } else {
+    for (let w = a; w <= b; w++) map[w] = hlColor;
+  }
+  item[field] = map;
+  updatePack(currentPackId, () => {});
+  renderPack();
+});
 
 let addqEditIndex = -1;
 let addqType = 'flashcard';
@@ -2526,6 +2737,7 @@ function wirePack() {
   document.getElementById('pack-back').addEventListener('click', () => resetToUpload());
   document.getElementById('pack-study').addEventListener('click', () => { if (requireHearts()) startPackQuiz(); });
   document.getElementById('pack-add').addEventListener('click', openAddQ);
+  document.getElementById('pack-hl').addEventListener('click', toggleHighlightMode);
   document.getElementById('addq-save').addEventListener('click', saveAddQ);
   document.getElementById('addq-close').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
   document.getElementById('addq-backdrop').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
@@ -2555,6 +2767,39 @@ function wirePack() {
   document.querySelectorAll('.aq-type-opt').forEach((b) => {
     b.addEventListener('click', () => setAddQType(b.dataset.t));
   });
+}
+
+function setHlMode(on) {
+  hlMode = !!on;
+  const btn = document.getElementById('pack-hl');
+  const pal = document.getElementById('pack-hl-palette');
+  if (btn) btn.classList.toggle('on', hlMode);
+  if (pal) pal.classList.toggle('hidden', !hlMode);
+  document.body.classList.toggle('hl-on', hlMode);
+  renderHlPalette();
+  if (!packScreen.classList.contains('hidden')) renderPack();
+}
+
+function toggleHighlightMode() {
+  setHlMode(!hlMode);
+}
+
+function resetHighlightMode() {
+  if (!hlMode) return;
+  hlMode = false;
+  const btn = document.getElementById('pack-hl');
+  const pal = document.getElementById('pack-hl-palette');
+  if (btn) btn.classList.remove('on');
+  if (pal) pal.classList.add('hidden');
+  document.body.classList.remove('hl-on');
+}
+
+function renderHlPalette() {
+  const pal = document.getElementById('pack-hl-palette');
+  if (!pal) return;
+  pal.innerHTML = Object.keys(HL)
+    .map((c) => `<span class="hl-dot ${c === hlColor ? 'active' : ''}" data-c="${c}" style="background:${HL[c]}"></span>`)
+    .join('');
 }
 
 /* ---------------- Pending deck (survives refresh / tab switch) ---------------- */
@@ -3135,6 +3380,8 @@ function initSupabase() {
         if (currentUser) {
           loadHistory();
           resetToUpload();
+          startMessagePolling();
+          renderMessagesBadge();
         } else {
           hideHistory();
           showAuthGate();
@@ -3146,6 +3393,8 @@ function initSupabase() {
         if (currentUser) {
           loadHistory();
           resetToUpload();
+          startMessagePolling();
+          renderMessagesBadge();
         } else {
           showAuthGate();
         }
@@ -4722,7 +4971,7 @@ function animateScore(el, target, duration = 900) {
 }
 
 function setActiveNav(view) {
-  [navNew, navSettings, navFriends, navProgress, navMyd, navLive].forEach((btn) => {
+  [navNew, navSettings, navFriends, navMessages, navProgress, navMyd, navLive].forEach((btn) => {
     if (btn) btn.classList.toggle('active', btn.id === 'nav-' + view);
   });
 }
