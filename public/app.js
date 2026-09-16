@@ -180,18 +180,19 @@ function stopCreateLoading() {
   clTimer = null;
   createLoading.classList.add('hidden');
 }
-const createNext = document.getElementById('create-next');
 const createBack = document.getElementById('create-back');
-const createGenerate = document.getElementById('create-generate');
+const createReset = document.getElementById('create-reset');
+const createGenerate = document.getElementById('create-generate'); // legacy hidden node
 const estimatePanel = document.getElementById('create-estimate-panel');
-const estimateFile = document.getElementById('estimate-file');
+const estimatePlaceholder = document.getElementById('estimate-placeholder');
+const estimateBox = document.getElementById('estimate-box');
+const estimateControls = document.getElementById('estimate-controls');
 const estimateBig = document.getElementById('estimate-big');
 const estimateInline = document.getElementById('estimate-inline');
 const estimateSlider = document.getElementById('estimate-slider');
 const estimateLabel = document.getElementById('estimate-label');
 const estimateGenerate = document.getElementById('estimate-generate');
 const estimateAll = document.getElementById('estimate-all');
-const estimateBack = document.getElementById('estimate-back');
 const estimateStatus = document.getElementById('estimate-status');
 const estimateNote = document.getElementById('estimate-note');
 const clCancel = document.getElementById('cl-cancel');
@@ -208,14 +209,21 @@ const genDifferent = document.getElementById('gen-different');
 const MAX_VISION_PAGES = 20;  // pages sent to the vision model (cost cap)
 const PDF_MAX_PAGES = 50;     // reject longer PDFs
 const MAX_IMAGE_EDGE = 2000;  // longest edge per rendered page (px)
-const sourceHint = document.getElementById('source-hint');
 const sourcePdf = document.getElementById('source-pdf');
 const sourceText = document.getElementById('source-text');
 const sourceUrl = document.getElementById('source-url');
-const pickPdf = document.getElementById('pick-pdf');
+const pdfDrop = document.getElementById('pdf-drop');
+const pdfChip = document.getElementById('pdf-chip');
 const pdfName = document.getElementById('pdf-name');
+const pdfSize = document.getElementById('pdf-size');
+const pdfRemove = document.getElementById('pdf-remove');
 const createTextEl = document.getElementById('create-text');
+const textCount = document.getElementById('text-count');
+const textClear = document.getElementById('text-clear');
 const createUrlEl = document.getElementById('create-url');
+const urlFetch = document.getElementById('url-fetch');
+const urlPreview = document.getElementById('url-preview');
+const urlError = document.getElementById('url-error');
 
 function showScreen(screen) {
   [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen, friendsScreen, packScreen].forEach((s) => s.classList.add('hidden'));
@@ -228,101 +236,116 @@ function setStatus(el, msg, type) {
   el.className = 'status ' + (type || '');
 }
 
-/* ---------------- Create quiz wizard ---------------- */
+/* ---------------- Create quiz modal ---------------- */
+
+let urlContent = null;
+let textEstimateTimer = null;
+let pendingContent = null;
+let activeContent = null;
 
 fileInput.addEventListener('change', (e) => {
-  createFile = e.target.files[0] || null;
-  if (!createFile) return;
-  if (!createFile.name.toLowerCase().endsWith('.pdf')) {
-    createStatus.textContent = 'Please choose a PDF file.';
-    pdfName.textContent = '';
-    return;
-  }
-  pdfName.textContent = createFile.name;
-  createStatus.textContent = '';
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  onPdfChosen(file);
 });
 
 function openCreate(source) {
   if (!requireHearts()) return;
-  createSource = source;
-  createMode = null;
-  createFile = null;
-  createText = '';
-  createUrl = '';
-  createTextEl.value = '';
-  createUrlEl.value = '';
-  pdfName.textContent = '';
-  createStatus.textContent = '';
-  createStatus2.textContent = '';
-  createGenerate.disabled = true;
-
-  const titles = { pdf: 'Create a quiz from a PDF', text: 'Create a quiz from text', link: 'Create a quiz from a link' };
-  const hints = {
-    pdf: 'Upload a PDF and we\u2019ll turn it into a quiz.',
-    text: 'Paste your module text below.',
-    link: 'Paste a website or YouTube link (e.g. Wikipedia).',
-  };
-  createTitle.textContent = titles[source];
-  sourceHint.textContent = hints[source];
-  sourcePdf.classList.toggle('hidden', source !== 'pdf');
-  sourceText.classList.toggle('hidden', source !== 'text');
-  sourceUrl.classList.toggle('hidden', source !== 'link');
-  createTypePanel.classList.add('hidden');
-  createSourcePanel.classList.remove('hidden');
-  document.querySelectorAll('.type-option').forEach((b) => b.classList.remove('active'));
+  createMode = hostingRoom ? 'choice' : 'flashcard';
   createModal.classList.remove('hidden');
-  if (source === 'text') createTextEl.focus();
-  else if (source === 'link') createUrlEl.focus();
+  setCreateSource(source === 'link' ? 'url' : (source || 'pdf'));
 }
 
 function closeCreate() {
   createModal.classList.add('hidden');
+  resetCreateState();
+  createSource = 'pdf';
 }
 
-function createNextStep() {
-  let val;
-  if (createSource === 'pdf') {
-    if (!createFile) {
-      createStatus.textContent = 'Please choose a PDF first.';
-      return;
-    }
-  } else if (createSource === 'text') {
-    val = createTextEl.value.trim();
-    if (!val) {
-      createStatus.textContent = 'Please enter some text.';
-      return;
-    }
-    createText = val;
-  } else {
-    val = createUrlEl.value.trim();
-    if (!/^https?:\/\//i.test(val)) {
-      createStatus.textContent = 'Enter a valid link (starting with http).';
-      return;
-    }
-    createUrl = val;
+function resetCreateState() {
+  createFile = null;
+  createText = '';
+  createUrl = '';
+  urlContent = null;
+  createTextEl.value = '';
+  createUrlEl.value = '';
+  updateTextCount();
+  textClear.classList.add('hidden');
+  urlPreview.classList.add('hidden');
+  urlPreview.innerHTML = '';
+  urlError.textContent = '';
+  urlFetch.disabled = true;
+  pdfChip.classList.add('hidden');
+  pdfDrop.classList.remove('hidden');
+  pdfName.textContent = '';
+  pdfSize.textContent = '';
+  createStatus.textContent = '';
+  createStatus.className = 'auth-error';
+  resetEstimate();
+}
+
+function resetEstimate() {
+  pendingContent = null;
+  hideGenerationError();
+  estimatePlaceholder.classList.remove('hidden');
+  estimatePlaceholder.textContent = 'Buck will estimate how many questions he can write once you add your content.';
+  estimateBox.classList.add('hidden');
+  estimateControls.classList.add('hidden');
+  if (estimateNote) estimateNote.classList.add('hidden');
+  estimateAll.classList.add('hidden');
+  estimateAll.disabled = true;
+  estimateGenerate.disabled = true;
+  estimateGenerate.textContent = 'Generate';
+}
+
+function setCreateSource(src) {
+  resetCreateState();
+  createSource = src;
+  document.querySelectorAll('.src-tab').forEach((b) => {
+    const on = b.dataset.src === src;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  sourcePdf.classList.toggle('hidden', src !== 'pdf');
+  sourceText.classList.toggle('hidden', src !== 'text');
+  sourceUrl.classList.toggle('hidden', src !== 'url');
+  if (!createModal.classList.contains('hidden')) {
+    if (src === 'text') createTextEl.focus();
+    else if (src === 'url') createUrlEl.focus();
   }
-  // No separate type step: generate mixed Q&A automatically.
-  // The mode (fill-in-the-blank / multiple choice) is chosen at "Start Study".
-  createMode = hostingRoom ? 'choice' : 'flashcard';
-  prepareEstimate();
 }
 
-function createBackStep() {
-  estimatePanel.classList.add('hidden');
-  createTypePanel.classList.add('hidden');
-  createSourcePanel.classList.remove('hidden');
-  createGenerate.disabled = false;
-  createGenerate.textContent = 'Generate';
+function onPdfChosen(file) {
+  createFile = file || null;
+  if (!createFile) { resetCreateState(); return; }
+  if (!createFile.name.toLowerCase().endsWith('.pdf')) {
+    createStatus.className = 'auth-error error';
+    createStatus.textContent = 'Please choose a PDF file.';
+    return;
+  }
+  pdfName.textContent = createFile.name;
+  pdfSize.textContent = (createFile.size / 1024 / 1024).toFixed(2) + ' MB';
+  pdfChip.classList.remove('hidden');
+  pdfDrop.classList.add('hidden');
+  createStatus.textContent = '';
+  computeEstimate();
 }
 
-let pendingContent = null;
+function updateTextCount() {
+  const n = createTextEl.value.length;
+  textCount.textContent = n.toLocaleString() + ' / 20,000 characters';
+}
 
-async function prepareEstimate() {
-  createGenerate.disabled = true;
-  createGenerate.textContent = 'Reading…';
-  estimateStatus.textContent = '';
-  startCreateLoading();
-  setLoadingSub('Reading your module…');
+async function computeEstimate() {
+  createStatus.textContent = '';
+  createStatus.className = 'auth-error';
+  estimatePlaceholder.classList.remove('hidden');
+  estimatePlaceholder.textContent = 'Buck is reading your content…';
+  estimateBox.classList.add('hidden');
+  estimateControls.classList.add('hidden');
+  estimateAll.disabled = true;
+  estimateGenerate.disabled = true;
+  if (createSource === 'pdf') { startCreateLoading(); setLoadingSub('Reading your content…'); }
 
   try {
     let content;
@@ -330,36 +353,53 @@ async function prepareEstimate() {
       const res = await fetchPdfContent(createFile);
       content = Object.assign({}, res, { name: createFile.name.replace(/\.pdf$/i, '') });
     } else if (createSource === 'text') {
-      content = { text: createText.trim(), name: createText.trim().slice(0, 24) };
+      createText = createTextEl.value.trim();
+      content = { text: createText, name: createText.slice(0, 24) };
     } else {
-      const sc = await fetch('/api/scrape', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: createUrl }),
-      });
-      const scData = await sc.json();
-      if (!sc.ok) {
-        stopCreateLoading();
-        createGenerate.disabled = false;
-        createGenerate.textContent = 'Generate';
-        createStatus.className = 'auth-error error';
-        createStatus.textContent = scData.error || 'Could not scrape that page.';
-        return;
-      }
-      content = { text: scData.text, name: scData.title || createUrl };
+      content = urlContent;
     }
-
+    if (!content) throw new Error('Add your content first.');
     pendingContent = content;
     stopCreateLoading();
-    createGenerate.disabled = false;
-    createGenerate.textContent = 'Generate';
-    showEstimatePanel();
+    showEstimate();
   } catch (err) {
     stopCreateLoading();
-    createGenerate.disabled = false;
-    createGenerate.textContent = 'Generate';
+    resetEstimate();
     createStatus.className = 'auth-error error';
-    createStatus.textContent = err.message || 'Something went wrong reading that content.';
+    createStatus.textContent = (err && err.message) || 'Something went wrong reading that content.';
+  }
+}
+
+async function fetchUrlContent() {
+  const val = createUrlEl.value.trim();
+  if (!/^https?:\/\//i.test(val)) {
+    urlError.textContent = 'Enter a valid link (starting with http).';
+    return;
+  }
+  urlFetch.disabled = true;
+  urlPreview.classList.add('hidden');
+  urlError.textContent = '';
+  estimatePlaceholder.classList.remove('hidden');
+  estimatePlaceholder.textContent = 'Buck is reading that page…';
+  try {
+    const sc = await fetch('/api/scrape', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: val }),
+    });
+    const scData = await sc.json();
+    if (!sc.ok) throw new Error(scData.error || "Couldn't reach that URL. Check the link and try again.");
+    createUrl = val;
+    urlContent = { text: scData.text, name: scData.title || val };
+    const words = String(scData.text || '').split(/\s+/).filter(Boolean).length;
+    urlPreview.innerHTML = '&#10003; ' + escapeHtml(scData.title || val) + ' &middot; ' + words.toLocaleString() + ' words';
+    urlPreview.classList.remove('hidden');
+    computeEstimate();
+  } catch (err) {
+    urlError.textContent = (err && err.message) || "Couldn't reach that URL. Check the link and try again.";
+    resetEstimate();
+  } finally {
+    urlFetch.disabled = !/^https?:\/\//i.test(createUrlEl.value.trim());
   }
 }
 
@@ -369,23 +409,25 @@ function estimateQuestionCount(content) {
   return Math.max(5, Math.min(200, Math.floor(len / 200)));
 }
 
-function showEstimatePanel() {
+function showEstimate() {
   const estimate = estimateQuestionCount(pendingContent);
   hideGenerationError();
   lastGenError = null;
-  createSourcePanel.classList.add('hidden');
-  createTypePanel.classList.add('hidden');
-  estimatePanel.classList.remove('hidden');
   estimateStatus.textContent = '';
   estimateStatus.className = 'auth-error';
-  estimateFile.textContent = '📄 ' + (pendingContent.name || 'Your content');
+  estimatePlaceholder.classList.add('hidden');
+  estimateBox.classList.remove('hidden');
   estimateBig.textContent = estimate;
   estimateInline.textContent = estimate;
   estimateSlider.min = 5;
   estimateSlider.max = estimate;
-  estimateSlider.value = estimate;
+  estimateSlider.value = Math.min(estimate, Math.max(5, Math.min(estimate, 10)));
+  estimateControls.classList.remove('hidden');
   updateEstimateLabel();
   if (estimateNote) estimateNote.classList.toggle('hidden', !(pendingContent && pendingContent.images));
+  estimateAll.classList.remove('hidden');
+  estimateAll.disabled = false;
+  estimateGenerate.disabled = false;
 }
 
 function updateEstimateLabel() {
@@ -613,9 +655,9 @@ function showGenerationError(err) {
     'pages: ' + (lastVisionPages || (err && err.pages) || 'n/a'),
     'model: ' + ((err && err.model) || 'n/a'),
     'message: ' + ((err && err.detail) || (err && err.message) || 'unknown'),
-    'source: ' + ((pendingContent && pendingContent.name) || 'n/a'),
+    'source: ' + ((activeContent || pendingContent || {}).name || 'n/a'),
     'requested: ' + (lastGenerationCount || 'n/a') + ' questions',
-    'type: ' + ((pendingContent && pendingContent.images) ? 'image PDF' : 'text'),
+    'type: ' + (((activeContent || pendingContent || {}).images) ? 'image PDF' : 'text'),
     'time: ' + new Date().toISOString(),
   ].join('\n');
 
@@ -635,24 +677,25 @@ function hideGenerationError() {
 }
 
 async function startGeneration(count) {
-  if (!pendingContent) return;
+  if (!pendingContent && !activeContent) return;
+  activeContent = pendingContent || activeContent;
   if (!canGenerate()) {
     lastGenerationCount = count;
     showGenerationError({ code: 'NO_HEARTS' });
     return;
   }
 
-  const target = Math.min(count, pendingContent.images ? 40 : 200);
+  const target = Math.min(count, activeContent.images ? 40 : 200);
   lastGenerationCount = target;
-  lastVisionPages = (pendingContent.images && pendingContent.images.length) || 0;
+  lastVisionPages = (activeContent.images && activeContent.images.length) || 0;
   lastGenError = null;
   hideGenerationError();
 
   // 1) Create the StudyPack immediately and show it with a live banner.
-  const pack = addPack(pendingContent.name || 'StudyPack', [], {
+  const pack = addPack(activeContent.name || 'StudyPack', [], {
     target,
-    sourceText: pendingContent.text || '',
-    sourceName: pendingContent.name || 'StudyPack',
+    sourceText: activeContent.text || '',
+    sourceName: activeContent.name || 'StudyPack',
   });
   genState = { packId: pack.id, target, cancelled: false, controller: null, seen: new Set(), error: null, running: true };
   closeCreate();
@@ -662,8 +705,8 @@ async function startGeneration(count) {
   renderPack();
 
   // 2) Instant path: same document cached locally.
-  if (pendingContent.text) {
-    const cached = getCachedGen(textHash(pendingContent.text), target);
+  if (activeContent.text) {
+    const cached = getCachedGen(textHash(activeContent.text), target);
     if (cached && cached.length) {
       appendLiveCards(ensureMixedChoice(cached.slice(0, target)));
       finishLiveGeneration(false, null);
@@ -672,7 +715,7 @@ async function startGeneration(count) {
     }
   }
 
-  savePendingDeck('generating', pendingContent.name, createMode);
+  savePendingDeck('generating', activeContent.name, createMode);
   try {
     await runLiveWaves(target);
   } catch (err) {
@@ -687,7 +730,7 @@ async function startGeneration(count) {
   const complete = !cancelled && !genState.error && got >= target;
 
   if (!got) {
-    // Nothing usable → drop the empty pack and return to the estimate panel with the error.
+    // Nothing usable → drop the empty pack and return to the modal with the actionable error.
     const failedId = genState.packId;
     genState = null;
     studyPacks = studyPacks.filter((p) => p.id !== failedId);
@@ -695,14 +738,12 @@ async function startGeneration(count) {
     if (currentPackId === failedId) currentPackId = null;
     renderStudyPackList();
     createModal.classList.remove('hidden');
-    estimatePanel.classList.remove('hidden');
-    createSourcePanel.classList.add('hidden');
     renderPackBanner();
     showGenerationError(lastGenError || { code: 'EMPTY' });
     return;
   }
 
-  if (complete && pendingContent.text) setCachedGen(textHash(pendingContent.text), target, (getPack(genState.packId) || { items: [] }).items);
+  if (complete && activeContent.text) setCachedGen(textHash(activeContent.text), target, (getPack(genState.packId) || { items: [] }).items);
 
   finishLiveGeneration(!complete, genState.error);
 }
@@ -717,16 +758,16 @@ async function runLiveWaves(target) {
   while (got() < target && !genState.cancelled) {
     const before = got();
     const remaining = target - before;
-    const per = pendingContent.images ? Math.min(10, Math.max(5, Math.ceil(remaining / GEN_CONCURRENCY)))
+    const per = activeContent.images ? Math.min(10, Math.max(5, Math.ceil(remaining / GEN_CONCURRENCY)))
       : Math.min(PER_CALL_MAX, Math.max(5, Math.ceil(remaining / GEN_CONCURRENCY)));
 
     let settled;
-    if (pendingContent.images && pendingContent.images.length) {
+    if (activeContent.images && activeContent.images.length) {
       const groups = [];
-      for (let i = 0; i < pendingContent.images.length; i += 4) groups.push(pendingContent.images.slice(i, i + 4));
+      for (let i = 0; i < activeContent.images.length; i += 4) groups.push(activeContent.images.slice(i, i + 4));
       settled = await Promise.allSettled(groups.map((group) => callGenerateWithFallback({ images: group }, per)));
     } else {
-      const plan = planGeneration(pendingContent.text, target);
+      const plan = planGeneration(activeContent.text, target);
       // Cycle chunks if we need to fill more in later rounds.
       const start = (fillRound * GEN_CONCURRENCY) % Math.max(1, plan.chunks.length);
       const rotated = plan.chunks.slice(start).concat(plan.chunks.slice(0, start));
@@ -857,11 +898,11 @@ async function resumeGeneration() {
     if (missing <= 0) break;
 
     // Rebuild the source if the page was reloaded.
-    if (!pendingContent || (!pendingContent.text && !(pendingContent.images && pendingContent.images.length))) {
-      if (pack.sourceText) pendingContent = { text: pack.sourceText, name: pack.sourceName || pack.name };
+    if (!activeContent || (!activeContent.text && !(activeContent.images && activeContent.images.length))) {
+      if (pack.sourceText) activeContent = { text: pack.sourceText, name: pack.sourceName || pack.name };
     }
-    const hasImages = pendingContent && pendingContent.images && pendingContent.images.length;
-    const hasText = pendingContent && typeof pendingContent.text === 'string' && pendingContent.text.trim().length >= 50;
+    const hasImages = activeContent && activeContent.images && activeContent.images.length;
+    const hasText = activeContent && typeof activeContent.text === 'string' && activeContent.text.trim().length >= 50;
     if (!hasImages && !hasText) {
       const e = new Error("Buck can't generate more from this PDF — the text is missing.");
       e.code = 'NO_SOURCE';
@@ -873,7 +914,7 @@ async function resumeGeneration() {
     if (!Number.isInteger(batchSize) || batchSize <= 0) throw new Error('Invalid question count: ' + batchSize);
 
     const existing = pack.items.map((c) => c.question).filter(Boolean).slice(0, 60);
-    const body = hasImages ? { images: pendingContent.images } : { text: pendingContent.text };
+    const body = hasImages ? { images: activeContent.images } : { text: activeContent.text };
     body.existing = existing;
     body.count = batchSize;
     console.log('[Resume] asking=' + batchSize, 'existing=' + existing.length);
@@ -916,7 +957,7 @@ async function continueLiveGeneration() {
   }
   const got = (getPack(genState.packId) || { items: [] }).items.length;
   const complete = !genState.error && got >= genState.target;
-  if (complete && pendingContent && pendingContent.text) setCachedGen(textHash(pendingContent.text), genState.target, (getPack(genState.packId) || { items: [] }).items);
+  if (complete && activeContent && activeContent.text) setCachedGen(textHash(activeContent.text), genState.target, (getPack(genState.packId) || { items: [] }).items);
   finishLiveGeneration(!complete, genState.error);
 }
 
@@ -938,11 +979,11 @@ async function finishLiveGeneration(partial, error) {
   } else {
     showToast('Saved ' + got + ' cards so far — add more anytime 🦆', 'correct');
   }
-  savePendingDeck('ready', pack.items, pendingContent.name, createMode);
+  savePendingDeck('ready', pack.items, activeContent.name, createMode);
   renderJumpBack();
   if (hostingRoom && pack.items.length) {
     hostingRoom = false;
-    await hostCreateRoom(pendingContent, pendingContent.name, pack.items);
+    await hostCreateRoom(activeContent, activeContent.name, pack.items);
   }
 }
 
@@ -2829,6 +2870,7 @@ function openPack(id) {
       seen: new Set(pack.items.map((i) => String(i.question || '').toLowerCase().trim())),
     };
     if (!pendingContent || !pendingContent.text) pendingContent = { text: pack.sourceText, name: pack.sourceName || pack.name };
+    activeContent = pendingContent;
   }
   renderPackBanner();
   renderPack();
@@ -5095,34 +5137,70 @@ function wireSidebar() {
     });
   });
 
-  document.querySelectorAll('#create-type-panel .type-option').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      createMode = btn.dataset.mode;
-      document.querySelectorAll('#create-type-panel .type-option').forEach((b) => b.classList.toggle('active', b === btn));
-      createGenerate.disabled = false;
-    });
+  // Source tabs
+  document.querySelectorAll('.src-tab').forEach((tab) => {
+    tab.addEventListener('click', () => setCreateSource(tab.dataset.src));
   });
-  createNext.addEventListener('click', createNextStep);
-  createBack.addEventListener('click', createBackStep);
-  createGenerate.addEventListener('click', createNextStep);
+
+  // PDF drop zone
+  pdfDrop.addEventListener('click', () => fileInput.click());
+  pdfDrop.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+  });
+  ['dragenter', 'dragover'].forEach((ev) => pdfDrop.addEventListener(ev, (e) => { e.preventDefault(); pdfDrop.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach((ev) => pdfDrop.addEventListener(ev, (e) => { e.preventDefault(); pdfDrop.classList.remove('drag'); }));
+  pdfDrop.addEventListener('drop', (e) => {
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    onPdfChosen(file);
+  });
+  pdfRemove.addEventListener('click', () => onPdfChosen(null));
+
+  // Text tab
+  createTextEl.addEventListener('input', () => {
+    updateTextCount();
+    textClear.classList.toggle('hidden', !createTextEl.value);
+    clearTimeout(textEstimateTimer);
+    const len = createTextEl.value.trim().length;
+    if (len >= 200) {
+      textEstimateTimer = setTimeout(() => { if (createSource === 'text') computeEstimate(); }, 400);
+    } else {
+      resetEstimate();
+    }
+  });
+  textClear.addEventListener('click', () => {
+    createTextEl.value = '';
+    updateTextCount();
+    textClear.classList.add('hidden');
+    resetEstimate();
+    createTextEl.focus();
+  });
+
+  // URL tab
+  createUrlEl.addEventListener('input', () => {
+    urlFetch.disabled = !/^https?:\/\/\S+\.\S+/i.test(createUrlEl.value.trim());
+    urlError.textContent = '';
+  });
+  createUrlEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !urlFetch.disabled) { e.preventDefault(); fetchUrlContent(); }
+  });
+  urlFetch.addEventListener('click', fetchUrlContent);
+
+  // Actions
+  createBack.addEventListener('click', closeCreate);
+  createReset.addEventListener('click', () => { setCreateSource(createSource); showToast('Cleared — start fresh!', ''); });
   createClose.addEventListener('click', closeCreate);
   createBackdrop.addEventListener('click', closeCreate);
 
   estimateSlider.addEventListener('input', updateEstimateLabel);
   estimateAll.addEventListener('click', () => {
-    estimateSlider.value = estimateSlider.max;
-    updateEstimateLabel();
+    startGeneration(estimateQuestionCount(activeContent || pendingContent || {}));
   });
   estimateGenerate.addEventListener('click', () => {
-    startGeneration(parseInt(estimateSlider.value, 10) || estimateQuestionCount(pendingContent || {}));
-  });
-  estimateBack.addEventListener('click', () => {
-    estimatePanel.classList.add('hidden');
-    createSourcePanel.classList.remove('hidden');
+    startGeneration(parseInt(estimateSlider.value, 10) || estimateQuestionCount(activeContent || pendingContent || {}));
   });
 
   genRetry.addEventListener('click', () => {
-    const n = lastGenerationCount || parseInt(estimateSlider.value, 10) || estimateQuestionCount(pendingContent || {});
+    const n = lastGenerationCount || parseInt(estimateSlider.value, 10) || estimateQuestionCount(activeContent || pendingContent || {});
     startGeneration(n);
   });
   genReduce.addEventListener('click', () => {
@@ -5133,8 +5211,8 @@ function wireSidebar() {
     startGeneration(n);
   });
   genDetailsToggle.addEventListener('click', () => {
-    const hidden = genDetails.classList.toggle('hidden');
-    genDetailsToggle.textContent = hidden ? 'Show details' : 'Hide details';
+    const hid = genDetails.classList.toggle('hidden');
+    genDetailsToggle.textContent = hid ? 'Show details' : 'Hide details';
   });
   genCopy.addEventListener('click', async () => {
     const text = genDetails.textContent || '';
@@ -5147,15 +5225,7 @@ function wireSidebar() {
   });
   genDifferent.addEventListener('click', () => {
     hideGenerationError();
-    estimatePanel.classList.add('hidden');
-    createSourcePanel.classList.remove('hidden');
-    createGenerate.disabled = false;
-    createGenerate.textContent = 'Generate';
-    if (createSource === 'pdf') {
-      createFile = null;
-      pdfName.textContent = '';
-      try { fileInput.value = ''; } catch (e) {}
-    }
+    setCreateSource(createSource);
   });
 
   clCancel.addEventListener('click', () => {
@@ -5395,7 +5465,6 @@ function wireHome() {
   document.getElementById('action-pdf').addEventListener('click', () => openCreate('pdf'));
   document.getElementById('action-text').addEventListener('click', () => openCreate('text'));
   document.getElementById('action-link').addEventListener('click', () => openCreate('link'));
-  pickPdf.addEventListener('click', () => fileInput.click());
 
   document.getElementById('study-btn').addEventListener('click', () => { if (requireHearts()) resetToUpload(); });
   document.getElementById('add-btn').addEventListener('click', () => { if (requireHearts()) openCreate('pdf'); });

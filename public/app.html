@@ -347,56 +347,78 @@
         <div class="card pending-deck hidden" id="pending-deck"></div>
       </section>
 
-      <!-- Create quiz wizard modal -->
+      <!-- Create quiz modal -->
       <div id="create-modal" class="modal hidden">
         <div class="modal-backdrop" id="create-backdrop"></div>
-        <div class="modal-card">
+        <div class="modal-card create-card">
           <div class="modal-head">
             <h3 id="create-title">Create a quiz</h3>
-            <button id="create-close" class="modal-close">&times;</button>
+            <div class="modal-head-actions">
+              <button type="button" id="create-reset" class="head-icon-btn" title="Start over" aria-label="Start over">&#8634;</button>
+              <button id="create-close" class="modal-close">&times;</button>
+            </div>
+          </div>
+          <p class="create-sub">Upload a PDF, paste text, or add a URL &mdash; Buck will turn it into a quiz.</p>
+
+          <div class="src-tabs" role="tablist" aria-label="Choose input method">
+            <button type="button" class="src-tab active" data-src="pdf" role="tab" aria-selected="true">&#128196; PDF</button>
+            <button type="button" class="src-tab" data-src="text" role="tab" aria-selected="false">&#128221; Paste</button>
+            <button type="button" class="src-tab" data-src="url" role="tab" aria-selected="false">&#128279; URL</button>
           </div>
 
-          <!-- Step 1: source -->
           <div id="create-source-panel">
-            <p class="source-hint" id="source-hint"></p>
-            <div id="source-pdf" class="source-box hidden">
-              <button id="pick-pdf" class="btn btn-secondary">Choose a PDF</button>
-              <div id="pdf-name" class="file-name"></div>
+            <div id="source-pdf" class="source-box">
+              <div id="pdf-drop" class="dropzone" tabindex="0" role="button" aria-label="Choose a PDF file">
+                <span class="dz-icon" aria-hidden="true">&#128196;</span>
+                <span class="dz-title">Drag &amp; drop a PDF here, or click to browse</span>
+                <span class="dz-sub">PDF only &middot; up to 50 pages</span>
+              </div>
+              <div id="pdf-chip" class="file-chip hidden">
+                <span class="fc-icon" aria-hidden="true">&#128196;</span>
+                <span class="fc-text"><span class="fc-name" id="pdf-name"></span><span class="fc-size" id="pdf-size"></span></span>
+                <button type="button" class="fc-x" id="pdf-remove" aria-label="Remove file">&times;</button>
+              </div>
             </div>
+
             <div id="source-text" class="source-box hidden">
-              <label class="source-label" for="create-text">Your text</label>
-              <textarea id="create-text" rows="7" placeholder="Paste or type your module text here..."></textarea>
-              <span class="source-hint-small">Paste notes, a chapter, or any content you want to study.</span>
+              <label class="field-label" for="create-text">Paste your study material</label>
+              <div class="ta-wrap">
+                <textarea id="create-text" rows="7" maxlength="20000" placeholder="Paste your notes, a chapter, or any content you want to study..."></textarea>
+                <button type="button" class="ta-clear hidden" id="text-clear" aria-label="Clear text">&times;</button>
+              </div>
+              <span class="helper" id="text-count">0 / 20,000 characters</span>
             </div>
+
             <div id="source-url" class="source-box hidden">
-              <label class="source-label" for="create-url">Website or YouTube link</label>
-              <input id="create-url" type="url" placeholder="https://en.wikipedia.org/..." />
-              <span class="source-hint-small">We\u2019ll read the page and turn it into questions.</span>
+              <label class="field-label" for="create-url">Paste a link to an article or page</label>
+              <div class="url-row">
+                <span class="url-prefix" aria-hidden="true">&#128279;</span>
+                <input id="create-url" type="url" placeholder="https://example.com/article" autocomplete="off" />
+                <button type="button" class="btn btn-primary" id="url-fetch" disabled>Fetch content</button>
+              </div>
+              <div class="url-preview hidden" id="url-preview"></div>
+              <span class="input-err" id="url-error"></span>
             </div>
-            <div id="create-status" class="auth-error"></div>
-            <button id="create-next" class="btn btn-primary">Generate</button>
           </div>
 
-          <!-- Step: estimate + choose count -->
-          <div id="create-estimate-panel" class="hidden">
-            <p class="estimate-file" id="estimate-file"></p>
-            <div class="estimate-box">
-              <div class="estimate-big" id="estimate-big">87</div>
+          <div id="create-status" class="auth-error"></div>
+
+          <div id="create-estimate-panel">
+            <p class="estimate-placeholder" id="estimate-placeholder">Buck will estimate how many questions he can write once you add your content.</p>
+            <div class="estimate-box hidden" id="estimate-box">
+              <div class="estimate-big" id="estimate-big">0</div>
               <div class="estimate-copy">
                 Based on this content, Buck can generate about
-                <strong id="estimate-inline">87</strong> questions. Ready?
+                <strong id="estimate-inline">0</strong> questions. Ready?
               </div>
             </div>
             <p class="estimate-note hidden" id="estimate-note">&#128444;&#65039; This PDF has no readable text. Buck will read it as images &mdash; this may take a bit longer.</p>
-            <label class="field-label" for="estimate-slider">Questions to generate</label>
-            <input type="range" id="estimate-slider" min="5" max="87" step="1" value="87" />
-            <div class="estimate-value"><span id="estimate-label">87</span> questions</div>
-            <div id="estimate-status" class="auth-error"></div>
-            <div class="modal-actions">
-              <button id="estimate-back" class="btn btn-secondary">Back</button>
-              <button id="estimate-all" class="btn btn-secondary">Generate all</button>
-              <button id="estimate-generate" class="btn btn-primary">Generate 87</button>
+            <div id="estimate-controls" class="hidden">
+              <label class="field-label" for="estimate-slider">Questions to generate</label>
+              <div class="estimate-value"><span id="estimate-label">10</span> questions</div>
+              <input type="range" id="estimate-slider" min="5" max="20" step="1" value="10" />
             </div>
+            <div id="estimate-status" class="auth-error"></div>
 
             <div id="gen-error" class="gen-error hidden" role="alert">
               <div class="gen-error-head">
@@ -413,32 +435,22 @@
               <div class="gen-error-links">
                 <button id="gen-details-toggle" class="link-btn">Show details</button>
                 <button id="gen-copy" class="link-btn">Copy error details</button>
-                <button id="gen-different" class="link-btn">Choose a different PDF</button>
+                <button id="gen-different" class="link-btn">Choose a different source</button>
               </div>
               <pre id="gen-details" class="gen-details hidden"></pre>
             </div>
           </div>
 
-          <!-- Step 2: question type -->
+          <div class="create-actions">
+            <button id="create-back" class="btn btn-secondary">Back</button>
+            <button id="estimate-all" class="btn btn-secondary hidden" disabled>Generate all</button>
+            <button id="estimate-generate" class="btn btn-primary" disabled>Generate</button>
+          </div>
+
+          <!-- legacy hidden nodes kept for compatibility -->
           <div id="create-type-panel" class="hidden">
-            <p class="source-hint">How would you like to answer?</p>
-            <div class="type-options">
-              <button class="type-option" data-mode="flashcard">
-                <span class="to-icon">&#128278;</span>
-                <span class="to-title">Fill in the Blank</span>
-                <span class="to-sub">Type the missing word(s)</span>
-              </button>
-              <button class="type-option" data-mode="choice">
-                <span class="to-icon">&#9745;</span>
-                <span class="to-title">Multiple Choice</span>
-                <span class="to-sub">Pick from options</span>
-              </button>
-            </div>
             <div id="create-status2" class="auth-error"></div>
-            <div class="modal-actions">
-              <button id="create-back" class="btn btn-secondary">Back</button>
-              <button id="create-generate" class="btn btn-primary" disabled>Generate</button>
-            </div>
+            <button id="create-generate" class="hidden"></button>
           </div>
         </div>
       </div>
