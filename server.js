@@ -6,52 +6,84 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash-vision-exp';
+// Canonical model id for DeepSeek V4.1 Flash (native multimodal text + image input).
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
 
-const MAX_GEN_CARDS = 100;      // hard ceiling for AI-generated cards
+const MAX_GEN_CARDS = 200;      // hard ceiling for AI-generated cards
 const PER_CHUNK_CARDS = 15;     // max cards requested per AI call (keeps each response small/safe)
 const CHUNK_TARGET_CHARS = 6000;
+const RATE_LIMIT_FRIENDLY = "Buck got a little overwhelmed. Let's try that again in a moment.";
 
 if (!process.env.DEEPSEEK_API_KEY) {
   console.error('ERROR: DEEPSEEK_API_KEY is not set. Copy .env.example to .env and add your key.');
   process.exit(1);
 }
 
-async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeoutMs = 50000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
-  try {
-    response = await fetch(DEEPSEEK_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: DEEPSEEK_MODEL,
-        messages,
-        max_tokens: maxTokens,
-        temperature,
-      }),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    clearTimeout(timer);
-    if (err.name === 'AbortError') {
-      throw new Error('DeepSeek API timed out. Please try again.');
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function backoffDelay(attempt) {
+  // exponential backoff with a little jitter: ~1s, 2s, 4s…
+  return Math.min(15000, 1000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 300);
+}
+
+async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeoutMs = 60000) {
+  const maxAttempts = 4;
+  let lastErr;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response;
+    try {
+      response = await fetch(DEEPSEEK_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: DEEPSEEK_MODEL,
+          messages,
+          max_tokens: maxTokens,
+          temperature,
+        }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err.name === 'AbortError' ? new Error('The AI took too long to respond. Please try again.') : err;
+      if (attempt < maxAttempts - 1) {
+        await sleep(backoffDelay(attempt));
+        continue;
+      }
+      throw lastErr;
     }
-    throw err;
-  }
-  clearTimeout(timer);
+    clearTimeout(timer);
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`DeepSeek API error (${response.status}): ${errText}`);
+    // Rate limit / transient server errors → retry with exponential backoff.
+    if (response.status === 429 || response.status === 503) {
+      const errText = await response.text().catch(() => '');
+      lastErr = new Error(`DeepSeek API error (${response.status}): ${errText}`);
+      console.warn(`DeepSeek ${response.status}; retry ${attempt + 1}/${maxAttempts - 1} in ${Math.round(backoffDelay(attempt) / 1000)}s`);
+      if (attempt < maxAttempts - 1) {
+        await sleep(backoffDelay(attempt));
+        continue;
+      }
+      throw new Error(RATE_LIMIT_FRIENDLY);
+    }
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`DeepSeek API error (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
   }
 
-  const data = await response.json();
-  return data.choices[0].message.content;
+  throw lastErr || new Error('DeepSeek request failed.');
 }
 
 function tryParseArray(s) {
@@ -202,6 +234,57 @@ app.post('/api/analyze', async (req, res) => {
     console.error('Analyze error:', err.message);
     res.status(500).json({ error: `Failed to generate flashcards: ${err.message}` });
   }
+});
+
+// Single-batch generation endpoint used by the client-driven, progress-tracked flow.
+// The client splits the material into chunks, asks for a slice of questions each time,
+// and can cancel between calls (keeping any partial results).
+app.post('/api/generate', async (req, res) => {
+  try {
+    const text = typeof req.body.text === 'string' ? req.body.text.replace(/\s+/g, ' ').trim() : '';
+    const images = Array.isArray(req.body.images)
+      ? req.body.images.filter((s) => typeof s === 'string' && s.startsWith('data:image/')).slice(0, 8)
+      : [];
+    const count = Math.min(Math.max(parseInt(req.body.count, 10) || 10, 1), PER_CHUNK_CARDS);
+
+    if (!text && images.length === 0) {
+      return res.status(400).json({ error: 'No content received for generation.' });
+    }
+
+    let cards;
+    if (images.length) {
+      const content = [
+        { type: 'text', text: buildQuizPrompt(count, null, images) },
+        ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+      ];
+      const raw = await callDeepSeek([{ role: 'user', content }], 4000, 0.4);
+      cards = normalizeFlashcards(extractJson(raw));
+    } else {
+      const prompt = buildQuizPrompt(count, text, null);
+      const raw = await callDeepSeek([{ role: 'user', content: [{ type: 'text', text: prompt }] }], 4000, 0.4);
+      cards = normalizeFlashcards(extractJson(raw));
+    }
+
+    res.json({ flashcards: cards.slice(0, count) });
+  } catch (err) {
+    const rateLimited = err.message === RATE_LIMIT_FRIENDLY;
+    if (!rateLimited) console.error('Generate error:', err.message);
+    res.status(rateLimited ? 429 : 500).json({
+      error: rateLimited ? RATE_LIMIT_FRIENDLY : `Failed to generate questions: ${err.message}`,
+    });
+  }
+});
+
+// Estimate how many questions the material can support (token-budget aware: ~200 chars/question).
+app.post('/api/estimate', (req, res) => {
+  const text = typeof req.body.text === 'string' ? req.body.text.replace(/\s+/g, ' ').trim() : '';
+  const imageCount = Array.isArray(req.body.images)
+    ? req.body.images.filter((s) => typeof s === 'string' && s.startsWith('data:image/')).length
+    : 0;
+  const tokens = Math.ceil(text.length / 4);
+  const byText = Math.floor(text.length / 200);
+  const estimate = Math.max(5, Math.min(MAX_GEN_CARDS, imageCount ? imageCount * 8 : byText));
+  res.json({ estimate, tokens });
 });
 
 function buildQuizPrompt(ask, chunk, images) {

@@ -122,18 +122,26 @@ const clPercent = document.getElementById('cl-percent');
 let clTimer = null;
 let clPct = 0;
 
-function startCreateLoading() {
-  clPct = 4;
+function startCreateLoading(manual) {
+  clPct = manual ? 0 : 4;
   createLoading.classList.remove('hidden');
   setCreateProgress(clPct);
-  setCreateSub();
+  if (!manual) setCreateSub();
   if (clTimer) clearInterval(clTimer);
-  clTimer = setInterval(() => {
-    const step = 0.6 + Math.random() * 1.4;
-    clPct = Math.min(92, clPct + step);
-    setCreateProgress(clPct);
-    setCreateSub();
-  }, 250);
+  clTimer = null;
+  if (!manual) {
+    clTimer = setInterval(() => {
+      const step = 0.6 + Math.random() * 1.4;
+      clPct = Math.min(92, clPct + step);
+      setCreateProgress(clPct);
+      setCreateSub();
+    }, 250);
+  }
+}
+
+function setLoadingSub(text) {
+  const el = document.getElementById('cl-sub');
+  if (el) el.textContent = text;
 }
 
 function setCreateSub() {
@@ -167,6 +175,17 @@ function stopCreateLoading() {
 const createNext = document.getElementById('create-next');
 const createBack = document.getElementById('create-back');
 const createGenerate = document.getElementById('create-generate');
+const estimatePanel = document.getElementById('create-estimate-panel');
+const estimateFile = document.getElementById('estimate-file');
+const estimateBig = document.getElementById('estimate-big');
+const estimateInline = document.getElementById('estimate-inline');
+const estimateSlider = document.getElementById('estimate-slider');
+const estimateLabel = document.getElementById('estimate-label');
+const estimateGenerate = document.getElementById('estimate-generate');
+const estimateAll = document.getElementById('estimate-all');
+const estimateBack = document.getElementById('estimate-back');
+const estimateStatus = document.getElementById('estimate-status');
+const clCancel = document.getElementById('cl-cancel');
 const sourceHint = document.getElementById('source-hint');
 const sourcePdf = document.getElementById('source-pdf');
 const sourceText = document.getElementById('source-text');
@@ -260,34 +279,36 @@ function createNextStep() {
     }
     createUrl = val;
   }
-  // No separate type step: generate enumeration Q&A automatically.
+  // No separate type step: generate mixed Q&A automatically.
   // The mode (fill-in-the-blank / multiple choice) is chosen at "Start Study".
   createMode = hostingRoom ? 'choice' : 'flashcard';
-  createSourcePanel.classList.add('hidden');
-  createTypePanel.classList.add('hidden');
-  runCreateGenerate();
+  prepareEstimate();
 }
 
 function createBackStep() {
+  estimatePanel.classList.add('hidden');
   createTypePanel.classList.add('hidden');
   createSourcePanel.classList.remove('hidden');
+  createGenerate.disabled = false;
+  createGenerate.textContent = 'Generate';
 }
 
-async function runCreateGenerate() {
-  if (!createMode) return;
+let pendingContent = null;
+
+async function prepareEstimate() {
   createGenerate.disabled = true;
+  createGenerate.textContent = 'Reading…';
+  estimateStatus.textContent = '';
   startCreateLoading();
+  setLoadingSub('Reading your module…');
 
   try {
-    let payload;
-    let name;
+    let content;
     if (createSource === 'pdf') {
-      const res = await fetchPdfPayload(createFile);
-      payload = res.payload;
-      name = createFile.name.replace(/\.pdf$/i, '');
+      const res = await fetchPdfContent(createFile);
+      content = Object.assign({}, res, { name: createFile.name.replace(/\.pdf$/i, '') });
     } else if (createSource === 'text') {
-      payload = { text: createText.trim(), count: 100, mode: createMode };
-      name = createText.trim().slice(0, 24);
+      content = { text: createText.trim(), name: createText.trim().slice(0, 24) };
     } else {
       const sc = await fetch('/api/scrape', {
         method: 'POST',
@@ -297,99 +318,206 @@ async function runCreateGenerate() {
       const scData = await sc.json();
       if (!sc.ok) {
         stopCreateLoading();
-        createStatus2.className = 'auth-error error';
-        createStatus2.textContent = scData.error || 'Could not scrape that page.';
         createGenerate.disabled = false;
+        createGenerate.textContent = 'Generate';
+        createStatus.className = 'auth-error error';
+        createStatus.textContent = scData.error || 'Could not scrape that page.';
         return;
       }
-      payload = { text: scData.text, count: 100, mode: createMode };
-      name = scData.title || createUrl;
+      content = { text: scData.text, name: scData.title || createUrl };
     }
 
-    const ok = await startAnalysis(payload, name, createStatus2);
-    completeCreateLoading();
-    if (ok) {
-      stopCreateLoading();
-    } else {
-      setTimeout(() => { stopCreateLoading(); }, 350);
-      createGenerate.disabled = false;
-    }
+    pendingContent = content;
+    stopCreateLoading();
+    createGenerate.disabled = false;
+    createGenerate.textContent = 'Generate';
+    showEstimatePanel();
   } catch (err) {
     stopCreateLoading();
-    createStatus2.className = 'auth-error error';
-    createStatus2.textContent = err.message || 'Something went wrong.';
     createGenerate.disabled = false;
+    createGenerate.textContent = 'Generate';
+    createStatus.className = 'auth-error error';
+    createStatus.textContent = err.message || 'Something went wrong reading that content.';
   }
 }
 
-async function fetchPdfPayload(file) {
+function estimateQuestionCount(content) {
+  if (content.images && content.images.length) return Math.max(5, Math.min(40, content.images.length * 8));
+  const len = (content.text || '').replace(/\s+/g, ' ').trim().length;
+  return Math.max(5, Math.min(200, Math.floor(len / 200)));
+}
+
+function showEstimatePanel() {
+  const estimate = estimateQuestionCount(pendingContent);
+  createSourcePanel.classList.add('hidden');
+  createTypePanel.classList.add('hidden');
+  estimatePanel.classList.remove('hidden');
+  estimateStatus.textContent = '';
+  estimateStatus.className = 'auth-error';
+  estimateFile.textContent = '📄 ' + (pendingContent.name || 'Your content');
+  estimateBig.textContent = estimate;
+  estimateInline.textContent = estimate;
+  estimateSlider.min = 5;
+  estimateSlider.max = estimate;
+  estimateSlider.value = estimate;
+  updateEstimateLabel();
+}
+
+function updateEstimateLabel() {
+  const n = parseInt(estimateSlider.value, 10) || 0;
+  estimateLabel.textContent = n;
+  estimateGenerate.textContent = 'Generate ' + n;
+}
+
+function showEstimateErr(msg) {
+  estimateStatus.className = 'auth-error error';
+  estimateStatus.textContent = msg;
+}
+
+let genState = null;
+
+function planGeneration(text, count) {
+  const total = Math.min(count, 200);
+  const bySize = Math.ceil((text || '').length / 5000);
+  const byCount = Math.ceil(total / 15);
+  const parts = Math.max(1, Math.min(14, Math.max(bySize, byCount)));
+  const chunks = splitTextForGeneration(text || '', parts);
+  return { total, chunks };
+}
+
+function splitTextForGeneration(str, parts) {
+  if (parts <= 1 || str.length < 3000) return [str];
+  const len = str.length;
+  const out = [];
+  let start = 0;
+  for (let k = 1; k < parts; k++) {
+    const cut = Math.round((len / parts) * k);
+    const from = Math.max(start + 200, cut - 150);
+    const to = Math.min(len - 1, cut + 150);
+    let best = -1;
+    for (let i = to; i >= from; i--) { if (/[.!?]\s/.test(str.slice(i - 1, i + 1))) { best = i; break; } }
+    if (best === -1) { for (let i = to; i >= from; i--) { if (str[i] === ' ') { best = i; break; } } }
+    if (best === -1) best = cut;
+    const piece = str.slice(start, best).trim();
+    if (piece.length >= 80) out.push(piece);
+    start = best;
+  }
+  const tail = str.slice(start).trim();
+  if (tail.length >= 80) out.push(tail);
+  return out.length ? out : [str];
+}
+
+async function callGenerate(body) {
+  const controller = new AbortController();
+  if (genState) genState.controller = controller;
+  const res = await fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: controller.signal,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Generation failed.');
+  return Array.isArray(data.flashcards) ? data.flashcards : [];
+}
+
+function updateGenerationProgress(done, total) {
+  const pct = total ? Math.min(100, (done / total) * 100) : 0;
+  setCreateProgress(pct);
+  setLoadingSub('Generating question ' + Math.min(done + 1, total) + ' of ' + total + '…');
+}
+
+async function startGeneration(count) {
+  if (!pendingContent) return;
+  if (!canGenerate()) {
+    showEstimateErr('No hearts left. Next \u2665 in ' + heartTimerLabel() + '.');
+    return;
+  }
+
+  const target = Math.min(count, pendingContent.images ? 40 : 200);
+  savePendingDeck('generating', pendingContent.name, createMode);
+  estimatePanel.classList.add('hidden');
+  startCreateLoading(true);
+  clCancel.classList.remove('hidden');
+  setLoadingSub('Warming up Buck…');
+  genState = { cancelled: false, controller: null };
+
+  const collected = [];
+  try {
+    if (pendingContent.images && pendingContent.images.length) {
+      updateGenerationProgress(0, target);
+      const cards = await callGenerate({ images: pendingContent.images, count: Math.min(target, 15) });
+      collected.push(...cards);
+      updateGenerationProgress(collected.length, target);
+    } else {
+      const plan = planGeneration(pendingContent.text, target);
+      for (let i = 0; i < plan.chunks.length && collected.length < plan.total; i++) {
+        if (genState.cancelled) break;
+        const ask = Math.min(15, plan.total - collected.length);
+        updateGenerationProgress(collected.length, plan.total);
+        const cards = await callGenerate({ text: plan.chunks[i], count: ask });
+        collected.push(...cards);
+        updateGenerationProgress(collected.length, plan.total);
+      }
+    }
+  } catch (err) {
+    const aborted = err && err.name === 'AbortError';
+    if (!aborted && genState && !genState.cancelled) {
+      console.warn('Generation error:', err.message);
+      showToast(err.message, 'wrong');
+    }
+  }
+
+  const partial = !genState || genState.cancelled || collected.length < target;
+  const finalCards = ensureMixedChoice(collected.slice(0, target));
+  genState = null;
+  clCancel.classList.add('hidden');
+  await finalizeGeneration(finalCards, pendingContent.name, partial);
+}
+
+async function finalizeGeneration(cards, name, partial) {
+  stopCreateLoading();
+  if (!cards || !cards.length) {
+    showEstimatePanel();
+    showEstimateErr('Buck could not write questions this time. Give it another go?');
+    return;
+  }
+  flashcards = cards;
+  results = new Array(cards.length).fill(null);
+  gradingPromises = {};
+  currentIndex = 0;
+  lastModuleName = name || 'Quiz';
+  savePendingDeck('ready', cards, name, createMode);
+  renderPendingDeck();
+  renderJumpBack();
+
+  const newPack = addPack(name || 'StudyPack', cards.map((f) => ({
+    type: f.type === 'choice' ? 'choice' : 'flashcard',
+    question: f.question,
+    answer: f.answer,
+    options: f.type === 'choice' ? f.options : undefined,
+  })));
+
+  if (hostingRoom) {
+    hostingRoom = false;
+    await hostCreateRoom(pendingContent, name, cards);
+  } else {
+    // open the review view so the user can see Q&A, edit, then Start Study
+    openPack(newPack.id);
+    closeCreate();
+  }
+  showToast(partial ? 'Saved the questions so far — add more anytime 🦆' : 'Quiz ready! 🦆', 'correct');
+}
+
+async function fetchPdfContent(file) {
   const text = await extractTextFromPdf(file);
   const hasText = text && text.replace(/\s+/g, ' ').trim().length >= 100;
-  if (hasText) {
-    return { payload: { text: text.trim(), count: 100, mode: createMode } };
-  }
+  if (hasText) return { text: text.trim() };
   const images = await renderPdfImages(file);
   if (!images.length) {
     throw new Error('The PDF could not be read. It may be image-based or corrupted.');
   }
-  return { payload: { images, count: 100, mode: createMode } };
-}
-
-async function startAnalysis(payload, moduleName, statusEl) {
-  if (!canGenerate()) {
-    if (statusEl) {
-      statusEl.className = 'auth-error error';
-      statusEl.textContent = 'No hearts left. Next \u2665 in ' + heartTimerLabel() + '.';
-    }
-    return false;
-  }
-  if (statusEl) {
-    statusEl.className = 'auth-error info';
-    statusEl.textContent = 'Generating your quiz with AI\u2026';
-  }
-  savePendingDeck('generating', moduleName);
-  try {
-    const res = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Analysis failed.');
-    }
-    const cards = ensureMixedChoice(data.flashcards);
-    flashcards = cards;
-    results = new Array(cards.length).fill(null);
-    gradingPromises = {};
-    currentIndex = 0;
-    lastModuleName = moduleName || 'Quiz';
-    savePendingDeck('ready', cards, moduleName, createMode);
-    renderPendingDeck();
-    renderJumpBack();
-    const newPack = addPack(moduleName || 'StudyPack', cards.map((f) => ({
-      type: f.type === 'choice' ? 'choice' : 'flashcard',
-      question: f.question,
-      answer: f.answer,
-      options: f.type === 'choice' ? f.options : undefined,
-    })));
-    if (hostingRoom) {
-      hostingRoom = false;
-      await hostCreateRoom(payload, moduleName, cards);
-    } else {
-      // open the review view so the user can see Q&A, then Start Study
-      openPack(newPack.id);
-      closeCreate();
-      stopCreateLoading();
-    }
-    return true;
-  } catch (err) {
-    if (statusEl) {
-      statusEl.className = 'auth-error error';
-      statusEl.textContent = err.message;
-    }
-    return false;
-  }
+  return { images };
 }
 
 async function extractTextFromPdf(file) {
@@ -1331,17 +1459,102 @@ function renderStudyPackList() {
   studyPacks.slice(0, 20).forEach((pack) => {
     const item = document.createElement('div');
     item.className = 'hist-item studypack-item';
+    item.dataset.packId = pack.id;
     item.innerHTML = `
       <span class="hi-dot" style="background:${deckColor(pack.name)}"></span>
       <button class="hi-main-btn">
         <span class="hi-name">${escapeHtml(pack.name)}</span>
         <span class="hi-meta">${pack.items.length} cards</span>
       </button>
+      <button class="hi-del" title="Delete StudyPack" aria-label="Delete StudyPack ${escapeHtml(pack.name)}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+      </button>
       <button class="pin-btn" title="Open">&#8250;</button>
     `;
     item.querySelector('.hi-main-btn').addEventListener('click', () => openPack(pack.id));
     item.querySelector('.pin-btn').addEventListener('click', () => openPack(pack.id));
+    item.querySelector('.hi-del').addEventListener('click', (e) => {
+      e.stopPropagation();
+      requestDeletePack(pack.id);
+    });
     list.appendChild(item);
+  });
+}
+
+async function requestDeletePack(id) {
+  const pack = getPack(id);
+  if (!pack) return;
+  const confirmed = await confirmDialog({
+    title: 'Delete StudyPack?',
+    message: 'This will permanently delete this StudyPack and all its cards. This cannot be undone.',
+    confirmText: 'Delete',
+    cancelText: 'Cancel',
+    danger: true,
+  });
+  if (!confirmed) return;
+
+  const index = studyPacks.findIndex((p) => p.id === id);
+  if (index === -1) return;
+  const removed = studyPacks[index];
+
+  const finish = () => {
+    studyPacks.splice(index, 1);
+    savePacks();
+    renderStudyPackList();
+    if (currentPackId === id) {
+      currentPackId = null;
+      if (!packScreen.classList.contains('hidden')) resetToUpload();
+    }
+    showToastAction('StudyPack deleted. Ready to make a new one? 🦆', 'Undo', () => {
+      studyPacks.splice(Math.min(index, studyPacks.length), 0, removed);
+      savePacks();
+      renderStudyPackList();
+      showToast('StudyPack restored! 🦆', 'correct');
+    }, 5000);
+  };
+
+  const node = document.querySelector('.hist-item[data-pack-id="' + id + '"]');
+  if (node) {
+    node.classList.add('removing');
+    setTimeout(finish, 260);
+  } else {
+    finish();
+  }
+}
+
+function confirmDialog(opts) {
+  const o = opts || {};
+  return new Promise((resolve) => {
+    const modal = document.getElementById('confirm-modal');
+    const title = document.getElementById('confirm-title');
+    const msg = document.getElementById('confirm-message');
+    const ok = document.getElementById('confirm-ok');
+    const cancel = document.getElementById('confirm-cancel');
+
+    title.textContent = o.title || 'Are you sure?';
+    msg.textContent = o.message || '';
+    ok.textContent = o.confirmText || 'Confirm';
+    cancel.textContent = o.cancelText || 'Cancel';
+    ok.className = 'btn ' + (o.danger ? 'btn-danger' : 'btn-primary');
+
+    const cleanup = (result) => {
+      modal.classList.add('hidden');
+      ok.removeEventListener('click', onOk);
+      cancel.removeEventListener('click', onCancel);
+      document.getElementById('confirm-backdrop').removeEventListener('click', onCancel);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onKey = (e) => { if (e.key === 'Escape') onCancel(); };
+
+    ok.addEventListener('click', onOk);
+    cancel.addEventListener('click', onCancel);
+    document.getElementById('confirm-backdrop').addEventListener('click', onCancel);
+    document.addEventListener('keydown', onKey);
+    modal.classList.remove('hidden');
+    setTimeout(() => { try { ok.focus(); } catch (e) {} }, 40);
   });
 }
 
@@ -3348,9 +3561,30 @@ function wireSidebar() {
   });
   createNext.addEventListener('click', createNextStep);
   createBack.addEventListener('click', createBackStep);
-  createGenerate.addEventListener('click', runCreateGenerate);
+  createGenerate.addEventListener('click', createNextStep);
   createClose.addEventListener('click', closeCreate);
   createBackdrop.addEventListener('click', closeCreate);
+
+  estimateSlider.addEventListener('input', updateEstimateLabel);
+  estimateAll.addEventListener('click', () => {
+    estimateSlider.value = estimateSlider.max;
+    updateEstimateLabel();
+  });
+  estimateGenerate.addEventListener('click', () => {
+    startGeneration(parseInt(estimateSlider.value, 10) || estimateQuestionCount(pendingContent || {}));
+  });
+  estimateBack.addEventListener('click', () => {
+    estimatePanel.classList.add('hidden');
+    createSourcePanel.classList.remove('hidden');
+  });
+  clCancel.addEventListener('click', () => {
+    if (!genState) return;
+    genState.cancelled = true;
+    if (genState.controller) {
+      try { genState.controller.abort(); } catch (e) {}
+    }
+    setLoadingSub('Finishing up what we have…');
+  });
 }
 
 function openMobileSidebar() {
@@ -3545,7 +3779,7 @@ function hideHistory() {
 }
 
 function deckColor(name) {
-  const colors = ['#8a7cff', '#ffb340', '#4ade80', '#38bdf8', '#f472b6', '#f87171', '#c084fc', '#34d399'];
+  const colors = ['#f97316', '#8b5e3c', '#fbbf24', '#16a34a', '#fb923c', '#6b4226', '#fdba74', '#22c55e'];
   let h = 0;
   for (let i = 0; i < String(name).length; i++) h = (h * 31 + String(name).charCodeAt(i)) >>> 0;
   return colors[h % colors.length];
@@ -3668,6 +3902,32 @@ function showToast(message, type) {
   }, 1800);
 }
 
+function showToastAction(message, actionLabel, onAction, duration) {
+  const toast = document.getElementById('toast');
+  toast.innerHTML = '';
+  const msg = document.createElement('span');
+  msg.className = 'toast-msg';
+  msg.textContent = message;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'toast-action';
+  btn.textContent = actionLabel;
+  btn.addEventListener('click', () => {
+    clearTimeout(toast._t);
+    toast.className = 'toast';
+    toast.innerHTML = '';
+    onAction();
+  });
+  toast.appendChild(msg);
+  toast.appendChild(btn);
+  toast.className = 'toast show';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => {
+    toast.className = 'toast';
+    toast.innerHTML = '';
+  }, duration || 5000);
+}
+
 function launchConfetti(duration = 2400) {
   const canvas = document.getElementById('confetti');
   if (!canvas || !canvas.getContext) return;
@@ -3678,7 +3938,7 @@ function launchConfetti(duration = 2400) {
   canvas.height = window.innerHeight * dpr;
   ctx.scale(dpr, dpr);
 
-  const colors = ['#7b5cff', '#b18cff', '#ff9ad5', '#ffd166', '#4ade80', '#60a5fa', '#f472b6'];
+  const colors = ['#f97316', '#fb8c3a', '#fbbf24', '#8b5e3c', '#22c55e', '#6b4226', '#fdba74'];
   const particles = [];
   const count = 150;
   const W = window.innerWidth;

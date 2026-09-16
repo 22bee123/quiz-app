@@ -5616,6 +5616,155 @@ html[data-theme='dark'] .pf-avatar { background: #2f211a; border-color: #8b5e3c;
 html[data-theme='dark'] .school-chip { background: rgba(249, 115, 22, 0.18); border-color: #f97316; color: #ffe8d6; }
 html[data-theme='dark'] .role-pill { background: rgba(249, 115, 22, 0.2); color: #fdba74; }
 
+/* =====================================================================
+   StudyPack delete + confirm dialog
+   ===================================================================== */
+.hi-del {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid transparent;
+  background: transparent;
+  color: #b99c86;
+  border-radius: 9px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s, border-color 0.15s, transform 0.15s;
+}
+
+.hi-del svg { width: 15px; height: 15px; }
+
+.hist-item:hover .hi-del,
+.hi-del:focus-visible { opacity: 1; }
+
+.hi-del:hover { color: #dc2626; border-color: #f3c9c9; background: #fff5f5; }
+.hi-del:active { transform: scale(0.9); background: #fee2e2; }
+
+@media (hover: none) {
+  .hi-del { opacity: 0.7; }
+}
+
+@keyframes itemRemove {
+  to { opacity: 0; transform: translateX(-18px) scale(0.95); }
+}
+
+.hist-item.removing { animation: itemRemove 0.26s ease forwards; pointer-events: none; }
+
+.confirm-card {
+  max-width: 400px;
+  text-align: center;
+}
+
+.confirm-title { font-size: 1.25rem; margin-bottom: 10px; }
+.confirm-message { font-size: 0.92rem; color: #8a6a55; margin-bottom: 22px; }
+
+.confirm-actions { display: flex; gap: 10px; }
+.confirm-actions .btn { flex: 1; margin-top: 0; }
+
+.btn-danger {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(239, 68, 68, 0.32);
+}
+
+.btn-danger:hover:not(:disabled) {
+  transform: translateY(-2px);
+  filter: brightness(1.05);
+  box-shadow: 0 14px 30px rgba(239, 68, 68, 0.42);
+}
+
+/* =====================================================================
+   Quiz generation — estimate panel + progress cancel
+   ===================================================================== */
+.estimate-file {
+  font-weight: 800;
+  color: #6b4226;
+  margin-bottom: 10px;
+  font-size: 0.92rem;
+  word-break: break-word;
+}
+
+.estimate-box {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: #fff8f0;
+  border: 1px solid #f0e4d8;
+  border-radius: 18px;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+
+.estimate-big {
+  font-size: 2.4rem;
+  font-weight: 900;
+  color: #f97316;
+  min-width: 60px;
+  text-align: center;
+  line-height: 1;
+}
+
+.estimate-copy { font-size: 0.92rem; color: #6b4a3a; font-weight: 600; }
+.estimate-copy strong { color: #ea580c; }
+
+#estimate-slider {
+  width: 100%;
+  accent-color: #f97316;
+  margin-top: 6px;
+  cursor: pointer;
+}
+
+.estimate-value {
+  margin-top: 10px;
+  text-align: center;
+  font-weight: 900;
+  color: #ea580c;
+  font-size: 0.95rem;
+}
+
+.cl-cancel {
+  margin-top: 18px;
+  max-width: 220px;
+}
+
+/* Toast with an action button (undo) */
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toast-msg { white-space: nowrap; }
+
+.toast-action {
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  color: inherit;
+  font-family: inherit;
+  font-weight: 900;
+  font-size: 0.88rem;
+  padding: 6px 13px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.toast-action:hover { background: rgba(255, 255, 255, 0.34); }
+
+/* ---- Dark mode additions ---- */
+html[data-theme='dark'] .estimate-box { background: #2f211a; border-color: rgba(243, 231, 219, 0.14); }
+html[data-theme='dark'] .estimate-copy { color: #cbb4a2; }
+html[data-theme='dark'] .estimate-file { color: #fff8f0; }
+html[data-theme='dark'] .confirm-message { color: #cbb4a2; }
+html[data-theme='dark'] .hi-del:hover {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fecaca;
+}
+
+
 
 
 

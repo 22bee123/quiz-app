@@ -154,6 +154,7 @@
     <div class="cl-track"><span id="cl-fill"></span></div>
     <div class="cl-percent" id="cl-percent">0%</div>
     <div class="cl-sub" id="cl-sub">Reading your module&hellip;</div>
+    <button id="cl-cancel" class="btn btn-ghost cl-cancel hidden">Cancel generation</button>
   </div>
 
   <button id="sidebar-open-btn" class="sidebar-open-btn" aria-label="Open sidebar">
@@ -369,6 +370,27 @@
             </div>
             <div id="create-status" class="auth-error"></div>
             <button id="create-next" class="btn btn-primary">Generate</button>
+          </div>
+
+          <!-- Step: estimate + choose count -->
+          <div id="create-estimate-panel" class="hidden">
+            <p class="estimate-file" id="estimate-file"></p>
+            <div class="estimate-box">
+              <div class="estimate-big" id="estimate-big">87</div>
+              <div class="estimate-copy">
+                Based on this content, Buck can generate about
+                <strong id="estimate-inline">87</strong> questions. Ready?
+              </div>
+            </div>
+            <label class="field-label" for="estimate-slider">Questions to generate</label>
+            <input type="range" id="estimate-slider" min="5" max="87" step="1" value="87" />
+            <div class="estimate-value"><span id="estimate-label">87</span> questions</div>
+            <div id="estimate-status" class="auth-error"></div>
+            <div class="modal-actions">
+              <button id="estimate-back" class="btn btn-secondary">Back</button>
+              <button id="estimate-all" class="btn btn-secondary">Generate all</button>
+              <button id="estimate-generate" class="btn btn-primary">Generate 87</button>
+            </div>
           </div>
 
           <!-- Step 2: question type -->
@@ -884,6 +906,19 @@
       </section>
     </div>
   </main>
+
+  <!-- Confirm dialog -->
+  <div id="confirm-modal" class="modal hidden">
+    <div class="modal-backdrop" id="confirm-backdrop"></div>
+    <div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <h3 id="confirm-title" class="confirm-title">Delete StudyPack?</h3>
+      <p id="confirm-message" class="confirm-message"></p>
+      <div class="confirm-actions">
+        <button class="btn btn-ghost" id="confirm-cancel">Cancel</button>
+        <button class="btn btn-danger" id="confirm-ok">Delete</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Settings modal -->
   <div id="settings-modal" class="modal hidden">
