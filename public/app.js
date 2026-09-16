@@ -3023,22 +3023,89 @@ function updateAuthUI() {
 /* ---------------- Signup wizard ---------------- */
 
 const SIGNUP_STEPS = 6;
-const SCHOOLS = [
-  'Harvard University', 'Stanford University', 'MIT', 'Oxford University', 'Cambridge University',
-  'University of Toronto', 'University of Melbourne', 'National University of Singapore',
-  'University of Cape Town', 'University of Lagos', 'University of Nairobi', 'Cairo University',
-  'University of Delhi', 'Tsinghua University', 'University of São Paulo',
-  'Arizona State University', 'Boston University', 'New York University', 'UCLA', 'University of Michigan',
-  'Ohio State University', 'Penn State University', 'University of Washington', 'Purdue University',
-  'Duke University', 'Yale University', 'Princeton University', 'Columbia University',
+
+// Offline fallback so the school step never breaks if the API is unavailable.
+const SCHOOL_FALLBACK = [
+  { name: 'Harvard University', country: 'United States', domain: 'harvard.edu' },
+  { name: 'Stanford University', country: 'United States', domain: 'stanford.edu' },
+  { name: 'Massachusetts Institute of Technology', country: 'United States', domain: 'mit.edu' },
+  { name: 'University of Oxford', country: 'United Kingdom', domain: 'ox.ac.uk' },
+  { name: 'University of Cambridge', country: 'United Kingdom', domain: 'cam.ac.uk' },
+  { name: 'University of Toronto', country: 'Canada', domain: 'utoronto.ca' },
+  { name: 'University of Melbourne', country: 'Australia', domain: 'unimelb.edu.au' },
+  { name: 'National University of Singapore', country: 'Singapore', domain: 'nus.edu.sg' },
+  { name: 'University of Cape Town', country: 'South Africa', domain: 'uct.ac.za' },
+  { name: 'University of the Philippines', country: 'Philippines', domain: 'up.edu.ph' },
+  { name: 'University of Delhi', country: 'India', domain: 'du.ac.in' },
+  { name: 'Tsinghua University', country: 'China', domain: 'tsinghua.edu.cn' },
 ];
+const SCHOOL_CACHE_KEY = 'buckUniCache';
+const SCHOOL_CACHE_TTL = 24 * 60 * 60 * 1000;
+const HIPOLABS_URL = 'https://universities.hipolabs.com/search?name=';
 
 let suStep = 1;
-let suSchoolManual = false;
+let suSchool = null; // { name, country, domain, logo, manual }
+let suSchoolTimer = null;
+let suSchoolSeq = 0;
 let suUserOk = false;
 let suUserTimer = null;
 let suAvatarData = '';
 let suRole = '';
+
+function logoForDomain(domain) {
+  return domain ? 'https://logo.clearbit.com/' + encodeURIComponent(domain) : '';
+}
+
+function schoolLogoHtml(school, size) {
+  const cls = size === 'sm' ? 'school-logo-sm' : 'school-logo-img';
+  const logo = school.logo || logoForDomain(school.domain);
+  if (logo) {
+    return '<img class="' + cls + '" src="' + logo + '" alt="" loading="lazy" ' +
+      'onerror="this.replaceWith(Object.assign(document.createElement(\'span\'),{className:\'school-logo\',textContent:' +
+      JSON.stringify(initialsOf(school.name)) + '}))" />';
+  }
+  return '<span class="school-logo">' + escapeHtml(initialsOf(school.name)) + '</span>';
+}
+
+function loadSchoolCache() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SCHOOL_CACHE_KEY) || '{}');
+    const now = Date.now();
+    const out = {};
+    Object.keys(raw).forEach((k) => { if (raw[k] && now - raw[k].t < SCHOOL_CACHE_TTL) out[k] = raw[k]; });
+    return out;
+  } catch (e) { return {}; }
+}
+
+function saveSchoolCache(query, items) {
+  try {
+    const cache = loadSchoolCache();
+    cache[query] = { t: Date.now(), items };
+    localStorage.setItem(SCHOOL_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {}
+}
+
+function fallbackSearch(query) {
+  const q = query.toLowerCase();
+  return SCHOOL_FALLBACK.filter((u) => u.name.toLowerCase().includes(q)).slice(0, 10);
+}
+
+async function searchUniversities(query) {
+  const key = query.toLowerCase();
+  const cache = loadSchoolCache();
+  if (cache[key]) return cache[key].items;
+
+  const res = await fetch(HIPOLABS_URL + encodeURIComponent(query));
+  if (!res.ok) throw new Error('Schools API error ' + res.status);
+  const data = await res.json();
+  const unique = Array.from(new Map((data || []).map((u) => [u.name, u])).values()).slice(0, 10);
+  const items = unique.map((u) => {
+    const domain = (u.domains && u.domains[0]) || '';
+    return { name: u.name, country: u.country || '', domain, logo: logoForDomain(domain) };
+  });
+  saveSchoolCache(key, items);
+  return items;
+}
 
 function loadSignupDraft() {
   try { return JSON.parse(localStorage.getItem('buckSignupDraft') || 'null'); } catch (e) { return null; }
@@ -3054,7 +3121,7 @@ function saveSignupDraft() {
       username: document.getElementById('su-username').value,
       role: suRole,
       school: document.getElementById('su-school-input').value,
-      schoolManual: suSchoolManual,
+      schoolData: suSchool,
     };
     localStorage.setItem('buckSignupDraft', JSON.stringify(draft));
   } catch (e) {}
@@ -3106,7 +3173,7 @@ function openSignup() {
   suStep = 1;
   suEmailMode = draft && draft.emailMode ? draft.emailMode : '';
   suRole = draft && draft.role ? draft.role : '';
-  suSchoolManual = draft && draft.schoolManual ? true : false;
+  suSchool = draft && draft.schoolData ? draft.schoolData : null;
   suUserOk = false;
   suAvatarData = '';
 
@@ -3135,6 +3202,11 @@ function openSignup() {
   );
   document.getElementById('su-manual-email').classList.toggle('hidden', suEmailMode !== 'manual');
   document.getElementById('su-provider-email').classList.toggle('hidden', suEmailMode !== 'choose');
+  document.getElementById('su-school-list').innerHTML = '';
+  document.getElementById('su-school-manual-form').classList.add('hidden');
+  const schoolInput = document.getElementById('su-school-input');
+  schoolInput.classList.toggle('success', !!(suSchool && suSchool.name));
+  setSchoolSpinner(false);
   renderSchoolChip();
   updateAvatarPreview(document.getElementById('su-avatar-btn'), suAvatarData);
 
@@ -3211,10 +3283,13 @@ function suStepValid() {
 
   if (suStep === 4) {
     document.getElementById('su-school-err').textContent = '';
-    const school = document.getElementById('su-school-input').value.trim();
-    if (!school) {
-      document.getElementById('su-school-err').textContent = "Search a school above, or add yours manually.";
+    const typed = document.getElementById('su-school-input').value.trim();
+    if (!suSchool && !typed) {
+      document.getElementById('su-school-err').textContent = 'Search a school above, or add yours manually.';
       return false;
+    }
+    if (!suSchool && typed) {
+      suSchool = { name: typed, country: '', domain: '', logo: '', manual: true };
     }
     return true;
   }
@@ -3300,49 +3375,104 @@ function checkUsernameLive(username) {
   }, 450);
 }
 
-function renderSchoolList(query) {
-  const list = document.getElementById('su-school-list');
-  if (!list) return;
-  list.innerHTML = '';
-  if (suSchoolManual) {
-    list.innerHTML = '<p class="school-empty">Type your school name above, then hit Continue.</p>';
-    return;
-  }
-  const q = (query || '').toLowerCase();
-  const matches = SCHOOLS.filter((s) => s.toLowerCase().includes(q)).slice(0, 8);
-  if (!matches.length) {
-    list.innerHTML = '<p class="school-empty">No match — try "Add my school manually".</p>';
-    return;
-  }
-  matches.forEach((name) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'school-item';
-    btn.innerHTML = '<span class="school-logo">' + escapeHtml(initialsOf(name)) + '</span>' + escapeHtml(name);
-    btn.addEventListener('click', () => {
-      document.getElementById('su-school-input').value = name;
-      renderSchoolChip();
-      document.getElementById('su-school-err').textContent = '';
-      saveSignupDraft();
-    });
-    list.appendChild(btn);
-  });
-}
-
 function initialsOf(name) {
   return name.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
 }
 
+function setSchoolSpinner(on) {
+  const spin = document.getElementById('su-school-spin');
+  if (spin) spin.classList.toggle('hidden', !on);
+}
+
+function renderSchoolResults(items) {
+  const list = document.getElementById('su-school-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!items.length) {
+    list.innerHTML = '<p class="school-empty">No schools found — try a different search or add manually.</p>';
+    return;
+  }
+  items.forEach((school) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'school-item';
+    btn.innerHTML = schoolLogoHtml(school) +
+      '<span class="school-meta"><span class="school-name">' + escapeHtml(school.name) + '</span>' +
+      '<span class="school-country">' + escapeHtml(school.country || '') + '</span></span>';
+    btn.addEventListener('click', () => selectSchool(school));
+    list.appendChild(btn);
+  });
+}
+
+// Debounced live search (300ms) with cache + graceful fallback.
+function scheduleSchoolSearch(query) {
+  const list = document.getElementById('su-school-list');
+  clearTimeout(suSchoolTimer);
+  const q = (query || '').trim();
+  if (q.length < 3) {
+    if (list) list.innerHTML = '';
+    setSchoolSpinner(false);
+    return;
+  }
+  setSchoolSpinner(true);
+  suSchoolTimer = setTimeout(async () => {
+    const seq = ++suSchoolSeq;
+    let items;
+    try {
+      items = await searchUniversities(q);
+      if (!items || !items.length) items = fallbackSearch(q);
+    } catch (e) {
+      items = fallbackSearch(q);
+    }
+    if (seq !== suSchoolSeq) return; // a newer search superseded this one
+    setSchoolSpinner(false);
+    renderSchoolResults(items);
+  }, 300);
+}
+
+function selectSchool(school) {
+  suSchool = Object.assign({}, school);
+  const input = document.getElementById('su-school-input');
+  input.value = school.name;
+  document.getElementById('su-school-list').innerHTML = '';
+  document.getElementById('su-school-err').textContent = '';
+  input.classList.add('success');
+  renderSchoolChip();
+  saveSignupDraft();
+}
+
 function renderSchoolChip() {
   const chip = document.getElementById('su-school-chip');
-  const value = document.getElementById('su-school-input').value.trim();
+  const input = document.getElementById('su-school-input');
   if (!chip) return;
-  if (value) {
+  if (suSchool && suSchool.name) {
     chip.classList.remove('hidden');
-    chip.innerHTML = '<span class="school-logo">' + escapeHtml(initialsOf(value)) + '</span>' + escapeHtml(value);
+    chip.innerHTML = schoolLogoHtml(suSchool, 'sm') +
+      '<span>' + escapeHtml(suSchool.name) + '</span>' +
+      '<button type="button" class="school-clear" aria-label="Clear school">&times;</button>';
+    const clear = chip.querySelector('.school-clear');
+    if (clear) clear.addEventListener('click', () => {
+      suSchool = null;
+      input.value = '';
+      input.classList.remove('success');
+      renderSchoolChip();
+      renderSchoolList('');
+      input.focus();
+      saveSignupDraft();
+    });
   } else {
     chip.classList.add('hidden');
     chip.innerHTML = '';
+  }
+}
+
+function renderSchoolList(query) {
+  // Kept for openSignup/step resets: shows cached/fallback results if available.
+  const q = (query || '').trim();
+  if (q.length >= 3) scheduleSchoolSearch(q);
+  else {
+    const list = document.getElementById('su-school-list');
+    if (list) list.innerHTML = '';
   }
 }
 
@@ -3508,17 +3638,51 @@ function wireSignup() {
     saveSignupDraft();
   });
   document.getElementById('su-school-input').addEventListener('input', (e) => {
-    suSchoolManual = false;
-    renderSchoolList(e.target.value);
+    suSchool = null;
+    e.target.classList.remove('success');
     renderSchoolChip();
+    scheduleSchoolSearch(e.target.value);
     saveSignupDraft();
   });
+
   document.getElementById('su-school-manual').addEventListener('click', () => {
-    suSchoolManual = true;
-    renderSchoolList('');
-    const input = document.getElementById('su-school-input');
-    input.placeholder = 'Type your school name…';
-    input.focus();
+    document.getElementById('su-school-manual-form').classList.remove('hidden');
+    document.getElementById('su-school-list').innerHTML = '';
+    document.getElementById('su-school-err').textContent = '';
+    document.getElementById('su-manual-name').focus();
+  });
+  document.getElementById('su-manual-cancel').addEventListener('click', () => {
+    document.getElementById('su-school-manual-form').classList.add('hidden');
+  });
+  document.getElementById('su-manual-save').addEventListener('click', () => {
+    const name = document.getElementById('su-manual-name').value.trim();
+    if (!name) {
+      document.getElementById('su-school-err').textContent = 'Enter your school name.';
+      return;
+    }
+    const school = {
+      name,
+      country: document.getElementById('su-manual-country').value.trim(),
+      domain: '',
+      logo: '',
+      manual: true,
+      website: document.getElementById('su-manual-site').value.trim(),
+    };
+    document.getElementById('su-school-manual-form').classList.add('hidden');
+    selectSchool(school);
+  });
+
+  document.getElementById('su-pass-toggle').addEventListener('click', () => {
+    const el = document.getElementById('su-password');
+    const show = el.type === 'password';
+    el.type = show ? 'text' : 'password';
+    document.getElementById('su-pass-toggle').setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  });
+  document.getElementById('su-confirm-toggle').addEventListener('click', () => {
+    const el = document.getElementById('su-confirm');
+    const show = el.type === 'password';
+    el.type = show ? 'text' : 'password';
+    document.getElementById('su-confirm-toggle').setAttribute('aria-label', show ? 'Hide password' : 'Show password');
   });
   document.getElementById('su-password').addEventListener('input', updatePasswordMeter);
 

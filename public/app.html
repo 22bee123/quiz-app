@@ -515,7 +515,7 @@
               </div>
               <div id="su-manual-email" class="su-panel hidden">
                 <label class="field-label" for="su-email">Email</label>
-                <input id="su-email" type="email" autocomplete="email" placeholder="you@school.edu" />
+                <input id="su-email" class="signup-input" type="email" autocomplete="email" placeholder="you@school.edu" />
                 <span class="input-err" id="su-email-err"></span>
               </div>
               <div id="su-provider-email" class="su-panel hidden">
@@ -539,15 +539,16 @@
               <h3>Nice to meet you!</h3>
               <p class="su-sub">Tell Buck what to call you.</p>
               <label class="field-label" for="su-name">Full name</label>
-              <input id="su-name" autocomplete="name" placeholder="Alex Johnson" />
+              <input id="su-name" class="signup-input" autocomplete="name" placeholder="Alex Johnson" />
               <span class="input-err" id="su-name-err"></span>
 
               <label class="field-label" for="su-username">Username</label>
               <div class="user-wrap">
                 <span class="user-at">@</span>
-                <input id="su-username" maxlength="20" autocomplete="off" placeholder="alexj" />
+                <input id="su-username" class="signup-input" maxlength="20" autocomplete="off" placeholder="alexj" />
                 <span class="user-status" id="su-user-status" aria-live="polite"></span>
               </div>
+              <span class="signup-hint">3–20 characters. Letters, numbers and underscores only.</span>
 
               <div class="avatar-pick">
                 <button type="button" class="avatar-preview" id="su-avatar-btn" title="Upload a photo">
@@ -583,10 +584,27 @@
             <section class="su-step hidden" data-step="4">
               <h3 id="su-school-title">Where do you currently study?</h3>
               <p class="su-sub">Search and select your school.</p>
-              <input id="su-school-input" autocomplete="off" placeholder="Search schools&hellip;" />
-              <div class="school-chip hidden" id="su-school-chip"></div>
+              <div class="school-search-wrap">
+                <input id="su-school-input" class="signup-input" autocomplete="off" placeholder="Search universities&hellip;" />
+                <span class="school-spin hidden" id="su-school-spin" aria-hidden="true"></span>
+              </div>
+              <div class="school-selected hidden" id="su-school-chip"></div>
               <div class="school-list" id="su-school-list"></div>
               <button type="button" class="link-btn" id="su-school-manual">Add my school manually</button>
+
+              <div class="school-manual hidden" id="su-school-manual-form">
+                <label class="field-label" for="su-manual-name">School name</label>
+                <input id="su-manual-name" class="signup-input" placeholder="e.g. Riverside College" />
+                <label class="field-label" for="su-manual-country">Country</label>
+                <input id="su-manual-country" class="signup-input" placeholder="e.g. Philippines" />
+                <label class="field-label" for="su-manual-site">Website (optional)</label>
+                <input id="su-manual-site" class="signup-input" placeholder="https://&hellip;" />
+                <div class="modal-actions">
+                  <button type="button" class="btn btn-secondary" id="su-manual-cancel">Cancel</button>
+                  <button type="button" class="btn btn-primary" id="su-manual-save">Use this school</button>
+                </div>
+              </div>
+
               <span class="input-err" id="su-school-err"></span>
             </section>
 
@@ -595,12 +613,18 @@
               <h3>Almost there! Just one more step.</h3>
               <p class="su-sub">Create a password to secure your account.</p>
               <label class="field-label" for="su-password">Password</label>
-              <input id="su-password" type="password" autocomplete="new-password" placeholder="At least 6 characters" />
+              <div class="pass-wrap">
+                <input id="su-password" class="signup-input" type="password" autocomplete="new-password" placeholder="At least 6 characters" />
+                <button type="button" class="pass-toggle" id="su-pass-toggle" aria-label="Show password">&#128065;</button>
+              </div>
               <div class="pw-meter"><span id="su-pw-fill"></span></div>
               <span class="pw-label" id="su-pw-label"></span>
 
               <label class="field-label" for="su-confirm">Confirm password</label>
-              <input id="su-confirm" type="password" autocomplete="new-password" placeholder="Repeat your password" />
+              <div class="pass-wrap">
+                <input id="su-confirm" class="signup-input" type="password" autocomplete="new-password" placeholder="Repeat your password" />
+                <button type="button" class="pass-toggle" id="su-confirm-toggle" aria-label="Show password">&#128065;</button>
+              </div>
               <span class="input-err" id="su-pw-err"></span>
 
               <label class="terms">

@@ -5767,6 +5767,235 @@ html[data-theme='dark'] .role-pill { background: rgba(249, 115, 22, 0.2); color:
 /* ---- Dark mode additions ---- */
 html[data-theme='dark'] .estimate-box { background: #2f211a; border-color: rgba(243, 231, 219, 0.14); }
 html[data-theme='dark'] .estimate-note { background: rgba(249, 115, 22, 0.14); border-color: rgba(249, 115, 22, 0.35); color: #ffe8d6; }
+
+/* =====================================================================
+   FIX 1 — Circular avatars everywhere
+   ===================================================================== */
+.nav-avatar {
+  width: 40px;
+  height: 40px;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 2px solid #fff8f0;
+  background: linear-gradient(135deg, #f97316, #fb8c3a);
+  color: #fff;
+  font-weight: 800;
+  font-size: 0.95rem;
+  line-height: 1;
+  box-shadow: 0 2px 8px rgba(62, 39, 35, 0.18);
+}
+
+.nav-avatar img,
+.pf-avatar img,
+.avatar-preview img,
+.school-selected img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  display: block;
+}
+
+.pf-avatar {
+  aspect-ratio: 1 / 1;
+  border: 2px solid #f3c9a4;
+}
+
+.avatar-preview { overflow: hidden; border-radius: 50%; }
+
+@media (max-width: 640px) {
+  .nav-avatar { width: 36px; height: 36px; font-size: 0.85rem; }
+}
+
+/* =====================================================================
+   FIX 2 — Signup inputs
+   ===================================================================== */
+.signup-input {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 15px;
+  font-family: inherit;
+  color: #3e2723;
+  background: #fff8f0;
+  border: 2px solid #e8d5c4;
+  border-radius: 12px;
+  outline: none;
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.signup-input::placeholder { color: #b8a99a; font-weight: 400; }
+.signup-input:hover { border-color: #d4bfa8; }
+.signup-input:focus {
+  border-color: #f97316;
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.15);
+}
+.signup-input.error { border-color: #dc2626; background: #fef2f2; }
+.signup-input.success { border-color: #16a34a; background: #f0fdf4; }
+
+.signup-card .field-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #6b4226;
+  margin-bottom: 6px;
+  margin-top: 20px;
+}
+
+.signup-hint {
+  display: block;
+  font-size: 12px;
+  color: #8b5e3c;
+  font-style: italic;
+  margin-top: 6px;
+}
+
+.pass-wrap .signup-input { padding-right: 48px; }
+
+.input-err { font-size: 12px; font-weight: 700; color: #dc2626; }
+.input-err:not(:empty)::before { content: '⚠️ '; }
+
+/* Custom terms checkbox */
+.terms input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  border: 2px solid #e8d5c4;
+  border-radius: 6px;
+  background: #fff8f0;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.terms input[type='checkbox']:hover { border-color: #f3c9a4; }
+.terms input[type='checkbox']:checked { background: #f97316; border-color: #f97316; }
+.terms input[type='checkbox']:checked::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+}
+.terms input[type='checkbox']:focus-visible {
+  outline: 3px solid rgba(249, 115, 22, 0.35);
+  outline-offset: 2px;
+}
+
+/* =====================================================================
+   FIX 3 — University search with logos
+   ===================================================================== */
+.school-search-wrap { position: relative; }
+
+.school-spin {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  border: 2px solid #f3c9a4;
+  border-top-color: #f97316;
+  border-radius: 50%;
+  animation: schoolSpin 0.7s linear infinite;
+}
+
+@keyframes schoolSpin { to { transform: rotate(360deg); } }
+
+.school-selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 6px 12px 6px 6px;
+  background: #fff1e6;
+  border: 1.5px solid #f3c9a4;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 0.85rem;
+  color: #6b4226;
+  max-width: 100%;
+}
+
+.school-selected img,
+.school-selected .school-logo { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; }
+
+.school-clear {
+  border: none;
+  background: transparent;
+  color: #b45309;
+  font-weight: 900;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.school-clear:hover { color: #dc2626; }
+
+.school-item { align-items: center; }
+
+.school-logo-img {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  object-fit: cover;
+  background: #fff;
+  border: 1px solid #f0e4d8;
+}
+
+.school-meta { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.school-name {
+  font-weight: 800;
+  color: #3e2723;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.school-country { font-size: 0.74rem; color: #8b5e3c; font-weight: 600; }
+
+.school-manual {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1.5px dashed #e3d3c4;
+  border-radius: 16px;
+  background: #fff8f0;
+}
+
+.school-manual .field-label { margin-top: 12px; }
+.school-manual .modal-actions { margin-top: 16px; }
+
+/* Dark mode */
+html[data-theme='dark'] .nav-avatar { border-color: #4a3128; }
+html[data-theme='dark'] .signup-input { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); color: #fff8f0; }
+html[data-theme='dark'] .signup-input::placeholder { color: #a98973; }
+html[data-theme='dark'] .signup-input:focus { background: #35251c; border-color: #f97316; }
+html[data-theme='dark'] .signup-input.success { background: rgba(34, 197, 94, 0.12); border-color: #16a34a; }
+html[data-theme='dark'] .signup-input.error { background: rgba(239, 68, 68, 0.12); border-color: #dc2626; }
+html[data-theme='dark'] .signup-card .field-label { color: #ffd9b0; }
+html[data-theme='dark'] .school-selected { background: rgba(249, 115, 22, 0.18); border-color: rgba(249, 115, 22, 0.4); color: #ffe8d6; }
+html[data-theme='dark'] .school-name { color: #fff8f0; }
+html[data-theme='dark'] .school-country { color: #cbb4a2; }
+html[data-theme='dark'] .school-manual { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); }
+html[data-theme='dark'] .terms input[type='checkbox'] { background: #2f211a; border-color: rgba(243, 231, 219, 0.2); }
+
 html[data-theme='dark'] .estimate-copy { color: #cbb4a2; }
 html[data-theme='dark'] .estimate-file { color: #fff8f0; }
 html[data-theme='dark'] .confirm-message { color: #cbb4a2; }
