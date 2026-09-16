@@ -1786,6 +1786,33 @@ const HL = {
 };
 const HL_ORDER = ['yellow', 'green', 'red', 'blue'];
 
+let hlActiveColor = 'yellow'; // last chosen color (shown on the header icon)
+let hlMarker = null;          // when set, newly selected text is auto-highlighted in this color
+
+function renderHlPalette() {
+  const pal = document.getElementById('pack-hl-palette');
+  const btn = document.getElementById('pack-hl');
+  const dot = document.getElementById('pack-hl-dot');
+  const active = hlMarker || hlActiveColor;
+  if (pal) {
+    pal.querySelectorAll('.hl-dot').forEach((d) => d.classList.toggle('active', d.dataset.c === active));
+  }
+  if (dot) dot.style.background = HL[active] || HL.yellow;
+  if (btn) btn.classList.toggle('on', !!hlMarker);
+}
+
+function setHlActive(color, marker) {
+  if (color) hlActiveColor = color;
+  hlMarker = marker ? color : null;
+  renderHlPalette();
+}
+
+function hideHeaderPalette() {
+  const pal = document.getElementById('pack-hl-palette');
+  if (pal) pal.classList.add('hidden');
+}
+
+
 let hlPending = null;      // { item, field, opt, start, end, rect, card }
 let hlInteracting = false; // true while pointer is on the floating palette
 let hlSelTimer = null;
@@ -1901,7 +1928,8 @@ function showHlFloat(payload) {
   if (!float) return;
   hlPending = payload;
   float.innerHTML = HL_ORDER.map((c) =>
-    '<button type="button" class="hl-dot" data-c="' + c + '" aria-label="Highlight ' + c + '" title="Highlight ' + c +
+    '<button type="button" class="hl-dot' + (c === hlActiveColor ? ' active' : '') + '" data-c="' + c +
+    '" aria-label="Highlight ' + c + '" title="Highlight ' + c +
     '" style="background:' + HL[c] + '"></button>'
   ).join('') + '<button type="button" class="hl-clear" data-clear="1" title="Clear highlight">&#10005;&nbsp;Clear</button>';
   float.classList.remove('hidden');
@@ -1940,8 +1968,18 @@ function handleSelection() {
   if (hlInteracting) return;
   if (!packScreen || packScreen.classList.contains('hidden')) { hideHlFloat(); return; }
   const p = hlSelectionPayload();
-  if (p) showHlFloat(p);
-  else hideHlFloat();
+  if (!p) { hideHlFloat(); return; }
+  if (hlMarker) {
+    // Marker mode: selecting text highlights it immediately in the active color.
+    applyHighlight(p.item, p.field, p.opt, p.start, p.end, hlMarker);
+    updatePack(currentPackId, () => {});
+    hideHlFloat();
+    const sel = window.getSelection();
+    if (sel) sel.removeAllRanges();
+    renderPack();
+    return;
+  }
+  showHlFloat(p);
 }
 
 function showHlRemove(mark) {
@@ -1991,9 +2029,27 @@ document.addEventListener('mousedown', (e) => {
 
 document.addEventListener('click', (e) => {
   const dot = e.target.closest && e.target.closest('#hl-float .hl-dot');
-  if (dot) { applyPending(dot.dataset.c); hlInteracting = false; return; }
+  if (dot) { setHlActive(dot.dataset.c, false); applyPending(dot.dataset.c); hlInteracting = false; return; }
   const clr = e.target.closest && e.target.closest('#hl-float .hl-clear');
   if (clr) { applyPending(null); hlInteracting = false; return; }
+
+  // Header highlighter palette: pick a color → marker mode (auto-highlight on select)
+  const hdot = e.target.closest && e.target.closest('#pack-hl-palette .hl-dot');
+  if (hdot) {
+    setHlActive(hdot.dataset.c, true);
+    hideHeaderPalette();
+    // If text is already selected, apply immediately too.
+    const p = hlSelectionPayload();
+    if (p) {
+      applyHighlight(p.item, p.field, p.opt, p.start, p.end, hdot.dataset.c);
+      updatePack(currentPackId, () => {});
+      const sel = window.getSelection(); if (sel) sel.removeAllRanges();
+      renderPack();
+    } else {
+      showToast('Marker on ("' + hdot.dataset.c + '"). Select text to highlight ✏️', 'correct');
+    }
+    return;
+  }
 
   // Hover "✕" remove button
   if (e.target.id === 'hl-remove') {
@@ -2018,6 +2074,10 @@ document.addEventListener('click', (e) => {
   // Clicking outside the palette dismisses it (unless a selection is being made)
   if (!e.target.closest || !e.target.closest('#hl-float')) {
     hlInteracting = false;
+  }
+  // Close the header palette when clicking outside it
+  if (!e.target.closest || !e.target.closest('.pack-hlwrap')) {
+    hideHeaderPalette();
   }
 });
 
@@ -2050,6 +2110,9 @@ document.addEventListener('keydown', (e) => {
 // Hides the floating palette when leaving the pack screen.
 function resetHighlightMode() {
   hideHlFloat();
+  hideHeaderPalette();
+  hlMarker = null;
+  renderHlPalette();
 }
 
 function openPack(id) {
@@ -2372,6 +2435,14 @@ function wirePack() {
   document.getElementById('pack-back').addEventListener('click', () => resetToUpload());
   document.getElementById('pack-study').addEventListener('click', () => { if (requireHearts()) startPackQuiz(); });
   document.getElementById('pack-add').addEventListener('click', openAddQ);
+  document.getElementById('pack-hl').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const pal = document.getElementById('pack-hl-palette');
+    const willShow = pal.classList.contains('hidden');
+    hideHeaderPalette();
+    if (willShow) { pal.classList.remove('hidden'); renderHlPalette(); }
+    else { hlMarker = null; renderHlPalette(); }
+  });
   document.getElementById('addq-save').addEventListener('click', saveAddQ);
   document.getElementById('addq-close').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
   document.getElementById('addq-backdrop').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
