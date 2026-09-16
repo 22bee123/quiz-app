@@ -87,9 +87,10 @@ const navMyd = document.getElementById('nav-myd');
 const navLive = document.getElementById('nav-live');
 const navFriends = document.getElementById('nav-friends');
 const navMessages = document.getElementById('nav-messages');
-const chatLauncher = document.getElementById('chat-launcher');
-const chatBadge = document.getElementById('chat-badge');
-const chatCloseBtn = document.getElementById('chat-close');
+const chatSide = document.getElementById('chat-panel');
+const chatWidget = document.getElementById('chat-widget');
+const chatSearch = document.getElementById('chat-search');
+const chatBackdrop = document.getElementById('chat-backdrop');
 const chatTabsEl = document.getElementById('chat-tabs');
 const chatErrorEl = document.getElementById('chat-error');
 const chatRetryBtn = document.getElementById('chat-retry');
@@ -1844,6 +1845,7 @@ function saveMessages(list) {
 // Single source of truth for conversations + unread, derived from the message store.
 let chatLoading = false;
 let msgFetchSeq = 0;
+let searchQuery = '';
 const MSG_DEBUG = (typeof localStorage !== 'undefined') ? localStorage.getItem('buckMsgDebug') !== '0' : false;
 
 function profileFor(id) {
@@ -1912,58 +1914,38 @@ function renderMessagesBadge() {
     badge.classList.toggle('hidden', n === 0);
   }
   if (nav) nav.title = n ? n + ' unread message' + (n === 1 ? '' : 's') : 'Messages';
-  const lb = document.getElementById('chat-badge');
-  if (lb) {
-    lb.textContent = n > 99 ? '99+' : String(n);
-    lb.classList.toggle('hidden', n === 0);
-  }
 }
 function bumpMessagesBadge() {
   const badge = document.getElementById('nav-messages-badge');
   if (badge) { badge.classList.remove('bump'); void badge.offsetWidth; badge.classList.add('bump'); }
-  const launcher = document.getElementById('chat-launcher');
-  if (launcher) { launcher.classList.remove('bounce'); void launcher.offsetWidth; launcher.classList.add('bounce'); }
-  const lb = document.getElementById('chat-badge');
-  if (lb) { lb.classList.remove('wiggle'); void lb.offsetWidth; lb.classList.add('wiggle'); }
 }
 
+function sideIsOpen() {
+  return !!chatSide && !chatSide.classList.contains('hidden');
+}
 function widgetIsOpen() {
-  const w = document.getElementById('chat-panel');
-  return !!w && !w.classList.contains('hidden');
+  return !!chatWidget && !chatWidget.classList.contains('hidden');
 }
 
+// Messages sidebar (conversation list drawer)
 function openMessages() {
   if (!currentUser) { showAuthGate(); return; }
   setActiveNav('messages');
-  const w = document.getElementById('chat-panel');
-  w.classList.remove('hidden', 'closing');
-  const launcher = document.getElementById('chat-launcher');
-  if (launcher) launcher.setAttribute('aria-expanded', 'true');
-  activeChatId = null;
-  document.getElementById('chat-list').classList.remove('hidden');
-  document.getElementById('chat-thread').classList.add('hidden');
-  document.getElementById('chat-input-wrap').classList.add('hidden');
-  document.getElementById('chat-typing').classList.add('hidden');
-  document.getElementById('chat-name').textContent = 'Messages';
-  document.getElementById('chat-status').textContent = '';
-  document.getElementById('chat-avatar').innerHTML = '\u{1F4AC}';
-  document.getElementById('chat-back').classList.add('hidden');
-  document.getElementById('chat-error').classList.add('hidden');
-  renderChatTabs();
+  chatSide.classList.remove('hidden', 'closing');
+  if (chatBackdrop) chatBackdrop.classList.remove('hidden');
+  if (chatSearch) chatSearch.value = '';
+  searchQuery = '';
   chatLoading = true;
-  renderConversations(); // skeleton until the fetch resolves
+  renderConversations();
   refreshMessages(true);
+  setTimeout(() => { try { chatSearch.focus(); } catch (e) {} }, 80);
 }
 
 function closeMessages() {
-  const w = document.getElementById('chat-panel');
-  if (!w || w.classList.contains('hidden')) return;
-  w.classList.add('closing');
-  setTimeout(() => { w.classList.add('hidden'); w.classList.remove('closing'); }, 150);
-  const launcher = document.getElementById('chat-launcher');
-  if (launcher) launcher.setAttribute('aria-expanded', 'false');
-  activeChatId = null;
-  setActiveNav(null);
+  if (!sideIsOpen()) return;
+  chatSide.classList.add('closing');
+  setTimeout(() => { chatSide.classList.add('hidden'); chatSide.classList.remove('closing'); }, 200);
+  if (chatBackdrop) chatBackdrop.classList.add('hidden');
 }
 
 /* Docked conversation tabs (max 3, like Facebook) */
@@ -1975,8 +1957,12 @@ function addChatTab(friendId) {
 }
 function removeChatTab(friendId) {
   openChatTabs = openChatTabs.filter((id) => id !== friendId);
+  if (activeChatId === friendId) {
+    const next = openChatTabs[openChatTabs.length - 1];
+    if (next) openChat(next);
+    else closeChatWidget();
+  }
   renderChatTabs();
-  if (activeChatId === friendId) openMessages();
 }
 function renderChatTabs() {
   if (!chatTabsEl) return;
@@ -1984,35 +1970,38 @@ function renderChatTabs() {
   chatTabsEl.classList.toggle('hidden', openChatTabs.length === 0);
   openChatTabs.forEach((id) => {
     const p = profileFor(id);
-    const unread = groupConversations().find((c) => c.friendId === id);
+    const convo = groupConversations().find((c) => c.friendId === id);
     const tab = document.createElement('div');
     tab.className = 'chat-tab' + (id === activeChatId ? ' active' : '');
     tab.innerHTML =
       '<span class="fr-avatar xs">' + avatarInner(p) + '</span>' +
       '<span class="tab-name">' + escapeHtml(nameOf(p).split(' ')[0]) + '</span>' +
-      (unread && unread.unread ? '<span class="tab-unread">' + unread.unread + '</span>' : '') +
+      (convo && convo.unread ? '<span class="tab-unread">' + convo.unread + '</span>' : '') +
       '<button type="button" class="tab-x" aria-label="Close tab">\u00d7</button>';
     tab.addEventListener('click', (e) => {
       if (e.target.closest('.tab-x')) return;
-      openChat(id, true);
+      openChat(id);
     });
     tab.querySelector('.tab-x').addEventListener('click', (e) => { e.stopPropagation(); removeChatTab(id); });
     chatTabsEl.appendChild(tab);
   });
 }
 
-async function openChat(friendId, keepTabs) {
+function closeChatWidget() {
+  if (!widgetIsOpen()) return;
+  chatWidget.classList.add('closing');
+  setTimeout(() => { chatWidget.classList.add('hidden'); chatWidget.classList.remove('closing'); }, 150);
+  activeChatId = null;
+}
+
+async function openChat(friendId) {
   addChatTab(friendId);
   activeChatId = friendId;
-  const w = document.getElementById('chat-panel');
-  w.classList.remove('hidden', 'closing');
-  const launcher = document.getElementById('chat-launcher');
-  if (launcher) launcher.setAttribute('aria-expanded', 'true');
-  document.getElementById('chat-list').classList.add('hidden');
+  closeMessages(); // Option A: sidebar closes, widget opens
+  chatWidget.classList.remove('hidden', 'closing');
   document.getElementById('chat-error').classList.add('hidden');
   document.getElementById('chat-thread').classList.remove('hidden');
   document.getElementById('chat-input-wrap').classList.remove('hidden');
-  document.getElementById('chat-back').classList.remove('hidden');
   await ensureProfiles([friendId]);
   const profile = profileFor(friendId);
   document.getElementById('chat-name').textContent = nameOf(profile);
@@ -2030,8 +2019,7 @@ async function openChat(friendId, keepTabs) {
 }
 
 function chatBack() {
-  if (activeChatId) openMessages();
-  else closeMessages();
+  openMessages();
 }
 
 function markConversationRead(friendId) {
@@ -2100,14 +2088,16 @@ function renderConversations() {
     return;
   }
 
-  const convos = groupConversations();
+  const convos = searchQuery
+    ? groupConversations().filter((c) => nameOf(profileFor(c.friendId)).toLowerCase().includes(searchQuery) || (c.last.text || '').toLowerCase().includes(searchQuery))
+    : groupConversations();
   if (chatErrorEl) chatErrorEl.classList.add('hidden');
   if (!convos.length) {
     el.innerHTML =
       '<div class="friend-empty">' +
       '<svg viewBox="0 0 240 240" role="img" aria-label="Buck"><use href="#buck-thinking" /></svg>' +
-      '<strong>No messages yet</strong>' +
-      '<span>Start a chat from the Friends tab! \u{1F4AC}</span>' +
+      '<strong>' + (searchQuery ? 'No matches' : 'No messages yet') + '</strong>' +
+      '<span>' + (searchQuery ? 'Try a different name.' : 'Start a chat from the Friends tab! \u{1F4AC}') + '</span>' +
       '</div>';
     return;
   }
@@ -2220,24 +2210,25 @@ async function refreshMessages(force) {
     chatErrorEl && chatErrorEl.classList.add('hidden');
     renderMessagesBadge();
     renderChatTabs();
+    renderConversations();
     if (activeChatId) { renderChatThread(); markConversationRead(activeChatId); }
-    else renderConversations();
 
     if (added) {
       const latest = allMessages().slice().sort((a, b) => a.at - b.at).slice(-1)[0];
       if (latest && latest.from !== me && latest.to === me && latest.from !== activeChatId) {
         const from = profileFor(latest.from);
-        showToast('New message from ' + (nameOf(from) !== 'Unknown' ? nameOf(from) : 'a friend') + ' \u{1F4AC}', 'correct');
+        const label = nameOf(from) !== 'Unknown' ? nameOf(from) : 'a friend';
+        showToastAction('New message from ' + label + ' \u{1F4AC}', 'Open', () => openChat(latest.from), 5000);
         bumpMessagesBadge();
       }
     }
   } catch (e) {
     if (MSG_DEBUG) console.warn('[messages] fetch failed:', e && e.message);
-    if (chatErrorEl && !activeChatId && widgetIsOpen()) chatErrorEl.classList.remove('hidden');
+    if (chatErrorEl && sideIsOpen()) chatErrorEl.classList.remove('hidden');
   } finally {
     if (seq === msgFetchSeq) {
       chatLoading = false;
-      if (!activeChatId) renderConversations();
+      renderConversations();
     }
   }
 }
@@ -2305,18 +2296,25 @@ function wireFriends() {
     renderRequests();
   });
 
-  // Floating chat widget wiring
+  // Messages sidebar + chat widget wiring
   document.getElementById('chat-back').addEventListener('click', chatBack);
-  document.getElementById('chat-close').addEventListener('click', closeMessages);
-  const launcher = document.getElementById('chat-launcher');
-  if (launcher) launcher.addEventListener('click', () => {
-    if (widgetIsOpen()) closeMessages();
-    else openMessages();
+  document.getElementById('chat-side-close').addEventListener('click', closeMessages);
+  document.getElementById('chat-side-back').addEventListener('click', closeMessages);
+  document.getElementById('chat-close').addEventListener('click', () => {
+    if (activeChatId) removeChatTab(activeChatId);
+    else closeChatWidget();
   });
+  if (chatBackdrop) chatBackdrop.addEventListener('click', closeMessages);
   const retry = document.getElementById('chat-retry');
   if (retry) retry.addEventListener('click', () => refreshMessages(true));
+  if (chatSearch) chatSearch.addEventListener('input', () => {
+    searchQuery = chatSearch.value.trim().toLowerCase();
+    renderConversations();
+  });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && widgetIsOpen()) closeMessages();
+    if (e.key !== 'Escape') return;
+    if (widgetIsOpen()) removeChatTab(activeChatId);
+    else if (sideIsOpen()) closeMessages();
   });
   document.getElementById('chat-menu-btn').addEventListener('click', () => {
     document.getElementById('chat-menu').classList.toggle('hidden');
