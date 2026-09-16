@@ -514,6 +514,7 @@ async function callGenerate(body) {
     e.pages = first.data.pages || null;
     e.path = first.data.path || null;
     e.model = first.data.model || null;
+    e.debug = first.data.debug || null;
     e.detail = (first.data.detail || first.data.error || '') + ' (HTTP ' + status + ')';
     throw e;
   }
@@ -823,50 +824,83 @@ function cancelLiveGeneration() {
   if (genState.controller) { try { genState.controller.abort(); } catch (e) {} }
 }
 
-// Dedicated resume: generate ONLY the missing amount, avoiding duplicates of existing cards.
-async function resumeGeneration(missing) {
-  const pack = getPack(genState.packId);
-  if (!pack || missing <= 0) return 0;
-  if (!pendingContent || (!pendingContent.text && !(pendingContent.images && pendingContent.images.length))) {
-    if (pack.sourceText) pendingContent = { text: pack.sourceText, name: pack.sourceName || pack.name };
-    else return 0;
-  }
-  const existing = pack.items.map((c) => c.question).slice(0, 60);
-  const BATCH = 3;
-  const MAX_ATTEMPTS = Math.max(4, Math.ceil(missing / BATCH) + 2);
-  let added = 0;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS && added < missing && !genState.cancelled; attempt++) {
-    const want = Math.min(BATCH, missing - added);
+// Dedicated resume: only generate the MISSING amount, with fresh counts each loop,
+// dynamic batch sizing, payload validation, and duplicate-safe appends.
+async function resumeGeneration() {
+  const packId = genState.packId;
+  const BATCH_MIN = 3;
+  const BATCH_MAX = 10;
+  let guard = 0;
+
+  while (guard++ < 15) {
+    if (genState.cancelled) break;
+    const pack = getPack(packId);
+    if (!pack) break;
+
+    // Fresh counts every iteration (never a stale captured value).
+    const current = pack.items.length;
+    const missing = genState.target - current;
+    console.log('[Resume] pack=' + packId, 'current=' + current, 'target=' + genState.target, 'missing=' + missing);
+    if (missing <= 0) break;
+
+    // Rebuild the source if the page was reloaded.
+    if (!pendingContent || (!pendingContent.text && !(pendingContent.images && pendingContent.images.length))) {
+      if (pack.sourceText) pendingContent = { text: pack.sourceText, name: pack.sourceName || pack.name };
+    }
+    const hasImages = pendingContent && pendingContent.images && pendingContent.images.length;
+    const hasText = pendingContent && typeof pendingContent.text === 'string' && pendingContent.text.trim().length >= 50;
+    if (!hasImages && !hasText) {
+      const e = new Error("Buck can't generate more from this PDF — the text is missing.");
+      e.code = 'NO_SOURCE';
+      throw e;
+    }
+
+    // Dynamic batch: 13 missing → 7, 6 missing → 3, 20 missing → 10.
+    const batchSize = Math.min(Math.max(BATCH_MIN, Math.ceil(missing / 2)), BATCH_MAX);
+    if (!Number.isInteger(batchSize) || batchSize <= 0) throw new Error('Invalid question count: ' + batchSize);
+
+    const existing = pack.items.map((c) => c.question).filter(Boolean).slice(0, 60);
+    const body = hasImages ? { images: pendingContent.images } : { text: pendingContent.text };
+    body.existing = existing;
+    body.count = batchSize;
+    console.log('[Resume] asking=' + batchSize, 'existing=' + existing.length);
+
+    const before = current;
     try {
-      const body = pendingContent.images && pendingContent.images.length
-        ? { images: pendingContent.images, existing }
-        : { text: pendingContent.text, existing };
-      console.log('[Resume] pack=' + pack.id, 'got=' + pack.items.length, 'target=' + genState.target, 'missing=' + missing, 'asking=' + want);
-      const cards = await callGenerateWithFallback(body, want);
-      const before = (getPack(genState.packId) || { items: [] }).items.length;
+      const cards = await callGenerateWithFallback(body, batchSize);
       appendLiveCards(cards);
-      added += ((getPack(genState.packId) || { items: [] }).items.length) - before;
+      const after = (getPack(packId) || { items: [] }).items.length;
+      console.log('[Resume] added=' + (after - before), 'now=' + after);
+      if (after === before) {
+        // Model returned only duplicates/existing → stop and let the UI offer fallbacks.
+        genState.error = lastGenError || new Error('Buck only wrote questions you already have.');
+        break;
+      }
+      genState.error = null;
     } catch (err) {
       if (err && err.name === 'AbortError') break;
       genState.error = err;
-      console.warn('[Resume] batch failed:', err && err.message);
+      lastGenError = err;
+      console.warn('[Resume] batch failed:', err.code || '', err.message, err.debug || '');
+      break;
     }
   }
-  return added;
+  return (getPack(packId) || { items: [] }).items.length;
 }
 
 async function continueLiveGeneration() {
   if (!genState || genState.running) return; // double-click guard
   const pack = getPack(genState.packId) || { items: [] };
-  const missing = genState.target - pack.items.length;
-  if (missing <= 0) { finishLiveGeneration(false, null); return; }
+  if (genState.target - pack.items.length <= 0) { finishLiveGeneration(false, null); return; }
   genState.cancelled = false;
   genState.error = null;
   genState.running = true;
   renderPackBanner();
   try {
-    await resumeGeneration(missing);
-  } catch (e) {}
+    await resumeGeneration();
+  } catch (e) {
+    if (!(e && e.name === 'AbortError')) { genState.error = e; lastGenError = e; }
+  }
   const got = (getPack(genState.packId) || { items: [] }).items.length;
   const complete = !genState.error && got >= genState.target;
   if (complete && pendingContent && pendingContent.text) setCachedGen(textHash(pendingContent.text), genState.target, (getPack(genState.packId) || { items: [] }).items);
@@ -884,7 +918,10 @@ async function finishLiveGeneration(partial, error) {
   if (!partial && !error) {
     showToast(got + ' cards added to your StudyPack! 🦆', 'correct');
   } else if (error) {
-    showToast('Buck stopped at ' + got + ' of ' + genState.target + '.', 'wrong');
+    const msg = error.code === 'NO_SOURCE'
+      ? error.message
+      : 'Buck stopped at ' + got + ' of ' + genState.target + '. ' + (error.detail || error.message || '');
+    showToast(msg, 'wrong');
   } else {
     showToast('Saved ' + got + ' cards so far — add more anytime 🦆', 'correct');
   }

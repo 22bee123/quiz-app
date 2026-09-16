@@ -542,10 +542,45 @@ app.post('/api/generate', async (req, res) => {
       ? req.body.images.filter((s) => typeof s === 'string' && s.startsWith('data:image/')).slice(0, MAX_VISION_PAGES)
       : [];
     imageCount = images.length;
-    const count = Math.min(Math.max(parseInt(req.body.count, 10) || 10, 1), PER_CHUNK_CARDS);
+    const rawCount = req.body.count;
+    const count = Math.min(Math.max(parseInt(rawCount, 10) || 10, 1), PER_CHUNK_CARDS);
+    const existing = Array.isArray(req.body.existing)
+      ? req.body.existing.filter((s) => typeof s === 'string').slice(0, 60)
+      : [];
 
     if (!text && images.length === 0) {
-      return res.status(400).json({ error: 'No content received for generation.', code: 'EMPTY' });
+      console.error('[generate] 422: text/pdf input is empty', { pdfTextLength: text.length, questionCount: rawCount, existing: existing.length });
+      return res.status(422).json({
+        error: 'No content received for generation.',
+        code: 'EMPTY',
+        reason: 'text_missing',
+        detail: 'pdfTextLength=0',
+        debug: { pdfTextLength: text.length, questionCount: rawCount, existing: existing.length },
+      });
+    }
+
+    // Text present but too short to generate meaningful questions.
+    if (!images.length && text.trim().length < 50) {
+      console.error('[generate] 422: text too short', { pdfTextLength: text.length, questionCount: rawCount, existing: existing.length });
+      return res.status(422).json({
+        error: "Buck can't generate more from this PDF — the text is missing.",
+        code: 'EMPTY',
+        reason: 'text_too_short',
+        detail: 'pdfTextLength=' + text.length,
+        debug: { pdfTextLength: text.length, questionCount: rawCount, existing: existing.length },
+      });
+    }
+
+    // Invalid count guard (client sends 0/negative/NaN on bad state).
+    if (!Number.isInteger(parseInt(rawCount, 10)) || parseInt(rawCount, 10) <= 0) {
+      console.error('[generate] 422: invalid question count', { pdfTextLength: text.length, questionCount: rawCount, existing: existing.length });
+      return res.status(422).json({
+        error: 'Invalid question count: ' + rawCount,
+        code: 'EMPTY',
+        reason: 'invalid_count',
+        detail: 'questionCount=' + rawCount,
+        debug: { pdfTextLength: text.length, questionCount: rawCount, existing: existing.length },
+      });
     }
 
     // Scanned/image PDFs: when vision is disabled, fail early with a specific, actionable code.
@@ -559,9 +594,6 @@ app.post('/api/generate', async (req, res) => {
     }
 
     const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
-    const existing = Array.isArray(req.body.existing)
-      ? req.body.existing.filter((s) => typeof s === 'string').slice(0, 60)
-      : [];
     if (existing.length) console.log(`[Resume] count=${count} existing=${existing.length} chars=${text.length}`);
     if (debug) console.log(`[generate] ${images.length ? 'images=' + images.length : 'chars=' + text.length} count=${count} model=${ACTIVE_MODEL} jsonMode=${JSON_MODE_SUPPORTED}`);
 
@@ -618,8 +650,12 @@ app.post('/api/generate', async (req, res) => {
       : code === 'VISION_401' ? 'AI key invalid — check your DeepSeek settings.'
       : null;
     if (code !== 'VISION_429') console.error('Generate error:', code, err.reason || '', err.message);
-    res.status(statusForCode(code)).json({
-      error: friendly || `Failed to generate questions: ${err.message}`,
+    const status = statusForCode(code);
+    if (status === 422) {
+      console.error('[generate] 422 fired:', { reason: err.reason || null, pdfTextLength: (req.body && typeof req.body.text === 'string') ? req.body.text.length : 0, questionCount: req.body && req.body.count, existing: Array.isArray(req.body && req.body.existing) ? req.body.existing.length : 0 });
+    }
+    res.status(status).json({
+      error: friendly || `${err.message}`,
       code,
       reason: err.reason || null,
       model: ACTIVE_MODEL,
@@ -627,6 +663,7 @@ app.post('/api/generate', async (req, res) => {
       pages: visionPath ? imageCount : null,
       detail: err.message,
       rawSample: err.rawSample || null,
+      debug: { pdfTextLength: (req.body && typeof req.body.text === 'string') ? req.body.text.length : 0, questionCount: req.body && req.body.count, existing: Array.isArray(req.body && req.body.existing) ? req.body.existing.length : 0 },
     });
   }
 });
