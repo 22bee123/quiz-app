@@ -1387,7 +1387,9 @@ function renderPack() {
   document.getElementById('pack-n').textContent = `(${pack.items.length})`;
   listEl.innerHTML = '';
   if (!pack.items.length) {
-    listEl.innerHTML = '<p class="pack-empty">No cards yet. Add a question to get started.</p>';
+    listEl.innerHTML = '<div class="pack-empty">' +
+      '<svg class="buck-svg empty-buck" viewBox="0 0 240 240" role="img" aria-label="Buck waiting to study"><use href="#buck-thinking" /></svg>' +
+      'No cards yet. Add a question to get started.</div>';
     return;
   }
   pack.items.forEach((it, i) => {
@@ -2483,6 +2485,23 @@ function wireSidebar() {
     sidebar.classList.toggle('collapsed', collapsed);
     localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
   });
+
+  const navTheme = document.getElementById('nav-theme');
+  if (navTheme) {
+    const syncTheme = () => {
+      const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+      navTheme.setAttribute('aria-pressed', String(dark));
+      navTheme.title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+    };
+    syncTheme();
+    navTheme.addEventListener('click', () => {
+      const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+      if (dark) document.documentElement.removeAttribute('data-theme');
+      else document.documentElement.setAttribute('data-theme', 'dark');
+      try { localStorage.setItem('buckTheme', dark ? 'light' : 'dark'); } catch (e) {}
+      syncTheme();
+    });
+  }
 
   sidebarOpenBtn.addEventListener('click', openMobileSidebar);
   sidebarBackdrop.addEventListener('click', closeMobileSidebar);
