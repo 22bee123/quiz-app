@@ -87,6 +87,12 @@ const navMyd = document.getElementById('nav-myd');
 const navLive = document.getElementById('nav-live');
 const navFriends = document.getElementById('nav-friends');
 const navMessages = document.getElementById('nav-messages');
+const chatLauncher = document.getElementById('chat-launcher');
+const chatBadge = document.getElementById('chat-badge');
+const chatCloseBtn = document.getElementById('chat-close');
+const chatTabsEl = document.getElementById('chat-tabs');
+const chatErrorEl = document.getElementById('chat-error');
+const chatRetryBtn = document.getElementById('chat-retry');
 const navAccount = document.getElementById('nav-account');
 const navAvatar = document.getElementById('nav-avatar');
 const navAccountName = document.getElementById('nav-account-name');
@@ -1444,9 +1450,19 @@ function avatarUrlOf(p) {
 
 function avatarInner(p) {
   const url = avatarUrlOf(p);
-  if (url) return '<img src="' + escapeHtml(url) + '" alt="" />';
+  if (url) return '<img src="' + escapeHtml(url) + '" alt="" loading="lazy" onerror="window.__buckAvatarErr&&window.__buckAvatarErr(this)" />';
   return escapeHtml(((nameOf(p) || '?')[0] || '?').toUpperCase());
 }
+
+// Broken image URL → swap in Buck's placeholder (shared by every avatar in the app).
+window.__buckAvatarErr = function (img) {
+  try {
+    const span = document.createElement('span');
+    span.className = 'buck-av-fallback';
+    span.innerHTML = '<svg viewBox="0 0 64 64" role="img" aria-label="Buck avatar"><use href="#buck-mark" /></svg>';
+    img.replaceWith(span);
+  } catch (e) {}
+};
 
 function isOnline(p) {
   if (!p) return false;
@@ -1890,26 +1906,41 @@ function unreadCount() {
 function renderMessagesBadge() {
   const nav = document.getElementById('nav-messages');
   const badge = document.getElementById('nav-messages-badge');
-  if (!nav || !badge) return;
   const n = unreadCount();
-  badge.textContent = n > 99 ? '99+' : String(n);
-  badge.classList.toggle('hidden', n === 0);
-  nav.title = n ? n + ' unread message' + (n === 1 ? '' : 's') : 'Messages';
+  if (badge) {
+    badge.textContent = n > 99 ? '99+' : String(n);
+    badge.classList.toggle('hidden', n === 0);
+  }
+  if (nav) nav.title = n ? n + ' unread message' + (n === 1 ? '' : 's') : 'Messages';
+  const lb = document.getElementById('chat-badge');
+  if (lb) {
+    lb.textContent = n > 99 ? '99+' : String(n);
+    lb.classList.toggle('hidden', n === 0);
+  }
 }
 function bumpMessagesBadge() {
   const badge = document.getElementById('nav-messages-badge');
-  if (!badge) return;
-  badge.classList.remove('bump');
-  void badge.offsetWidth;
-  badge.classList.add('bump');
+  if (badge) { badge.classList.remove('bump'); void badge.offsetWidth; badge.classList.add('bump'); }
+  const launcher = document.getElementById('chat-launcher');
+  if (launcher) { launcher.classList.remove('bounce'); void launcher.offsetWidth; launcher.classList.add('bounce'); }
+  const lb = document.getElementById('chat-badge');
+  if (lb) { lb.classList.remove('wiggle'); void lb.offsetWidth; lb.classList.add('wiggle'); }
+}
+
+function widgetIsOpen() {
+  const w = document.getElementById('chat-panel');
+  return !!w && !w.classList.contains('hidden');
 }
 
 function openMessages() {
   if (!currentUser) { showAuthGate(); return; }
   setActiveNav('messages');
-  document.getElementById('chat-panel').classList.remove('hidden');
-  document.getElementById('chat-backdrop').classList.remove('hidden');
+  const w = document.getElementById('chat-panel');
+  w.classList.remove('hidden', 'closing');
+  const launcher = document.getElementById('chat-launcher');
+  if (launcher) launcher.setAttribute('aria-expanded', 'true');
   activeChatId = null;
+  document.getElementById('chat-list').classList.remove('hidden');
   document.getElementById('chat-thread').classList.add('hidden');
   document.getElementById('chat-input-wrap').classList.add('hidden');
   document.getElementById('chat-typing').classList.add('hidden');
@@ -1917,16 +1948,68 @@ function openMessages() {
   document.getElementById('chat-status').textContent = '';
   document.getElementById('chat-avatar').innerHTML = '\u{1F4AC}';
   document.getElementById('chat-back').classList.add('hidden');
+  document.getElementById('chat-error').classList.add('hidden');
+  renderChatTabs();
   chatLoading = true;
   renderConversations(); // skeleton until the fetch resolves
   refreshMessages(true);
 }
 
-async function openChat(friendId) {
+function closeMessages() {
+  const w = document.getElementById('chat-panel');
+  if (!w || w.classList.contains('hidden')) return;
+  w.classList.add('closing');
+  setTimeout(() => { w.classList.add('hidden'); w.classList.remove('closing'); }, 150);
+  const launcher = document.getElementById('chat-launcher');
+  if (launcher) launcher.setAttribute('aria-expanded', 'false');
+  activeChatId = null;
+  setActiveNav(null);
+}
+
+/* Docked conversation tabs (max 3, like Facebook) */
+let openChatTabs = [];
+function addChatTab(friendId) {
+  if (!openChatTabs.includes(friendId)) openChatTabs.push(friendId);
+  if (openChatTabs.length > 3) openChatTabs = openChatTabs.slice(-3);
+  renderChatTabs();
+}
+function removeChatTab(friendId) {
+  openChatTabs = openChatTabs.filter((id) => id !== friendId);
+  renderChatTabs();
+  if (activeChatId === friendId) openMessages();
+}
+function renderChatTabs() {
+  if (!chatTabsEl) return;
+  chatTabsEl.innerHTML = '';
+  chatTabsEl.classList.toggle('hidden', openChatTabs.length === 0);
+  openChatTabs.forEach((id) => {
+    const p = profileFor(id);
+    const unread = groupConversations().find((c) => c.friendId === id);
+    const tab = document.createElement('div');
+    tab.className = 'chat-tab' + (id === activeChatId ? ' active' : '');
+    tab.innerHTML =
+      '<span class="fr-avatar xs">' + avatarInner(p) + '</span>' +
+      '<span class="tab-name">' + escapeHtml(nameOf(p).split(' ')[0]) + '</span>' +
+      (unread && unread.unread ? '<span class="tab-unread">' + unread.unread + '</span>' : '') +
+      '<button type="button" class="tab-x" aria-label="Close tab">\u00d7</button>';
+    tab.addEventListener('click', (e) => {
+      if (e.target.closest('.tab-x')) return;
+      openChat(id, true);
+    });
+    tab.querySelector('.tab-x').addEventListener('click', (e) => { e.stopPropagation(); removeChatTab(id); });
+    chatTabsEl.appendChild(tab);
+  });
+}
+
+async function openChat(friendId, keepTabs) {
+  addChatTab(friendId);
   activeChatId = friendId;
-  document.getElementById('chat-panel').classList.remove('hidden');
-  document.getElementById('chat-backdrop').classList.remove('hidden');
+  const w = document.getElementById('chat-panel');
+  w.classList.remove('hidden', 'closing');
+  const launcher = document.getElementById('chat-launcher');
+  if (launcher) launcher.setAttribute('aria-expanded', 'true');
   document.getElementById('chat-list').classList.add('hidden');
+  document.getElementById('chat-error').classList.add('hidden');
   document.getElementById('chat-thread').classList.remove('hidden');
   document.getElementById('chat-input-wrap').classList.remove('hidden');
   document.getElementById('chat-back').classList.remove('hidden');
@@ -1940,17 +2023,10 @@ async function openChat(friendId) {
   document.getElementById('chat-avatar').innerHTML = avatarInner(profile);
   document.getElementById('chat-avatar').dataset.friendId = friendId;
   renderChatThread();
+  renderChatTabs();
   markConversationRead(friendId);
   refreshMessages(true);
   setTimeout(() => { const i = document.getElementById('chat-input'); if (i) i.focus(); }, 60);
-}
-
-function closeMessages() {
-  document.getElementById('chat-panel').classList.add('hidden');
-  document.getElementById('chat-backdrop').classList.add('hidden');
-  document.getElementById('chat-list').classList.remove('hidden');
-  activeChatId = null;
-  setActiveNav(null);
 }
 
 function chatBack() {
@@ -2025,6 +2101,7 @@ function renderConversations() {
   }
 
   const convos = groupConversations();
+  if (chatErrorEl) chatErrorEl.classList.add('hidden');
   if (!convos.length) {
     el.innerHTML =
       '<div class="friend-empty">' +
@@ -2140,7 +2217,9 @@ async function refreshMessages(force) {
 
     if (seq !== msgFetchSeq) return; // a newer fetch superseded this one
 
+    chatErrorEl && chatErrorEl.classList.add('hidden');
     renderMessagesBadge();
+    renderChatTabs();
     if (activeChatId) { renderChatThread(); markConversationRead(activeChatId); }
     else renderConversations();
 
@@ -2154,6 +2233,7 @@ async function refreshMessages(force) {
     }
   } catch (e) {
     if (MSG_DEBUG) console.warn('[messages] fetch failed:', e && e.message);
+    if (chatErrorEl && !activeChatId && widgetIsOpen()) chatErrorEl.classList.remove('hidden');
   } finally {
     if (seq === msgFetchSeq) {
       chatLoading = false;
@@ -2225,9 +2305,19 @@ function wireFriends() {
     renderRequests();
   });
 
-  // Chat wiring
+  // Floating chat widget wiring
   document.getElementById('chat-back').addEventListener('click', chatBack);
-  document.getElementById('chat-backdrop').addEventListener('click', closeMessages);
+  document.getElementById('chat-close').addEventListener('click', closeMessages);
+  const launcher = document.getElementById('chat-launcher');
+  if (launcher) launcher.addEventListener('click', () => {
+    if (widgetIsOpen()) closeMessages();
+    else openMessages();
+  });
+  const retry = document.getElementById('chat-retry');
+  if (retry) retry.addEventListener('click', () => refreshMessages(true));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && widgetIsOpen()) closeMessages();
+  });
   document.getElementById('chat-menu-btn').addEventListener('click', () => {
     document.getElementById('chat-menu').classList.toggle('hidden');
   });
@@ -3725,6 +3815,7 @@ let suSchoolSeq = 0;
 let suUserOk = false;
 let suUserTimer = null;
 let suAvatarData = '';
+let suAvatarFile = null;
 let suRole = '';
 
 function logoForDomain(domain) {
@@ -3851,6 +3942,7 @@ function openSignup() {
   suSchool = draft && draft.schoolData ? draft.schoolData : null;
   suUserOk = false;
   suAvatarData = '';
+  suAvatarFile = null;
 
   document.getElementById('su-email').value = (draft && draft.email) || '';
   document.getElementById('su-name').value = (draft && draft.name) || '';
@@ -4157,23 +4249,81 @@ function updateAvatarPreview(btn, dataUrl) {
   else btn.innerHTML = '<svg viewBox="0 0 64 64" role="img" aria-label="Buck placeholder avatar"><use href="#buck-mark" /></svg>';
 }
 
-function readImageResized(file, cb) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    const img = new Image();
-    img.onload = () => {
-      const size = 256;
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      const s = Math.min(img.width, img.height);
-      ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
-      cb(canvas.toDataURL('image/jpeg', 0.85));
-    };
-    img.src = reader.result;
+// Resize to a square of `size` and re-encode as JPEG (keeps uploads small).
+function resizeImageToBlob(file, size, quality, cb) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const s = Math.min(img.width, img.height);
+    ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+    URL.revokeObjectURL(url);
+    canvas.toBlob((blob) => cb(blob), 'image/jpeg', quality || 0.85);
   };
-  reader.readAsDataURL(file);
+  img.onerror = () => { URL.revokeObjectURL(url); cb(null); };
+  img.src = url;
+}
+
+function readImageResized(file, cb) {
+  resizeImageToBlob(file, 512, 0.85, (blob) => {
+    if (!blob) return cb('');
+    const reader = new FileReader();
+    reader.onload = () => cb(reader.result);
+    reader.readAsDataURL(blob);
+  });
+}
+
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const AVATAR_BUCKET = 'avatars';
+
+// Upload a profile photo to Supabase Storage and persist the public URL on the profile.
+async function uploadAvatar(userId, file) {
+  if (!supabaseClient || !userId) throw new Error('Not signed in');
+  if (!file) throw new Error('No file');
+  if (!AVATAR_TYPES.includes(file.type)) throw new Error('Unsupported image format');
+  if (file.size > 2 * 1024 * 1024) throw new Error('Image must be under 2MB');
+
+  const blob = await new Promise((resolve) => {
+    let settled = false;
+    const done = (b) => { if (!settled) { settled = true; resolve(b); } };
+    try { resizeImageToBlob(file, 512, 0.85, done); } catch (e) { done(null); }
+    setTimeout(() => done(null), 1500); // fall back to the original file if decoding stalls
+  }).then((b) => b || file);
+
+  const filePath = userId + '/avatar.jpg';
+  const { error: uploadError } = await supabaseClient.storage
+    .from(AVATAR_BUCKET)
+    .upload(filePath, blob, { upsert: true, cacheControl: '3600', contentType: 'image/jpeg' });
+  if (uploadError) throw uploadError;
+
+  const { data } = supabaseClient.storage.from(AVATAR_BUCKET).getPublicUrl(filePath);
+  const url = data.publicUrl + '?v=' + Date.now(); // cache bust
+  await supabaseClient.from('profiles').update({ avatar_url: url }).eq('id', userId);
+  try { await supabaseClient.auth.updateUser({ data: { avatar_url: url } }); } catch (e) {}
+  const cache = getProfileCache();
+  cache.avatar = url;
+  saveProfileCache(cache);
+  updateAuthUI();
+  return url;
+}
+
+async function removeAvatar(userId) {
+  if (!supabaseClient || !userId) return;
+  try { await supabaseClient.storage.from(AVATAR_BUCKET).remove([userId + '/avatar.jpg']); } catch (e) {}
+  try { await supabaseClient.from('profiles').update({ avatar_url: null }).eq('id', userId); } catch (e) {}
+  try { await supabaseClient.auth.updateUser({ data: { avatar_url: null } }); } catch (e) {}
+  const cache = getProfileCache();
+  cache.avatar = '';
+  saveProfileCache(cache);
+  updateAuthUI();
+}
+
+function avatarLoading(btn, on) {
+  if (!btn) return;
+  btn.classList.toggle('loading', !!on);
 }
 
 async function createAccount() {
@@ -4215,6 +4365,15 @@ async function createAccount() {
 
     if (data && data.user) {
       try { await supabaseClient.from('profiles').update({ username }).eq('id', data.user.id); } catch (e) {}
+      // Best-effort: upload the optional signup photo now that we have a user id.
+      if (suAvatarFile) {
+        try {
+          const url = await uploadAvatar(data.user.id, suAvatarFile);
+          const cache = getProfileCache();
+          cache.avatar = url;
+          saveProfileCache(cache);
+        } catch (e) {}
+      }
     }
 
     localStorage.removeItem('buckSignupDraft');
@@ -4367,6 +4526,7 @@ function wireSignup() {
   document.getElementById('su-avatar-input').addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
+    suAvatarFile = file;
     readImageResized(file, (dataUrl) => {
       suAvatarData = dataUrl;
       updateAvatarPreview(document.getElementById('su-avatar-btn'), dataUrl);
@@ -4498,19 +4658,62 @@ function wireProfile() {
     });
   });
 
-  document.getElementById('pe-photo-btn').addEventListener('click', () => document.getElementById('pe-photo-input').click());
-  document.getElementById('pe-photo-input').addEventListener('change', (e) => {
-    const file = e.target.files && e.target.files[0];
+  const peAvatarEl = document.getElementById('pe-avatar');
+  const pePhotoInput = document.getElementById('pe-photo-input');
+
+  async function handleAvatarFile(file) {
     if (!file) return;
-    readImageResized(file, (dataUrl) => {
-      peAvatar = dataUrl;
-      document.getElementById('pe-avatar').innerHTML = '<img src="' + dataUrl + '" alt="Profile photo" />';
-    });
+    if (!AVATAR_TYPES.includes(file.type)) { showToast('Unsupported image — use JPG, PNG, WEBP or GIF.', 'wrong'); return; }
+    if (file.size > 2 * 1024 * 1024) { showToast('That photo is over 2MB — try a smaller one.', 'wrong'); return; }
+
+    // Instant local preview
+    const previewUrl = URL.createObjectURL(file);
+    peAvatarEl.innerHTML = '<img src="' + previewUrl + '" alt="Profile photo" />';
+    avatarLoading(peAvatarEl, true);
+
+    try {
+      const url = await uploadAvatar(currentUser.id, file);
+      peAvatar = url;
+      renderProfileView();
+      showToast('Looking good! Profile photo updated 🦆', 'correct');
+    } catch (e) {
+      showToast("Couldn't upload that photo. Try a smaller file.", 'wrong');
+      peAvatarEl.innerHTML = avatarMarkup({ avatar: peAvatar });
+    } finally {
+      avatarLoading(peAvatarEl, false);
+      try { URL.revokeObjectURL(previewUrl); } catch (e2) {}
+    }
+  }
+
+  document.getElementById('pe-photo-btn').addEventListener('click', () => pePhotoInput.click());
+  pePhotoInput.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    handleAvatarFile(file);
   });
-  document.getElementById('pe-photo-remove').addEventListener('click', () => {
+  document.getElementById('pe-photo-remove').addEventListener('click', async () => {
+    await removeAvatar(currentUser.id);
     peAvatar = '';
-    document.getElementById('pe-avatar').innerHTML = avatarMarkup({ avatar: '' }, 'B');
+    peAvatarEl.innerHTML = avatarMarkup({ avatar: '' });
+    renderProfileView();
+    showToast('Profile photo removed.', '');
   });
+
+  // Drag & drop onto the avatar circle
+  if (peAvatarEl) {
+    ['dragenter', 'dragover'].forEach((ev) => peAvatarEl.addEventListener(ev, (e) => {
+      e.preventDefault();
+      peAvatarEl.classList.add('drop');
+    }));
+    ['dragleave', 'drop'].forEach((ev) => peAvatarEl.addEventListener(ev, (e) => {
+      e.preventDefault();
+      peAvatarEl.classList.remove('drop');
+    }));
+    peAvatarEl.addEventListener('drop', (e) => {
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      handleAvatarFile(file);
+    });
+  }
 
   document.getElementById('pe-change-password').addEventListener('click', async () => {
     if (!supabaseClient || !peEmail) return;
