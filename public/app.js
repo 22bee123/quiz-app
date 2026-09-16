@@ -472,6 +472,7 @@ async function callGenerate(body) {
     e.rawSample = first.data.rawSample || null;
     e.pages = first.data.pages || null;
     e.path = first.data.path || null;
+    e.model = first.data.model || null;
     e.detail = (first.data.detail || first.data.error || '') + ' (HTTP ' + status + ')';
     throw e;
   }
@@ -555,6 +556,7 @@ function showGenerationError(err) {
     'reason: ' + (reason || 'n/a'),
     'path: ' + ((err && err.path) || (lastVisionPages ? 'vision (image PDF)' : 'text')),
     'pages: ' + (lastVisionPages || (err && err.pages) || 'n/a'),
+    'model: ' + ((err && err.model) || 'n/a'),
     'message: ' + ((err && err.detail) || (err && err.message) || 'unknown'),
     'source: ' + ((pendingContent && pendingContent.name) || 'n/a'),
     'requested: ' + (lastGenerationCount || 'n/a') + ' questions',

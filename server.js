@@ -8,6 +8,9 @@ const PORT = process.env.PORT || 3000;
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
 // Canonical model id for DeepSeek V4.1 Flash (native multimodal text + image input).
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
+// If the primary model id is rejected by the API, retry once with this known-good model.
+const DEEPSEEK_FALLBACK_MODEL = process.env.DEEPSEEK_FALLBACK_MODEL || 'deepseek-v4-flash-vision-exp';
+let ACTIVE_MODEL = DEEPSEEK_MODEL;
 
 const MAX_GEN_CARDS = 200;      // hard ceiling for AI-generated cards
 const PER_CHUNK_CARDS = 15;     // max cards requested per AI call (keeps each response small/safe)
@@ -45,7 +48,7 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
     let response;
     try {
       const payload = {
-        model: DEEPSEEK_MODEL,
+        model: ACTIVE_MODEL,
         messages,
         max_tokens: maxTokens,
         temperature,
@@ -83,15 +86,22 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
       throw new Error(RATE_LIMIT_FRIENDLY);
     }
 
-    // Provider may not support response_format → disable it and retry once.
-    if (response.status === 400 && wantJson) {
+    // Provider may not support response_format (or rejects it) → disable JSON mode and retry once.
+    const isBadRequest = response.status === 400 || response.status === 404 || response.status === 422;
+    if (isBadRequest) {
       const errText = await response.text().catch(() => '');
-      if (/response_format|json_object|structured|unsupported|not support/i.test(errText)) {
-        console.warn('Provider rejected response_format; retrying without JSON mode.');
+      // Invalid/unsupported model id → retry once with a known-good fallback model.
+      if (/model/i.test(errText) && /(not exist|not found|invalid|unsupported|does not exist)/i.test(errText) && ACTIVE_MODEL !== DEEPSEEK_FALLBACK_MODEL) {
+        console.warn(`Model "${ACTIVE_MODEL}" was rejected; falling back to "${DEEPSEEK_FALLBACK_MODEL}".`);
+        ACTIVE_MODEL = DEEPSEEK_FALLBACK_MODEL;
+        return callDeepSeek(messages, maxTokens, temperature, timeoutMs, opts);
+      }
+      if (wantJson) {
+        console.warn(`Provider rejected JSON mode (${response.status}); retrying without response_format. ${errText.slice(0, 200)}`);
         JSON_MODE_SUPPORTED = false;
         return callDeepSeek(messages, maxTokens, temperature, timeoutMs, Object.assign({}, opts, { jsonMode: false }));
       }
-      throw new Error(`DeepSeek API error (400): ${errText}`);
+      throw new Error(`DeepSeek API error (${response.status}): ${errText}`);
     }
 
     if (!response.ok) {
@@ -99,8 +109,27 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
       throw new Error(`DeepSeek API error (${response.status}): ${errText}`);
     }
 
-    const data = await response.json();
-    return data.choices[0].message.content;
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      throw new Error('DeepSeek returned a non-JSON API response.');
+    }
+
+    const choice = data && data.choices && data.choices[0];
+    const message = choice && choice.message ? choice.message : null;
+    if (!message) {
+      throw new Error('DeepSeek returned no message choices.');
+    }
+    if (typeof message.content !== 'string') {
+      // Some models put text in reasoning_content when content is null/empty.
+      if (typeof message.reasoning_content === 'string') {
+        console.warn('DeepSeek returned empty content (reasoning_content present).');
+        return '';
+      }
+      throw new Error('DeepSeek returned an empty message.');
+    }
+    return message.content;
   }
 
   throw lastErr || new Error('DeepSeek request failed.');
@@ -338,7 +367,7 @@ async function generateTextChunk(ask, chunk, extraInstruction) {
   }
 }
 
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Lightweight API access log so you can see what the server is actually receiving.
@@ -482,7 +511,7 @@ app.post('/api/generate', async (req, res) => {
     }
 
     const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
-    if (debug) console.log(`[generate] ${images.length ? 'images=' + images.length : 'chars=' + text.length} count=${count} model=${DEEPSEEK_MODEL} jsonMode=${JSON_MODE_SUPPORTED}`);
+    if (debug) console.log(`[generate] ${images.length ? 'images=' + images.length : 'chars=' + text.length} count=${count} model=${ACTIVE_MODEL} jsonMode=${JSON_MODE_SUPPORTED}`);
 
     let cards;
     try {
@@ -522,6 +551,7 @@ app.post('/api/generate', async (req, res) => {
       error: friendly || `Failed to generate questions: ${err.message}`,
       code,
       reason: err.reason || null,
+      model: ACTIVE_MODEL,
       path: visionPath ? 'vision' : 'text',
       pages: visionPath ? imageCount : null,
       detail: err.message,
@@ -806,8 +836,12 @@ app.get('/api/config', (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
-    build: 'buck-gen-2',
+    build: 'buck-gen-3',
     model: DEEPSEEK_MODEL,
+    activeModel: ACTIVE_MODEL,
+    fallbackModel: DEEPSEEK_FALLBACK_MODEL,
+    visionEnabled: VISION_ENABLED,
+    jsonMode: JSON_MODE_SUPPORTED,
     routes: [
       'GET /api/config',
       'GET /api/health',
@@ -831,6 +865,6 @@ app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 
 app.listen(PORT, () => {
   console.log(`Buck the Duck running at http://localhost:${PORT}`);
-  console.log(`Model: ${DEEPSEEK_MODEL}`);
+  console.log(`Model: ${DEEPSEEK_MODEL} (fallback: ${DEEPSEEK_FALLBACK_MODEL}) | vision: ${VISION_ENABLED ? 'on' : 'off'}`);
   console.log('API routes: GET /api/config · GET /api/health · POST /api/analyze · POST /api/generate · POST /api/estimate · POST /api/scrape · POST /api/grade');
 });
