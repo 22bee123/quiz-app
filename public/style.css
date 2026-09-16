@@ -6188,6 +6188,7 @@ html[data-theme='dark'] .hm-hearts .hearts-count { color: #fff8f0; }
 .fr-name { font-weight: 800; color: #3e2723; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fr-sub { font-size: 0.78rem; color: #8b5e3c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fr-stats { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.fr-last { font-size: 0.78rem; color: #8b5e3c; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .ps-badge { background: #fff1e6; color: #ea580c; font-weight: 800; font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; }
 .ps-xp { color: #b99c86; font-weight: 700; font-size: 0.72rem; }
 .ps-streak { color: #b45309; font-weight: 800; font-size: 0.72rem; }
@@ -6545,6 +6546,7 @@ html[data-theme='dark'] .friends-shell { background: #33261e; border-color: rgba
 html[data-theme='dark'] .friends-main .card,
 html[data-theme='dark'] .friends-side .card { background: #3a2a20; border-color: rgba(243, 231, 219, 0.12); }
 html[data-theme='dark'] .fr-name { color: #fff8f0; }
+html[data-theme='dark'] .fr-last { color: #cbb4a2; }
 html[data-theme='dark'] .fr-sub,
 html[data-theme='dark'] .friend-empty { color: #cbb4a2; }
 html[data-theme='dark'] .friend-empty strong { color: #fff8f0; }

@@ -1750,11 +1750,14 @@ function buildFriendRow(profile) {
   el.className = 'friend-row';
   el.dataset.friendId = profile.id;
   const online = isOnline(profile);
+  const last = lastMessageWith(profile.id);
   el.innerHTML =
     '<span class="fr-avatar">' + avatarInner(profile) + '<span class="fr-status' + (online ? ' online' : '') + '"></span></span>' +
     '<span class="fr-info"><span class="fr-name">' + escapeHtml(nameOf(profile)) + '</span>' +
     '<span class="fr-sub">' + escapeHtml(atName(profile)) + ' \u00b7 ' + (online ? 'Online' : 'Offline') + '</span>' +
-    '<span class="fr-stats">' + statsHtml(profile) + '</span></span>' +
+    '<span class="fr-stats">' + statsHtml(profile) + '</span>' +
+    (last ? '<span class="fr-last">\u{1F4AC} ' + escapeHtml(last.text) + '</span>' : '') +
+    '</span>' +
     '<span class="fr-actions">' +
     '<button class="fr-msg-btn" type="button" aria-label="Message ' + escapeHtml(nameOf(profile)) + '">\u{1F4AC} Message</button>' +
     '<button class="fr-more" type="button" aria-label="Friend options">\u22EF</button>' +
@@ -1821,6 +1824,54 @@ function allMessages() {
 function saveMessages(list) {
   try { localStorage.setItem(MSG_KEY, JSON.stringify(list.slice(-500))); } catch (e) {}
 }
+
+// Single source of truth for conversations + unread, derived from the message store.
+let chatLoading = false;
+let msgFetchSeq = 0;
+const MSG_DEBUG = (typeof localStorage !== 'undefined') ? localStorage.getItem('buckMsgDebug') !== '0' : false;
+
+function profileFor(id) {
+  return friendProfilesById[id] || (myFriends || []).find((f) => f.id === id) || { id };
+}
+
+function otherIdOf(m, me) {
+  return m.from === me ? m.to : m.from;
+}
+
+function groupConversations() {
+  const me = currentUser ? currentUser.id : 'me';
+  const msgs = allMessages().slice().sort((a, b) => a.at - b.at);
+  const map = new Map();
+  msgs.forEach((m) => {
+    const other = otherIdOf(m, me);
+    if (!other) return;
+    let c = map.get(other);
+    if (!c) { c = { friendId: other, last: m, unread: 0 }; map.set(other, c); }
+    if (m.at >= c.last.at) c.last = m;
+    if (m.to === me && !m.read) c.unread++;
+  });
+  return Array.from(map.values()).sort((a, b) => b.last.at - a.last.at);
+}
+
+function lastMessageWith(id) {
+  const c = groupConversations().find((x) => x.friendId === id);
+  return c ? c.last : null;
+}
+
+async function ensureProfiles(ids) {
+  const missing = (ids || []).filter((id) => id && id !== 'me' && !friendProfilesById[id]);
+  if (!missing.length || !supabaseClient || !currentUser) return;
+  try {
+    const { data } = await supabaseClient.from('profiles').select('*').in('id', missing);
+    (data || []).forEach((p) => (friendProfilesById[p.id] = p));
+  } catch (e) {}
+}
+
+function renderMessagesSkeleton(el) {
+  if (!el) return;
+  el.innerHTML = '<div class="chat-skeleton" aria-label="Loading conversations"><span></span><span></span><span></span><span></span></div>';
+}
+
 function conversationWith(friendId) {
   const me = currentUser ? currentUser.id : 'me';
   return allMessages().filter((m) => (m.from === me && m.to === friendId) || (m.from === friendId && m.to === me));
@@ -1866,12 +1917,12 @@ function openMessages() {
   document.getElementById('chat-status').textContent = '';
   document.getElementById('chat-avatar').innerHTML = '\u{1F4AC}';
   document.getElementById('chat-back').classList.add('hidden');
-  renderChatList();
+  chatLoading = true;
+  renderConversations(); // skeleton until the fetch resolves
   refreshMessages(true);
 }
 
-function openChat(friendId) {
-  const profile = friendProfilesById[friendId] || myFriends.find((f) => f.id === friendId) || { id: friendId };
+async function openChat(friendId) {
   activeChatId = friendId;
   document.getElementById('chat-panel').classList.remove('hidden');
   document.getElementById('chat-backdrop').classList.remove('hidden');
@@ -1879,6 +1930,8 @@ function openChat(friendId) {
   document.getElementById('chat-thread').classList.remove('hidden');
   document.getElementById('chat-input-wrap').classList.remove('hidden');
   document.getElementById('chat-back').classList.remove('hidden');
+  await ensureProfiles([friendId]);
+  const profile = profileFor(friendId);
   document.getElementById('chat-name').textContent = nameOf(profile);
   const statusEl = document.getElementById('chat-status');
   const online = isOnline(profile);
@@ -1962,33 +2015,46 @@ function renderChatThread() {
   el.scrollTop = el.scrollHeight;
 }
 
-function renderChatList() {
+function renderConversations() {
   const el = document.getElementById('chat-list');
   if (!el) return;
-  el.innerHTML = '';
-  const me = currentUser ? currentUser.id : 'me';
-  const msgs = allMessages();
-  const withMessages = myFriends.filter((f) => msgs.some((m) => m.from === f.id || m.to === f.id));
-  const list = withMessages.length ? withMessages : myFriends;
-  if (!list.length) {
+
+  if (chatLoading) {
+    renderMessagesSkeleton(el);
+    return;
+  }
+
+  const convos = groupConversations();
+  if (!convos.length) {
     el.innerHTML =
       '<div class="friend-empty">' +
       '<svg viewBox="0 0 240 240" role="img" aria-label="Buck"><use href="#buck-thinking" /></svg>' +
-      '<strong>No conversations yet</strong><span>Add a friend and say hi!</span></div>';
+      '<strong>No messages yet</strong>' +
+      '<span>Start a chat from the Friends tab! \u{1F4AC}</span>' +
+      '</div>';
     return;
   }
-  list.forEach((f) => {
-    const convo = msgs.filter((m) => m.from === f.id || m.to === f.id);
-    const last = convo[convo.length - 1];
-    const unread = convo.filter((m) => m.to === me && !m.read).length;
+
+  el.innerHTML = '';
+  convos.forEach((c) => {
+    const p = profileFor(c.friendId);
+    const last = c.last;
+    const mine = last.from === (currentUser ? currentUser.id : 'me');
+    const preview = (mine ? 'You: ' : '') + (last.text || '');
     const row = document.createElement('div');
     row.className = 'chat-conv';
+    row.setAttribute('role', 'button');
+    row.setAttribute('tabindex', '0');
+    row.setAttribute('aria-label', 'Open chat with ' + nameOf(p));
     row.innerHTML =
-      '<span class="fr-avatar xs">' + avatarInner(f) + '</span>' +
-      '<span class="cv-meta"><span class="cv-name">' + escapeHtml(nameOf(f)) + '</span>' +
-      '<span class="cv-last">' + escapeHtml(last ? last.text : 'No messages yet') + '</span></span>' +
-      (unread ? '<span class="cv-unread">' + unread + '</span>' : '');
-    row.addEventListener('click', () => openChat(f.id));
+      '<span class="fr-avatar xs">' + avatarInner(p) + '</span>' +
+      '<span class="cv-meta"><span class="cv-name">' + escapeHtml(nameOf(p)) + '</span>' +
+      '<span class="cv-last">' + escapeHtml(preview) + '</span></span>' +
+      (c.unread ? '<span class="cv-unread">' + (c.unread > 99 ? '99+' : c.unread) + '</span>' : '');
+    row.addEventListener('click', () => openChat(c.friendId));
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openChat(c.friendId); }
+    });
     el.appendChild(row);
   });
 }
@@ -2008,7 +2074,17 @@ async function sendChatMessage() {
   renderChatThread();
   if (supabaseClient && currentUser) {
     try {
-      await supabaseClient.from('messages').insert({ sender_id: me, receiver_id: activeChatId, text, read_at: null });
+      const { data } = await supabaseClient
+        .from('messages')
+        .insert({ sender_id: me, receiver_id: activeChatId, text, read_at: null })
+        .select()
+        .single();
+      // Swap the optimistic local id for the DB id so polling doesn't duplicate it.
+      if (data && data.id) {
+        const list = allMessages();
+        const local = list.find((m) => m.id === msg.id);
+        if (local) { local.id = data.id; if (data.created_at) local.at = new Date(data.created_at).getTime(); saveMessages(list); }
+      }
     } catch (e) {}
   }
 }
@@ -2033,7 +2109,12 @@ function showTyping(name) {
 
 async function refreshMessages(force) {
   renderMessagesBadge();
-  if (!supabaseClient || !currentUser) return;
+  if (!supabaseClient || !currentUser) {
+    chatLoading = false;
+    if (!activeChatId) renderConversations();
+    return;
+  }
+  const seq = ++msgFetchSeq;
   try {
     const { data, error } = await supabaseClient
       .from('messages')
@@ -2041,25 +2122,44 @@ async function refreshMessages(force) {
       .or('sender_id.eq.' + currentUser.id + ',receiver_id.eq.' + currentUser.id)
       .order('created_at', { ascending: true })
       .limit(200);
-    if (error) return;
+    if (error) throw error;
+
     let added = 0;
     (data || []).forEach((r) => {
       const msg = { id: r.id, from: r.sender_id, to: r.receiver_id, text: r.text, at: r.created_at ? new Date(r.created_at).getTime() : Date.now(), read: !!r.read_at };
       if (appendMessage(msg)) added++;
     });
+
+    // Resolve profiles for everyone we have a conversation with.
+    const me = currentUser.id;
+    const ids = Array.from(new Set(allMessages().map((m) => otherIdOf(m, me))));
+    await ensureProfiles(ids);
+
+    const convos = groupConversations();
+    if (MSG_DEBUG) console.log('[messages] user=' + me, 'remote=' + (data || []).length, 'conversations=' + convos.length, 'unread=' + unreadCount());
+
+    if (seq !== msgFetchSeq) return; // a newer fetch superseded this one
+
+    renderMessagesBadge();
+    if (activeChatId) { renderChatThread(); markConversationRead(activeChatId); }
+    else renderConversations();
+
     if (added) {
-      renderMessagesBadge();
-      if (activeChatId) { renderChatThread(); markConversationRead(activeChatId); }
-      else renderChatList();
-      if (!document.getElementById('chat-panel').classList.contains('hidden')) renderChatList();
-      const latest = allMessages().slice(-1)[0];
-      if (latest && latest.from !== currentUser.id && latest.to === currentUser.id && latest.from !== activeChatId) {
-        const from = friendProfilesById[latest.from] || {};
+      const latest = allMessages().slice().sort((a, b) => a.at - b.at).slice(-1)[0];
+      if (latest && latest.from !== me && latest.to === me && latest.from !== activeChatId) {
+        const from = profileFor(latest.from);
         showToast('New message from ' + (nameOf(from) !== 'Unknown' ? nameOf(from) : 'a friend') + ' \u{1F4AC}', 'correct');
         bumpMessagesBadge();
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    if (MSG_DEBUG) console.warn('[messages] fetch failed:', e && e.message);
+  } finally {
+    if (seq === msgFetchSeq) {
+      chatLoading = false;
+      if (!activeChatId) renderConversations();
+    }
+  }
 }
 
 function startMessagePolling() {
