@@ -459,9 +459,11 @@ async function callGenerate(body) {
 
   if (!first.res.ok) {
     const status = first.res.status;
+    const statusToCode = { 401: 'AUTH', 403: 'AUTH', 429: 'RATE', 422: 'EMPTY', 413: 'TOO_LARGE', 502: 'PARSE', 504: 'TIMEOUT' };
     const e = new Error(first.data.error || 'Generation failed.');
-    e.code = first.data.code || (status === 401 || status === 403 ? 'AUTH' : status === 429 ? 'RATE' : 'HTTP_' + status);
+    e.code = first.data.code || statusToCode[status] || 'HTTP_' + status;
     e.reason = first.data.reason || null;
+    e.rawSample = first.data.rawSample || null;
     e.detail = (first.data.detail || first.data.error || '') + ' (HTTP ' + status + ')';
     throw e;
   }
@@ -505,6 +507,10 @@ const GEN_ERROR_COPY = {
   ROUTE_MISSING: ['The AI service is not available on this server.', 'API route not found — the backend needs redeploying or restarting.'],
   HTTP_404: ['The AI service is not available on this server.', 'API route not found — the backend needs redeploying or restarting.'],
   HTTP_500: ['Buck hit a server error.', 'The server returned an error — please try again in a moment.'],
+  IMAGE_PDF: ['Hmm, this PDF looks like images. 📄', 'Buck needs a text-based PDF to write questions. Try exporting your notes as text, or use a different file.'],
+  HTTP_413: ['That PDF is a bit too large.', 'Try a smaller file or generate fewer questions.'],
+  HTTP_422: ['Buck could not read that file.', 'The PDF had no usable text. Try a text-based PDF.'],
+  HTTP_504: ['That took a little too long.', 'The request timed out — try generating fewer questions.'],
   NO_HEARTS: ['Buck is out of hearts.', 'Wait for a heart to refill, then try again.'],
   UNKNOWN: ['Buck could not write questions this time.', 'Something unexpected happened. Try again, or reduce the count.'],
 };
@@ -540,7 +546,11 @@ function showGenerationError(err) {
     'type: ' + ((pendingContent && pendingContent.images) ? 'image PDF' : 'text'),
     'time: ' + new Date().toISOString(),
   ].join('\n');
-  genDetails.textContent = detail;
+
+  const detailsText = (err && err.rawSample)
+    ? detail + '\n\n--- raw AI response (first 600 chars) ---\n' + err.rawSample
+    : detail;
+  genDetails.textContent = detailsText;
 
   genError.classList.remove('hidden');
   genDetails.classList.add('hidden');

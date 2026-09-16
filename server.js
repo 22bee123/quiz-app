@@ -13,6 +13,8 @@ const MAX_GEN_CARDS = 200;      // hard ceiling for AI-generated cards
 const PER_CHUNK_CARDS = 15;     // max cards requested per AI call (keeps each response small/safe)
 const CHUNK_TARGET_CHARS = 6000;
 const RATE_LIMIT_FRIENDLY = "Buck got a little overwhelmed. Let's try that again in a moment.";
+// Set VISION_ENABLED=false (or 0) to reject scanned/image PDFs instead of using multimodal OCR.
+const VISION_ENABLED = !(process.env.VISION_ENABLED === 'false' || process.env.VISION_ENABLED === '0');
 
 if (!process.env.DEEPSEEK_API_KEY) {
   console.error('ERROR: DEEPSEEK_API_KEY is not set. Copy .env.example to .env and add your key.');
@@ -118,9 +120,25 @@ function classifyError(err) {
   if (m.includes('model') && (m.includes('not exist') || m.includes('not found') || m.includes('invalid'))) return 'MODEL';
   if (m.includes('timed out') || m.includes('timeout') || m.includes('aborted')) return 'TIMEOUT';
   if (m.includes('context') || m.includes('too long') || m.includes('maximum') || m.includes('413')) return 'TOO_LARGE';
+  if (m.includes('empty')) return 'EMPTY';
   if (m.includes('json') || m.includes('parse')) return 'PARSE';
   if (m.includes('did not contain valid questions')) return 'EMPTY';
   return 'UNKNOWN';
+}
+
+// Map an error code to a meaningful HTTP status the frontend can branch on.
+function statusForCode(code) {
+  switch (code) {
+    case 'AUTH': return 401;
+    case 'RATE': return 429;
+    case 'PARSE': return 502;
+    case 'MODEL': return 502;
+    case 'EMPTY': return 422;
+    case 'IMAGE_PDF': return 422;
+    case 'TOO_LARGE': return 413;
+    case 'TIMEOUT': return 504;
+    default: return 500;
+  }
 }
 
 function questionsFromParsed(v) {
@@ -254,6 +272,7 @@ function extractJson(text) {
 
 function logMalformedResponse(raw, err) {
   const s = typeof raw === 'string' ? raw : String(raw || '');
+  if (err && !err.rawSample) err.rawSample = s.slice(0, 600);
   console.error('=== MALFORMED AI RESPONSE ===');
   console.error('reason:', err && err.reason, '| length:', s.length);
   console.error('startsWithFence:', /^```/.test(s.trim()), '| startsWith:', JSON.stringify(s.trim().slice(0, 60)));
@@ -264,8 +283,9 @@ function logMalformedResponse(raw, err) {
 async function generateOnce(text, images, count) {
   const maxTokens = Math.min(8000, Math.max(1500, count * 220));
   const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
+  const isImages = !!(images && images.length);
   let raw;
-  if (images && images.length) {
+  if (isImages) {
     const content = [
       { type: 'text', text: buildQuizPrompt(count, null, images) },
       ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
@@ -280,6 +300,22 @@ async function generateOnce(text, images, count) {
     return extractJson(raw);
   } catch (err) {
     logMalformedResponse(raw, err);
+    // Some providers return a context-limit notice as a 200 body instead of an HTTP error.
+    const low = String(raw || '').toLowerCase();
+    if (/context length|maximum context|too long|reduce the length|tokens exceeded/.test(low)) {
+      const e = new Error('The content is too large for one request.');
+      e.code = 'TOO_LARGE';
+      e.reason = 'context';
+      throw e;
+    }
+    // Scanned/image PDFs are a different problem from plain JSON glitches → its own code.
+    if (isImages && ['PARSE', 'EMPTY', 'UNKNOWN'].includes(classifyError(err))) {
+      const e = new Error('This PDF looks like images/scanned pages — Buck could not read text from it.');
+      e.code = 'IMAGE_PDF';
+      e.reason = err.reason || 'image';
+      e.rawSample = err.rawSample;
+      throw e;
+    }
     throw err;
   }
 }
@@ -402,12 +438,13 @@ app.post('/api/analyze', async (req, res) => {
     res.json({ flashcards: final.slice(0, MAX_GEN_CARDS) });
   } catch (err) {
     const code = classifyError(err);
-    console.error('Analyze error:', code, err.message);
-    const rateLimited = code === 'RATE';
-    res.status(rateLimited ? 429 : 500).json({
-      error: rateLimited ? RATE_LIMIT_FRIENDLY : `Failed to generate flashcards: ${err.message}`,
+    console.error('Analyze error:', code, err.reason || '', err.message);
+    res.status(statusForCode(code)).json({
+      error: code === 'RATE' ? RATE_LIMIT_FRIENDLY : `Failed to generate flashcards: ${err.message}`,
       code,
+      reason: err.reason || null,
       detail: err.message,
+      rawSample: err.rawSample || null,
     });
   }
 });
@@ -424,7 +461,17 @@ app.post('/api/generate', async (req, res) => {
     const count = Math.min(Math.max(parseInt(req.body.count, 10) || 10, 1), PER_CHUNK_CARDS);
 
     if (!text && images.length === 0) {
-      return res.status(400).json({ error: 'No content received for generation.' });
+      return res.status(400).json({ error: 'No content received for generation.', code: 'EMPTY' });
+    }
+
+    // Scanned/image PDFs: when vision is disabled, fail early with a specific, actionable code.
+    if (images.length && !VISION_ENABLED) {
+      return res.status(422).json({
+        error: 'This PDF looks like images/scanned pages. Buck needs a text-based PDF to write questions.',
+        code: 'IMAGE_PDF',
+        reason: 'no_text',
+        detail: 'Vision is disabled (VISION_ENABLED=false).',
+      });
     }
 
     const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
@@ -452,13 +499,13 @@ app.post('/api/generate', async (req, res) => {
     res.json({ flashcards: valid.slice(0, count) });
   } catch (err) {
     const code = classifyError(err);
-    const rateLimited = code === 'RATE';
-    if (!rateLimited) console.error('Generate error:', code, err.reason || '', err.message);
-    res.status(rateLimited ? 429 : 500).json({
-      error: rateLimited ? RATE_LIMIT_FRIENDLY : `Failed to generate questions: ${err.message}`,
+    if (code !== 'RATE') console.error('Generate error:', code, err.reason || '', err.message);
+    res.status(statusForCode(code)).json({
+      error: code === 'RATE' ? RATE_LIMIT_FRIENDLY : `Failed to generate questions: ${err.message}`,
       code,
       reason: err.reason || null,
       detail: err.message,
+      rawSample: err.rawSample || null,
     });
   }
 });
