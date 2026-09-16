@@ -507,8 +507,21 @@ async function callGenerate(body) {
   if (!first.res.ok) {
     const status = first.res.status;
     const statusToCode = { 401: 'AUTH', 403: 'AUTH', 429: 'RATE', 422: 'EMPTY', 413: 'TOO_LARGE', 502: 'PARSE', 504: 'TIMEOUT' };
+    const code = first.data.code || statusToCode[status] || 'HTTP_' + status;
+
+    // Resilience: empty/parse failures on /api/generate → try the server-batched /api/analyze once.
+    if (['EMPTY', 'PARSE', 'UNKNOWN'].includes(code)) {
+      try {
+        const fb = await post('/api/analyze');
+        if (fb.res.ok) {
+          const cards = Array.isArray(fb.data.flashcards) ? fb.data.flashcards : [];
+          if (cards.length) return cards.slice(0, body.count || cards.length);
+        }
+      } catch (e2) { /* fall through to the original error */ }
+    }
+
     const e = new Error(first.data.error || 'Generation failed.');
-    e.code = first.data.code || statusToCode[status] || 'HTTP_' + status;
+    e.code = code;
     e.reason = first.data.reason || null;
     e.rawSample = first.data.rawSample || null;
     e.pages = first.data.pages || null;

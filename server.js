@@ -168,15 +168,24 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
     if (!message) {
       throw new Error('DeepSeek returned no message choices.');
     }
-    if (typeof message.content !== 'string') {
-      // Some models put text in reasoning_content when content is null/empty.
-      if (typeof message.reasoning_content === 'string') {
-        console.warn('DeepSeek returned empty content (reasoning_content present).');
-        return '';
-      }
-      throw new Error('DeepSeek returned an empty message.');
+
+    const content = typeof message.content === 'string' ? message.content : '';
+    if (content.trim()) return content;
+
+    // Empty content: some models put the text in reasoning_content, and JSON mode sometimes
+    // yields an empty string. Recover instead of failing with "empty response".
+    const reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content : '';
+    if (reasoning.trim()) {
+      console.warn('DeepSeek returned empty content; using reasoning_content (' + reasoning.length + ' chars).');
+      return reasoning;
     }
-    return message.content;
+    if (!opts._emptyRetry) {
+      console.warn(`DeepSeek returned empty content (finish_reason=${choice && choice.finish_reason}); retrying with higher max_tokens without JSON mode.`);
+      JSON_MODE_SUPPORTED = false;
+      const bumped = Math.min(8000, Math.max(maxTokens * 2, 4000));
+      return callDeepSeek(messages, bumped, temperature, timeoutMs, Object.assign({}, opts, { jsonMode: false, _emptyRetry: true }));
+    }
+    throw new Error('The AI returned an empty response.');
   }
 
   throw lastErr || new Error('DeepSeek request failed.');
@@ -362,7 +371,7 @@ function logMalformedResponse(raw, err) {
 }
 
 async function generateOnce(text, images, count, existing) {
-  const maxTokens = Math.min(8000, Math.max(1500, count * 220));
+  const maxTokens = Math.min(8000, Math.max(3000, count * 300));
   const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
   const isImages = !!(images && images.length);
   const keywords = isImages ? [] : topKeywords(text, 12);
@@ -405,7 +414,7 @@ async function generateOnce(text, images, count, existing) {
 async function generateTextChunk(ask, chunk, extraInstruction) {
   const prompt = buildQuizPrompt(ask, chunk, null) + (extraInstruction || '');
   const content = [{ type: 'text', text: prompt }];
-  const maxTokens = Math.min(8000, Math.max(2000, ask * 200));
+  const maxTokens = Math.min(8000, Math.max(3000, ask * 300));
   const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4, { jsonMode: true });
   try {
     return normalizeFlashcards(extractJson(raw)).slice(0, ask);
@@ -455,7 +464,7 @@ app.post('/api/analyze', async (req, res) => {
         { type: 'text', text: promptText },
         ...images.map((url) => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
       ];
-      const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(2000, ask * 200)), 0.4, { jsonMode: true });
+      const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(3000, ask * 300)), 0.4, { jsonMode: true });
       try {
         flashcards.push(...normalizeFlashcards(extractJson(raw)));
       } catch (err) {
@@ -798,7 +807,7 @@ async function requestChoiceOnly(text, images, cap) {
     } else {
       content = [{ type: 'text', text: buildChoicePrompt(ask, text || '', false) }];
     }
-    const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(2000, ask * 200)), 0.4, { jsonMode: true });
+    const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(3000, ask * 300)), 0.4, { jsonMode: true });
     try {
       return normalizeFlashcards(extractJson(raw)).filter((f) => f.type === 'choice').slice(0, ask);
     } catch (err) {
