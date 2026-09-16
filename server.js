@@ -28,8 +28,12 @@ function backoffDelay(attempt) {
   return Math.min(15000, 1000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 300);
 }
 
-async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeoutMs = 60000) {
+let JSON_MODE_SUPPORTED = true; // flips off if the provider rejects response_format
+
+async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeoutMs = 60000, opts = {}) {
+  if (timeoutMs && typeof timeoutMs === 'object') { opts = timeoutMs; timeoutMs = 60000; }
   const maxAttempts = 4;
+  const wantJson = opts.jsonMode === true && JSON_MODE_SUPPORTED;
   let lastErr;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -37,18 +41,20 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response;
     try {
+      const payload = {
+        model: DEEPSEEK_MODEL,
+        messages,
+        max_tokens: maxTokens,
+        temperature,
+      };
+      if (wantJson) payload.response_format = { type: 'json_object' };
       response = await fetch(DEEPSEEK_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
         },
-        body: JSON.stringify({
-          model: DEEPSEEK_MODEL,
-          messages,
-          max_tokens: maxTokens,
-          temperature,
-        }),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
     } catch (err) {
@@ -74,6 +80,17 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
       throw new Error(RATE_LIMIT_FRIENDLY);
     }
 
+    // Provider may not support response_format → disable it and retry once.
+    if (response.status === 400 && wantJson) {
+      const errText = await response.text().catch(() => '');
+      if (/response_format|json_object|structured|unsupported|not support/i.test(errText)) {
+        console.warn('Provider rejected response_format; retrying without JSON mode.');
+        JSON_MODE_SUPPORTED = false;
+        return callDeepSeek(messages, maxTokens, temperature, timeoutMs, Object.assign({}, opts, { jsonMode: false }));
+      }
+      throw new Error(`DeepSeek API error (400): ${errText}`);
+    }
+
     if (!response.ok) {
       const errText = await response.text();
       throw new Error(`DeepSeek API error (${response.status}): ${errText}`);
@@ -86,104 +103,196 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
   throw lastErr || new Error('DeepSeek request failed.');
 }
 
-function tryParseArray(s) {
-  try {
-    const v = JSON.parse(s);
-    return Array.isArray(v) ? v : null;
-  } catch (e) {
-    return null;
-  }
-}
-
-function tryParseQuestionsObject(s) {
-  try {
-    const v = JSON.parse(s);
-    if (!v || typeof v !== 'object') return null;
-    for (const key of ['questions', 'flashcards', 'items', 'data', 'results']) {
-      if (Array.isArray(v[key])) return v[key];
-    }
-    return null;
-  } catch (e) {
-    return null;
-  }
-}
-
 const SYSTEM_PROMPT = {
   role: 'system',
   content:
-    'You are Buck, a friendly study assistant. Always respond with valid JSON exactly as instructed, with no markdown fences and no text before or after the JSON.',
+    'You are Buck, a friendly study assistant. You MUST respond with valid JSON only. No markdown, no explanations, no preamble. Output a single JSON object: { "questions": [ { "type": "flashcard", "question": string, "answer": string }, { "type": "choice", "question": string, "options": [string, string, string, string], "answer": string } ] }.',
 };
 
 // Map an upstream/parse error to a stable code the UI can act on.
 function classifyError(err) {
-  const m = String((err && err.message) || '').toLowerCase();
   if (err && err.code) return err.code;
+  const m = String((err && err.message) || '').toLowerCase();
   if (m.includes('authentication') || m.includes('invalid api key') || m.includes('401') || m.includes('api key')) return 'AUTH';
   if (m.includes('overwhelmed') || m.includes('429') || m.includes('rate limit')) return 'RATE';
   if (m.includes('model') && (m.includes('not exist') || m.includes('not found') || m.includes('invalid'))) return 'MODEL';
   if (m.includes('timed out') || m.includes('timeout') || m.includes('aborted')) return 'TIMEOUT';
   if (m.includes('context') || m.includes('too long') || m.includes('maximum') || m.includes('413')) return 'TOO_LARGE';
-  if (m.includes('json')) return 'PARSE';
+  if (m.includes('json') || m.includes('parse')) return 'PARSE';
   if (m.includes('did not contain valid questions')) return 'EMPTY';
   return 'UNKNOWN';
 }
 
-function extractJson(text) {
-  if (!text) throw new Error('Could not find a JSON array in the AI response.');
-
-  const candidates = [];
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  candidates.push(fence ? fence[1] : text);
-  if (fence) candidates.push(text);
-
-  for (const candidate of candidates) {
-    // Collect every '[' index and try from the last one backwards. This lets us skip
-    // prose/reasoning that comes before the real JSON array.
-    const opens = [];
-    for (let i = 0; i < candidate.length; i++) {
-      if (candidate[i] === '[') opens.push(i);
+function questionsFromParsed(v) {
+  if (Array.isArray(v)) return v;
+  if (v && typeof v === 'object') {
+    for (const key of ['questions', 'flashcards', 'items', 'data', 'results']) {
+      if (Array.isArray(v[key])) return v[key];
     }
-    for (let k = opens.length - 1; k >= 0; k--) {
-      const start = opens[k];
-      const closeIdx = candidate.indexOf(']', start);
-      if (closeIdx === -1) continue;
-      const slice = candidate.slice(start, closeIdx + 1);
-      const arr = tryParseArray(slice);
-      if (arr) return arr;
-      // The response may have been cut off mid-way; salvage up to the last complete object.
-      const lastObj = slice.lastIndexOf('}');
-      if (lastObj !== -1 && lastObj > start) {
-        const repaired = tryParseArray(slice.slice(0, lastObj + 1) + ']');
-        if (repaired) return repaired;
+    // A single question object (not wrapped in an array)
+    if (typeof v.question === 'string' || typeof v.answer === 'string') return [v];
+  }
+  return null;
+}
+
+function stripTrailingCommas(s) {
+  return s.replace(/,\s*([}\]])/g, '$1');
+}
+
+// Remove raw control characters (literal newlines/tabs inside strings make JSON.parse throw).
+function stripControlChars(s) {
+  return s.replace(/[\u0000-\u001F]+/g, ' ');
+}
+
+function safeJsonParse(s) {
+  if (!s) return null;
+  const cleaned = stripTrailingCommas(stripControlChars(s));
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    return null;
+  }
+}
+
+// Extract every balanced top-level JSON value from arbitrary text (handles concatenated JSON).
+function extractBalancedValues(str) {
+  const values = [];
+  let i = 0;
+  while (i < str.length) {
+    const ch = str[i];
+    if (ch === '[' || ch === '{') {
+      const start = i;
+      let depth = 0;
+      let inStr = false;
+      let esc = false;
+      let closed = false;
+      for (; i < str.length; i++) {
+        const c = str[i];
+        if (inStr) {
+          if (esc) esc = false;
+          else if (c === '\\') esc = true;
+          else if (c === '"') inStr = false;
+          continue;
+        }
+        if (c === '"') { inStr = true; continue; }
+        if (c === '[' || c === '{') depth++;
+        else if (c === ']' || c === '}') {
+          depth--;
+          if (depth === 0) { values.push(str.slice(start, i + 1)); i++; closed = true; break; }
+        }
       }
-    }
-
-    // JSON object mode: { "questions": [...] } / { "flashcards": [...] }
-    const objs = [];
-    for (let i = 0; i < candidate.length; i++) {
-      if (candidate[i] === '{') objs.push(i);
-    }
-    for (let k = objs.length - 1; k >= 0; k--) {
-      const start = objs[k];
-      const end = candidate.lastIndexOf('}');
-      if (end <= start) continue;
-      const parsed = tryParseQuestionsObject(candidate.slice(start, end + 1));
-      if (parsed) return parsed;
+      if (!closed) { values.push(str.slice(start)); break; } // truncated remainder
+    } else {
+      i++;
     }
   }
+  return values;
+}
 
-  throw new Error('Could not find a JSON array in the AI response.');
+// Try to salvage a response that was cut off mid-JSON.
+function repairTruncated(s) {
+  const t = stripControlChars(s).trim().replace(/,\s*$/, '');
+  const arrIdx = t.search(/"[A-Za-z_]*"\s*:\s*\[/); // e.g. "questions": [
+  if (t.trimStart().startsWith('[')) {
+    const lastObj = t.lastIndexOf('}');
+    if (lastObj !== -1) return safeJsonParse(t.slice(0, lastObj + 1) + ']');
+    return null;
+  }
+  if (t.trimStart().startsWith('{')) {
+    if (arrIdx !== -1) {
+      const arrStart = t.indexOf('[', arrIdx);
+      const tail = t.slice(arrStart);
+      const lastObj = tail.lastIndexOf('}');
+      if (lastObj !== -1) {
+        return safeJsonParse(t.slice(0, arrStart) + tail.slice(0, lastObj + 1) + ']}');
+      }
+      return null;
+    }
+    // Truncated single object: try closing the string + object.
+    return safeJsonParse(t + '"}');
+  }
+  return null;
+}
+
+function extractJson(text) {
+  const raw = typeof text === 'string' ? text : '';
+  if (!raw || !raw.trim()) {
+    const e = new Error('The AI returned an empty response.');
+    e.reason = 'empty';
+    throw e;
+  }
+
+  const cleaned = raw.replace(/^\uFEFF/, '').replace(/```(?:json)?/gi, ' ').trim();
+
+  // 1) Whole response is valid JSON
+  const whole = safeJsonParse(cleaned);
+  const wholeQ = questionsFromParsed(whole);
+  if (wholeQ) return wholeQ;
+
+  // 2) Scan every balanced JSON value (arrays/objects) and merge all question lists.
+  const values = extractBalancedValues(cleaned);
+  let collected = [];
+  for (const value of values) {
+    const qs = questionsFromParsed(safeJsonParse(value));
+    if (qs && qs.length) collected = collected.concat(qs);
+  }
+  if (collected.length) return collected;
+
+  // 3) Truncation repair on each balanced value
+  for (let i = values.length - 1; i >= 0; i--) {
+    const repaired = questionsFromParsed(repairTruncated(values[i]));
+    if (repaired && repaired.length) return repaired;
+  }
+
+  const looksTruncated = (cleaned.match(/[{[]/g) || []).length > (cleaned.match(/[}\]]/g) || []).length;
+  const e = new Error(looksTruncated
+    ? 'The AI response was cut off before the JSON finished (hit the token limit).'
+    : 'The AI returned data Buck could not read (invalid JSON shape).');
+  e.reason = looksTruncated ? 'truncated' : 'shape';
+  throw e;
+}
+
+function logMalformedResponse(raw, err) {
+  const s = typeof raw === 'string' ? raw : String(raw || '');
+  console.error('=== MALFORMED AI RESPONSE ===');
+  console.error('reason:', err && err.reason, '| length:', s.length);
+  console.error('startsWithFence:', /^```/.test(s.trim()), '| startsWith:', JSON.stringify(s.trim().slice(0, 60)));
+  console.error('last200:', JSON.stringify(s.slice(-200)));
+  console.error('full:', s.slice(0, 2000));
+}
+
+async function generateOnce(text, images, count) {
+  const maxTokens = Math.min(8000, Math.max(1500, count * 220));
+  const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
+  let raw;
+  if (images && images.length) {
+    const content = [
+      { type: 'text', text: buildQuizPrompt(count, null, images) },
+      ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+    ];
+    raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4, { jsonMode: true });
+  } else {
+    const prompt = buildQuizPrompt(count, text, null);
+    raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content: [{ type: 'text', text: prompt }] }], maxTokens, 0.4, { jsonMode: true });
+  }
+  if (debug) console.log(`[generate] maxTokens=${maxTokens}`);
+  try {
+    return extractJson(raw);
+  } catch (err) {
+    logMalformedResponse(raw, err);
+    throw err;
+  }
 }
 
 async function generateTextChunk(ask, chunk, extraInstruction) {
   const prompt = buildQuizPrompt(ask, chunk, null) + (extraInstruction || '');
   const content = [{ type: 'text', text: prompt }];
   const maxTokens = Math.min(8000, Math.max(2000, ask * 200));
-  const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4);
+  const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4, { jsonMode: true });
   try {
     return normalizeFlashcards(extractJson(raw)).slice(0, ask);
   } catch (err) {
-    console.error('[analyze raw reply]', JSON.stringify(String(raw).slice(0, 500)));
+    logMalformedResponse(raw, err);
     throw err;
   }
 }
@@ -228,8 +337,13 @@ app.post('/api/analyze', async (req, res) => {
         { type: 'text', text: promptText },
         ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
       ];
-      const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(2000, ask * 200)), 0.4);
-      flashcards.push(...normalizeFlashcards(extractJson(raw)));
+      const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(2000, ask * 200)), 0.4, { jsonMode: true });
+      try {
+        flashcards.push(...normalizeFlashcards(extractJson(raw)));
+      } catch (err) {
+        logMalformedResponse(raw, err);
+        throw err;
+      }
     } else {
       // Text import: split into balanced batches (max 7) and ask each batch for a modest,
       // safe number of cards (5–15). Running batches in parallel reaches the 100-card ceiling
@@ -313,43 +427,37 @@ app.post('/api/generate', async (req, res) => {
       return res.status(400).json({ error: 'No content received for generation.' });
     }
 
-    let cards;
-    const maxTokens = Math.min(8000, Math.max(1500, count * 200));
     const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
+    if (debug) console.log(`[generate] ${images.length ? 'images=' + images.length : 'chars=' + text.length} count=${count} model=${DEEPSEEK_MODEL} jsonMode=${JSON_MODE_SUPPORTED}`);
 
-    if (images.length) {
-      const content = [
-        { type: 'text', text: buildQuizPrompt(count, null, images) },
-        ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
-      ];
-      if (debug) console.log(`[generate] images=${images.length} count=${count} model=${DEEPSEEK_MODEL} maxTokens=${maxTokens}`);
-      const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4);
-      try {
-        cards = normalizeFlashcards(extractJson(raw));
-      } catch (parseErr) {
-        console.error('[generate raw reply]', JSON.stringify(String(raw).slice(0, 500)));
-        throw parseErr;
-      }
-    } else {
-      const prompt = buildQuizPrompt(count, text, null);
-      if (debug) console.log(`[generate] chars=${text.length} count=${count} model=${DEEPSEEK_MODEL} maxTokens=${maxTokens}`);
-      const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content: [{ type: 'text', text: prompt }] }], maxTokens, 0.4);
-      try {
-        cards = normalizeFlashcards(extractJson(raw));
-      } catch (parseErr) {
-        console.error('[generate raw reply]', JSON.stringify(String(raw).slice(0, 500)));
-        throw parseErr;
+    let cards;
+    try {
+      cards = await generateOnce(text, images, count);
+    } catch (err) {
+      // Any parse/shape/truncation problem → retry once with a smaller batch.
+      const retryable = ['PARSE', 'EMPTY'].includes(classifyError(err));
+      const smaller = Math.max(5, Math.floor(count / 2));
+      if (retryable && smaller < count) {
+        console.warn(`[generate] ${err.reason || 'parse'} failure; retrying with ${smaller} questions.`);
+        cards = await generateOnce(text, images, smaller);
+      } else {
+        throw err;
       }
     }
 
-    res.json({ flashcards: cards.slice(0, count) });
+    const valid = normalizeFlashcards(cards);
+    const dropped = cards.length - valid.length;
+    if (debug && dropped > 0) console.log(`[generate] dropped ${dropped} invalid card(s) of ${cards.length}`);
+
+    res.json({ flashcards: valid.slice(0, count) });
   } catch (err) {
     const code = classifyError(err);
     const rateLimited = code === 'RATE';
-    if (!rateLimited) console.error('Generate error:', code, err.message);
+    if (!rateLimited) console.error('Generate error:', code, err.reason || '', err.message);
     res.status(rateLimited ? 429 : 500).json({
       error: rateLimited ? RATE_LIMIT_FRIENDLY : `Failed to generate questions: ${err.message}`,
       code,
+      reason: err.reason || null,
       detail: err.message,
     });
   }
@@ -382,12 +490,12 @@ Requirements:
 - Focus on key concepts, definitions, and important facts.
 - Keep flashcard answers short and specific.
 
-Respond with ONLY a valid JSON array in this exact format (no extra text):
-[
+Respond with ONLY a valid JSON object in this exact format (no markdown, no extra text):
+{ "questions": [
   { "type": "flashcard", "question": "... ____ ...", "answer": "short answer" },
   { "type": "choice", "question": "...", "options": ["a", "b", "c", "d"], "answer": "a" }
-]
-${images ? 'Module images:' : 'Module content:\n"""' + String(chunk || '').slice(0, 30000) + '"""'}`;
+] }
+${images ? 'Module images:' : 'Module content:\n' + String(chunk || '').slice(0, 30000)}`;
 }
 
 function dedupeCards(list) {
@@ -447,9 +555,9 @@ For each question include exactly 4 options and exactly one correct answer:
 - "options": an array of exactly 4 short answer strings.
 - "answer": the one correct option, spelled EXACTLY like that option (same case and spacing).
 
-Respond with ONLY a valid JSON array (no extra text):
-[ { "type": "choice", "question": "...?", "options": ["a", "b", "c", "d"], "answer": "a" } ]
-${imagesFlag ? 'Module images:' : 'Module content:\n"""' + String(contentText || '').slice(0, 30000) + '"""'}`;
+Respond with ONLY a valid JSON object (no markdown, no extra text):
+{ "questions": [ { "type": "choice", "question": "...?", "options": ["a", "b", "c", "d"], "answer": "a" } ] }
+${imagesFlag ? 'Module images:' : 'Module content:\n' + String(contentText || '').slice(0, 30000)}`;
 }
 
 async function requestChoiceOnly(text, images, cap) {
@@ -465,8 +573,13 @@ async function requestChoiceOnly(text, images, cap) {
     } else {
       content = [{ type: 'text', text: buildChoicePrompt(ask, text || '', false) }];
     }
-    const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(2000, ask * 200)), 0.4);
-    return normalizeFlashcards(extractJson(raw)).filter((f) => f.type === 'choice').slice(0, ask);
+    const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(2000, ask * 200)), 0.4, { jsonMode: true });
+    try {
+      return normalizeFlashcards(extractJson(raw)).filter((f) => f.type === 'choice').slice(0, ask);
+    } catch (err) {
+      logMalformedResponse(raw, err);
+      throw err;
+    }
   } catch (err) {
     console.error('Choice fallback failed:', err.message);
     return [];

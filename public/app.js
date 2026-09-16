@@ -461,6 +461,7 @@ async function callGenerate(body) {
     const status = first.res.status;
     const e = new Error(first.data.error || 'Generation failed.');
     e.code = first.data.code || (status === 401 || status === 403 ? 'AUTH' : status === 429 ? 'RATE' : 'HTTP_' + status);
+    e.reason = first.data.reason || null;
     e.detail = (first.data.detail || first.data.error || '') + ' (HTTP ' + status + ')';
     throw e;
   }
@@ -468,17 +469,19 @@ async function callGenerate(body) {
   return Array.isArray(first.data.flashcards) ? first.data.flashcards : [];
 }
 
-// Retry a single batch once with half the size before giving up (unless the error
-// is clearly not size-related, e.g. auth/model/network/rate-limit).
+// Retry a single batch with progressively smaller counts before giving up
+// (unless the error is clearly not size-related, e.g. auth/model/network/rate-limit).
 const RETRYABLE_CODES = ['PARSE', 'UNKNOWN', 'TIMEOUT', 'TOO_LARGE', 'EMPTY'];
-async function callGenerateWithFallback(body, ask) {
+async function callGenerateWithFallback(body, ask, attempt) {
+  const tries = attempt || 0;
   try {
     return await callGenerate(Object.assign({}, body, { count: ask }));
   } catch (err) {
     if (err && err.name === 'AbortError') throw err;
     const smaller = Math.max(5, Math.floor(ask / 2));
-    if (RETRYABLE_CODES.includes(err.code) && smaller < ask) {
-      return await callGenerate(Object.assign({}, body, { count: smaller }));
+    if (RETRYABLE_CODES.includes(err.code) && smaller < ask && tries < 3) {
+      console.warn('Retrying batch with fewer questions:', smaller, '(' + (err.reason || err.code) + ')');
+      return callGenerateWithFallback(body, smaller, tries + 1);
     }
     throw err;
   }
@@ -511,13 +514,26 @@ let lastGenerationCount = 0;
 
 function showGenerationError(err) {
   const code = (err && err.code) || 'UNKNOWN';
+  const reason = (err && err.reason) || '';
   const copy = GEN_ERROR_COPY[code] || GEN_ERROR_COPY.UNKNOWN;
-  genErrorTitle.textContent = copy[0];
-  genErrorMsg.textContent = copy[1];
+  let title = copy[0];
+  let msg = copy[1];
+
+  if (code === 'PARSE' && reason === 'truncated') {
+    msg = 'The AI response was cut off (hit the token limit). Try again, or reduce the question count.';
+  } else if (code === 'PARSE' && reason === 'empty') {
+    msg = 'The AI returned an empty response. Tap Try again — Buck will retry.';
+  } else if (code === 'PARSE' && reason === 'shape') {
+    msg = 'The AI returned an unexpected format. Tap Try again and Buck will retry.';
+  }
+
+  genErrorTitle.textContent = title;
+  genErrorMsg.textContent = msg;
 
   const detail = [
     'Buck the Duck — generation error',
     'code: ' + code,
+    'reason: ' + (reason || 'n/a'),
     'message: ' + ((err && err.detail) || (err && err.message) || 'unknown'),
     'source: ' + ((pendingContent && pendingContent.name) || 'n/a'),
     'requested: ' + (lastGenerationCount || 'n/a') + ' questions',
