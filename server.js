@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,6 +20,51 @@ const RATE_LIMIT_FRIENDLY = "Buck got a little overwhelmed. Let's try that again
 // Set VISION_ENABLED=false (or 0) to reject scanned/image PDFs instead of using multimodal OCR.
 const VISION_ENABLED = !(process.env.VISION_ENABLED === 'false' || process.env.VISION_ENABLED === '0');
 const MAX_VISION_PAGES = 20; // cap pages sent to the vision model to control cost
+// Set VISION_ENABLED=false (or 0) to reject scanned/image PDFs instead of using multimodal OCR.
+// (kept above for compatibility)
+
+// ---- In-memory generation cache (repeat PDFs are instant) ----
+const GEN_CACHE_TTL = 24 * 60 * 60 * 1000;
+const GEN_CACHE_MAX = 300;
+const genCache = new Map();
+
+function genCacheKey(text, images, count) {
+  const h = crypto.createHash('sha1');
+  if (images && images.length) h.update('img:' + images.length + ':' + String(images[0]).slice(0, 64));
+  else h.update(String(text || '').slice(0, 20000));
+  h.update('|' + count);
+  return h.digest('hex');
+}
+function genCacheGet(key) {
+  const e = genCache.get(key);
+  if (!e) return null;
+  if (Date.now() - e.t > GEN_CACHE_TTL) { genCache.delete(key); return null; }
+  return e.v;
+}
+function genCacheSet(key, value) {
+  genCache.set(key, { t: Date.now(), v: value });
+  if (genCache.size > GEN_CACHE_MAX) genCache.delete(genCache.keys().next().value);
+}
+
+// ---- Lightweight keyword extraction (RAKE-ish, no AI call) ----
+const STOPWORDS = new Set(('a,an,the,and,or,but,if,then,than,so,as,of,to,in,on,at,by,for,with,without,from,into,onto,over,under,about,above,below,between,among,is,are,was,were,be,been,being,do,does,did,doing,have,has,had,having,can,could,will,would,shall,should,may,might,must,it,its,this,that,these,those,they,them,their,there,here,which,who,whom,whose,what,when,where,why,how,not,no,nor,also,such,very,more,most,some,any,each,every,both,few,many,much,other,another,one,two,three,first,second,third,new,used,using,use,may,per,via,within,across,while,during,before,after,because,however,therefore,thus,eg,ie,etc')
+  .split(','));
+
+function topKeywords(text, n) {
+  const clean = String(text || '').toLowerCase().replace(/[^a-z0-9\s'-]/g, ' ');
+  const words = clean.split(/\s+/).filter((w) => w.length > 3 && !STOPWORDS.has(w));
+  const freq = {};
+  words.forEach((w) => { freq[w] = (freq[w] || 0) + 1; });
+  const bigrams = {};
+  for (let i = 1; i < words.length; i++) {
+    if (STOPWORDS.has(words[i - 1]) || STOPWORDS.has(words[i])) continue;
+    const bg = words[i - 1] + ' ' + words[i];
+    bigrams[bg] = (bigrams[bg] || 0) + 1;
+  }
+  const phrases = Object.entries(bigrams).filter(([, c]) => c >= 2).map(([p, c]) => [p, c * 2]);
+  const singles = Object.entries(freq).map(([w, c]) => [w, c]);
+  return phrases.concat(singles).sort((a, b) => b[1] - a[1]).slice(0, n).map((x) => x[0]);
+}
 
 if (!process.env.DEEPSEEK_API_KEY) {
   console.error('ERROR: DEEPSEEK_API_KEY is not set. Copy .env.example to .env and add your key.');
@@ -318,18 +364,19 @@ async function generateOnce(text, images, count) {
   const maxTokens = Math.min(8000, Math.max(1500, count * 220));
   const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
   const isImages = !!(images && images.length);
+  const keywords = isImages ? [] : topKeywords(text, 12);
   let raw;
   if (isImages) {
     const content = [
-      { type: 'text', text: buildQuizPrompt(count, null, images) },
+      { type: 'text', text: buildQuizPrompt(count, null, images, keywords) },
       ...images.map((url) => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
     ];
     raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4, { jsonMode: true });
   } else {
-    const prompt = buildQuizPrompt(count, text, null);
+    const prompt = buildQuizPrompt(count, text, null, keywords);
     raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content: [{ type: 'text', text: prompt }] }], maxTokens, 0.4, { jsonMode: true });
   }
-  if (debug) console.log(`[generate] maxTokens=${maxTokens}`);
+  if (debug) console.log(`[generate] maxTokens=${maxTokens} keywords=${keywords.length}`);
   try {
     return extractJson(raw);
   } catch (err) {
@@ -513,6 +560,14 @@ app.post('/api/generate', async (req, res) => {
     const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
     if (debug) console.log(`[generate] ${images.length ? 'images=' + images.length : 'chars=' + text.length} count=${count} model=${ACTIVE_MODEL} jsonMode=${JSON_MODE_SUPPORTED}`);
 
+    const cacheKey = genCacheKey(text, images, count);
+    const cachedCards = genCacheGet(cacheKey);
+    if (cachedCards) {
+      if (debug) console.log('[generate] cache hit');
+      return res.json({ flashcards: cachedCards, cached: true });
+    }
+
+    const startedAt = Date.now();
     let cards;
     try {
       cards = await generateOnce(text, images, count);
@@ -530,9 +585,11 @@ app.post('/api/generate', async (req, res) => {
 
     const valid = normalizeFlashcards(cards);
     const dropped = cards.length - valid.length;
-    if (debug && dropped > 0) console.log(`[generate] dropped ${dropped} invalid card(s) of ${cards.length}`);
+    if (debug) console.log(`[generate] done in ${Date.now() - startedAt}ms${dropped > 0 ? ' (dropped ' + dropped + ')' : ''}`);
 
-    res.json({ flashcards: valid.slice(0, count) });
+    const result = valid.slice(0, count);
+    genCacheSet(cacheKey, result);
+    res.json({ flashcards: result, cached: false });
   } catch (err) {
     let code = classifyError(err);
     const visionPath = imageCount > 0;
@@ -572,11 +629,10 @@ app.post('/api/estimate', (req, res) => {
   res.json({ estimate, tokens });
 });
 
-function buildQuizPrompt(ask, chunk, images) {
-  const head = images
-    ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),'
-    : 'You are an expert quiz creator. Based ONLY on the following module content,';
-  return `${head} create exactly ${ask} quiz questions that test understanding of the material.
+// Static instruction block FIRST (identical every call → DeepSeek context-cache friendly),
+// then the material, then the dynamic "make N questions" line LAST.
+function buildQuizPrompt(ask, chunk, images, keywords) {
+  const staticInstructions = `You are an expert quiz creator. Based ONLY on the module material provided, create quiz questions that test understanding.
 
 Mix the question types — aim for about half "flashcard" (fill-in-the-blank) and half "choice" (multiple choice):
 - "flashcard": a fill-in-the-blank question. The question must be a sentence/statement from the module with a blank marked "____" where the key term(s) go (e.g. "The two main stages of photosynthesis are ____ and ____."). The "answer" must be a SHORT, specific value (single term/few words), NEVER a full sentence.
@@ -591,8 +647,39 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no extr
 { "questions": [
   { "type": "flashcard", "question": "... ____ ...", "answer": "short answer" },
   { "type": "choice", "question": "...", "options": ["a", "b", "c", "d"], "answer": "a" }
-] }
-${images ? 'Module images:' : 'Module content:\n' + String(chunk || '').slice(0, 30000)}`;
+] }`;
+
+  const keyLine = (keywords && keywords.length)
+    ? 'Important key terms to cover where relevant: ' + keywords.join(', ') + '.\n\n'
+    : '';
+  const material = images
+    ? 'Module images:'
+    : 'Module content:\n' + String(chunk || '').slice(0, 30000);
+  const finalAsk = `\n\nNow create exactly ${ask} quiz questions from the material above. Respond with ONLY the JSON object described above.`;
+
+  return staticInstructions + '\n\n' + keyLine + material + finalAsk;
+}
+
+function buildChoicePrompt(ask, contentText, imagesFlag, keywords) {
+  const staticInstructions = `You are an expert quiz creator. Based ONLY on the module material provided, create MULTIPLE-CHOICE questions.
+
+For each question include exactly 4 options and exactly one correct answer:
+- "question": a standalone question (NOT a fill-in-the-blank sentence).
+- "options": an array of exactly 4 short answer strings.
+- "answer": the one correct option, spelled EXACTLY like that option (same case and spacing).
+
+Respond with ONLY a valid JSON object (no markdown, no extra text):
+{ "questions": [ { "type": "choice", "question": "...?", "options": ["a", "b", "c", "d"], "answer": "a" } ] }`;
+
+  const keyLine = (keywords && keywords.length)
+    ? 'Important key terms to cover where relevant: ' + keywords.join(', ') + '.\n\n'
+    : '';
+  const material = imagesFlag
+    ? 'Module images:'
+    : 'Module content:\n' + String(contentText || '').slice(0, 30000);
+  const finalAsk = `\n\nNow create up to ${ask} multiple-choice questions (fewer is fine if the material is short — never pad). Respond with ONLY the JSON object.`;
+
+  return staticInstructions + '\n\n' + keyLine + material + finalAsk;
 }
 
 function dedupeCards(list) {
@@ -641,21 +728,7 @@ function normalizeFlashcards(list) {
   return out;
 }
 
-function buildChoicePrompt(ask, contentText, imagesFlag) {
-  const role = imagesFlag
-    ? 'You are an expert quiz creator. Using the module images provided below (read the text in the images),'
-    : 'You are an expert quiz creator. Based ONLY on the following module content,';
-  return `${role} create up to ${ask} MULTIPLE-CHOICE questions (as many as the content supports; fewer is fine if the material is short — never pad with filler). Do NOT create any flashcard items — every single question must be multiple choice.
-
-For each question include exactly 4 options and exactly one correct answer:
-- "question": a standalone question (NOT a fill-in-the-blank sentence).
-- "options": an array of exactly 4 short answer strings.
-- "answer": the one correct option, spelled EXACTLY like that option (same case and spacing).
-
-Respond with ONLY a valid JSON object (no markdown, no extra text):
-{ "questions": [ { "type": "choice", "question": "...?", "options": ["a", "b", "c", "d"], "answer": "a" } ] }
-${imagesFlag ? 'Module images:' : 'Module content:\n' + String(contentText || '').slice(0, 30000)}`;
-}
+function buildChoicePromptOld() { /* replaced by the cache-friendly version above */ }
 
 async function requestChoiceOnly(text, images, cap) {
   const ask = Math.min(cap, 15);
@@ -842,6 +915,7 @@ app.get('/api/health', (req, res) => {
     fallbackModel: DEEPSEEK_FALLBACK_MODEL,
     visionEnabled: VISION_ENABLED,
     jsonMode: JSON_MODE_SUPPORTED,
+    genCacheEntries: genCache.size,
     routes: [
       'GET /api/config',
       'GET /api/health',

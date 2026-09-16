@@ -401,35 +401,68 @@ function showEstimateErr(msg) {
 
 let genState = null;
 
+const GEN_CONCURRENCY = 4;   // parallel batch requests
+const PER_CALL_MAX = 15;     // questions per API call
+const CHUNK_SIZE = 3500;     // chars per chunk
+const CHUNK_OVERLAP = 300;   // overlap to preserve context
+
+// ---- Local result cache (repeat generation is instant) ----
+const GEN_CACHE_KEY = 'buckGenCache';
+function textHash(str) {
+  const s = String(str || '');
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36) + '_' + s.length;
+}
+function loadGenCache() {
+  try { return JSON.parse(localStorage.getItem(GEN_CACHE_KEY) || '{}'); } catch (e) { return {}; }
+}
+function saveGenCache(c) {
+  try { localStorage.setItem(GEN_CACHE_KEY, JSON.stringify(c)); } catch (e) {}
+}
+function getCachedGen(hash, count) {
+  const c = loadGenCache();
+  const e = c[hash + ':' + count];
+  if (!e) return null;
+  if (Date.now() - e.t > 86400000) { delete c[hash + ':' + count]; saveGenCache(c); return null; }
+  return e.cards;
+}
+function setCachedGen(hash, count, cards) {
+  const c = loadGenCache();
+  c[hash + ':' + count] = { t: Date.now(), cards };
+  const keys = Object.keys(c);
+  if (keys.length > 10) keys.sort((a, b) => c[a].t - c[b].t).slice(0, keys.length - 10).forEach((k) => delete c[k]);
+  saveGenCache(c);
+}
+
 function planGeneration(text, count) {
   const total = Math.min(count, 200);
-  const bySize = Math.ceil((text || '').length / 5000);
-  const byCount = Math.ceil(total / 15);
-  const parts = Math.max(1, Math.min(14, Math.max(bySize, byCount)));
-  const chunks = splitTextForGeneration(text || '', parts);
+  const chunks = splitIntoChunks(text || '', CHUNK_SIZE, CHUNK_OVERLAP);
   return { total, chunks };
 }
 
-function splitTextForGeneration(str, parts) {
-  if (parts <= 1 || str.length < 3000) return [str];
-  const len = str.length;
-  const out = [];
+// Recursive-character splitter (paragraph → line → sentence → word) with overlap.
+function splitIntoChunks(text, chunkSize, overlap) {
+  const str = String(text || '');
+  if (str.length <= chunkSize) return [str];
+  const separators = ['\n\n', '\n', '. ', '? ', '! ', ' ', ''];
+  const chunks = [];
   let start = 0;
-  for (let k = 1; k < parts; k++) {
-    const cut = Math.round((len / parts) * k);
-    const from = Math.max(start + 200, cut - 150);
-    const to = Math.min(len - 1, cut + 150);
-    let best = -1;
-    for (let i = to; i >= from; i--) { if (/[.!?]\s/.test(str.slice(i - 1, i + 1))) { best = i; break; } }
-    if (best === -1) { for (let i = to; i >= from; i--) { if (str[i] === ' ') { best = i; break; } } }
-    if (best === -1) best = cut;
-    const piece = str.slice(start, best).trim();
-    if (piece.length >= 80) out.push(piece);
-    start = best;
+  while (start < str.length) {
+    let end = Math.min(start + chunkSize, str.length);
+    if (end < str.length) {
+      for (const sep of separators) {
+        if (!sep) break;
+        const idx = str.lastIndexOf(sep, end);
+        if (idx > start + chunkSize * 0.5) { end = idx + sep.length; break; }
+      }
+    }
+    chunks.push(str.slice(start, end));
+    if (end >= str.length) break;
+    start = Math.max(0, end - overlap);
   }
-  const tail = str.slice(start).trim();
-  if (tail.length >= 80) out.push(tail);
-  return out.length ? out : [str];
+  const filtered = chunks.map((c) => c.trim()).filter((c) => c.length > 60);
+  return filtered.length ? filtered : [str];
 }
 
 async function callGenerate(body) {
@@ -600,6 +633,19 @@ async function startGeneration(count) {
   lastVisionPages = (pendingContent.images && pendingContent.images.length) || 0;
   lastGenError = null;
   hideGenerationError();
+
+  // ---- Instant path: same document + count generated before (local cache) ----
+  if (pendingContent.text) {
+    const hash = textHash(pendingContent.text);
+    const cachedCards = getCachedGen(hash, target);
+    if (cachedCards && cachedCards.length) {
+      const cards = ensureMixedChoice(cachedCards.slice(0, target));
+      await finalizeGeneration(cards, pendingContent.name, false);
+      showToast('⚡ Instant — loaded from cache', 'correct');
+      return;
+    }
+  }
+
   savePendingDeck('generating', pendingContent.name, createMode);
   startCreateLoading(true);
   clCancel.classList.remove('hidden');
@@ -609,32 +655,35 @@ async function startGeneration(count) {
   const collected = [];
   try {
     if (pendingContent.images && pendingContent.images.length) {
-      // Vision path: batch pages into small groups, never ask for too many at once.
+      // Vision path: batch pages into small groups, run groups in parallel.
       const images = pendingContent.images;
       const groups = [];
       for (let i = 0; i < images.length; i += 4) groups.push(images.slice(i, i + 4));
-      let rounds = 0;
-      while (collected.length < target && rounds < 3) {
-        for (const group of groups) {
-          if (genState.cancelled || collected.length >= target) break;
-          const ask = Math.min(10, target - collected.length);
-          updateGenerationProgress(collected.length, target);
-          const cards = await callGenerateWithFallback({ images: group }, ask);
-          collected.push(...cards);
-          updateGenerationProgress(collected.length, target);
-        }
-        rounds++;
-        if (!collected.length) break; // no progress → stop and surface the error
+      for (let i = 0; i < groups.length && collected.length < target; i += GEN_CONCURRENCY) {
+        if (genState.cancelled) break;
+        const batch = groups.slice(i, i + GEN_CONCURRENCY);
+        const per = Math.min(10, Math.max(5, Math.ceil((target - collected.length) / batch.length)));
+        const settled = await Promise.allSettled(batch.map((group) => callGenerateWithFallback({ images: group }, per)));
+        settled.forEach((r) => {
+          if (r.status === 'fulfilled') collected.push(...r.value);
+          else if (r.reason && r.reason.name !== 'AbortError') lastGenError = r.reason;
+        });
+        updateGenerationProgress(collected.length, target);
       }
     } else {
+      // Text path: chunks in parallel (concurrency capped).
       const plan = planGeneration(pendingContent.text, target);
-      for (let i = 0; i < plan.chunks.length && collected.length < plan.total; i++) {
+      for (let i = 0; i < plan.chunks.length && collected.length < plan.total; i += GEN_CONCURRENCY) {
         if (genState.cancelled) break;
-        const ask = Math.min(15, plan.total - collected.length);
-        updateGenerationProgress(collected.length, plan.total);
-        const cards = await callGenerateWithFallback({ text: plan.chunks[i] }, ask);
-        collected.push(...cards);
-        updateGenerationProgress(collected.length, plan.total);
+        const batch = plan.chunks.slice(i, i + GEN_CONCURRENCY);
+        const per = Math.min(PER_CALL_MAX, Math.max(5, Math.ceil((plan.total - collected.length) / batch.length)));
+        const settled = await Promise.allSettled(batch.map((chunk) => callGenerateWithFallback({ text: chunk }, per)));
+        settled.forEach((r) => {
+          if (r.status === 'fulfilled') collected.push(...r.value);
+          else if (r.reason && r.reason.name !== 'AbortError') lastGenError = r.reason;
+        });
+        updateGenerationProgress(collected.length, target);
+        if (!collected.length && i + GEN_CONCURRENCY >= plan.chunks.length) break;
       }
     }
   } catch (err) {
@@ -660,6 +709,9 @@ async function startGeneration(count) {
     return;
   }
 
+  if (!partial && pendingContent.text) {
+    setCachedGen(textHash(pendingContent.text), target, finalCards);
+  }
   await finalizeGeneration(finalCards, pendingContent.name, partial);
 }
 
