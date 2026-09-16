@@ -5996,6 +5996,66 @@ html[data-theme='dark'] .school-country { color: #cbb4a2; }
 html[data-theme='dark'] .school-manual { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); }
 html[data-theme='dark'] .terms input[type='checkbox'] { background: #2f211a; border-color: rgba(243, 231, 219, 0.2); }
 
+/* =====================================================================
+   Duck wings (stamina) — replaces the old hearts
+   ===================================================================== */
+.wing-hearts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1;
+}
+
+.wing-svg {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  display: block;
+}
+
+.wing-hearts .hearts-count {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #6b4226;
+  line-height: 1;
+}
+
+.hearts-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deck-hearts .wing-svg { width: 19px; height: 19px; }
+.deck-hearts .hearts-count { font-size: 0.85rem; }
+
+/* Low-count cue: soft red + gentle droop/pulse */
+.wing-hearts.low .wing-svg path { fill: #dc2626; stroke: #7f1d1d; }
+.wing-hearts.low .hearts-count { color: #dc2626; }
+.wing-hearts.low { animation: wingDroop 1.8s ease-in-out infinite; }
+
+@keyframes wingDroop {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(2px) rotate(-6deg); }
+}
+
+/* No-wings modal */
+.hm-emoji svg { width: 74px; height: 74px; display: block; margin: 0 auto; }
+.hm-hearts { display: flex; justify-content: center; align-items: center; }
+.hm-hearts .wing-svg { width: 38px; height: 38px; }
+.hm-hearts .hearts-count { font-size: 1.6rem; font-weight: 900; color: #6b4226; }
+
+/* Dark mode */
+html[data-theme='dark'] .wing-hearts .hearts-count { color: #fff8f0; }
+html[data-theme='dark'] .wing-hearts.low .hearts-count { color: #fca5a5; }
+html[data-theme='dark'] .deck-hearts { background: #3a2a20; border-color: rgba(243, 231, 219, 0.14); }
+html[data-theme='dark'] .hm-hearts .hearts-count { color: #fff8f0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wing-hearts.low { animation: none !important; }
+}
+
+
 html[data-theme='dark'] .estimate-copy { color: #cbb4a2; }
 html[data-theme='dark'] .estimate-file { color: #fff8f0; }
 html[data-theme='dark'] .confirm-message { color: #cbb4a2; }

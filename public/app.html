@@ -472,12 +472,14 @@
         <div class="modal-backdrop" id="hearts-backdrop"></div>
         <div class="modal-card hearts-modal">
           <button class="modal-close hearts-close" id="hearts-close" title="Close">&times;</button>
-          <div class="hm-emoji" id="hm-emoji">&#128148;</div>
-          <h2 class="hm-title">You're out of hearts!</h2>
-          <p class="hm-sub">You need at least 1 heart to start or create a quiz. Studied too fast? Take a short break — hearts refill over time.</p>
+          <div class="hm-emoji" id="hm-emoji" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 15c3-1 6-3 9-6 1.5-1.5 3-3 4-4.5.5-.8 1.5-.6 1.8.2.3.9.2 2.1-.4 3.4-1 2.3-3 4.5-5.5 6-1.2.7-2.5 1.2-3.8 1.4-1.5.2-2.7-.1-3.6-.7-.6-.4-.6-1.2.5-1.8z" fill="#F97316" stroke="#6B4226" stroke-width="1.2" stroke-linejoin="round"/><path d="M7.9 15.2c1.4-.6 2.7-1.4 3.8-2.4" stroke="#6B4226" stroke-width="1" stroke-linecap="round"/><path d="M5.9 16.9c1.2-.5 2.3-1.2 3.2-2.1" stroke="#6B4226" stroke-width="1" stroke-linecap="round"/></svg>
+          </div>
+          <h2 class="hm-title">You're out of wings!</h2>
+          <p class="hm-sub">You need at least 1 wing to start or create a quiz. Studied too fast? Take a short break &mdash; wings refill over time.</p>
           <div class="hm-hearts" id="hm-hearts"></div>
           <div class="hm-timer-box">
-            <span class="hm-timer-label">Next heart in</span>
+            <span class="hm-timer-label">Next wing in</span>
             <span class="hm-timer" id="hm-timer">00:00</span>
           </div>
           <button class="btn btn-primary" id="hm-close-btn">Got it</button>

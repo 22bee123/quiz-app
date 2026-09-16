@@ -524,7 +524,7 @@ const GEN_ERROR_COPY = {
   HTTP_413: ['That PDF is a bit too large.', 'Try a smaller file or generate fewer questions.'],
   HTTP_422: ['Buck could not read that file.', 'The PDF had no usable text. Try a text-based PDF.'],
   HTTP_504: ['That took a little too long.', 'The request timed out — try generating fewer questions.'],
-  NO_HEARTS: ['Buck is out of hearts.', 'Wait for a heart to refill, then try again.'],
+  NO_HEARTS: ['Buck is out of wings.', 'Wait for a wing to refill, then try again.'],
   UNKNOWN: ['Buck could not write questions this time.', 'Something unexpected happened. Try again, or reduce the count.'],
 };
 
@@ -812,16 +812,26 @@ function playWrong() {
   beep([220, 174.61], 0.18, 0.16, 'square');
 }
 
-/* ---------------- Hearts (stamina) ---------------- */
+/* ---------------- Wings (stamina) ---------------- */
 
-const MAX_HEARTS = 5;
+const MAX_HEARTS = 15;
 const REFILL_MS = 10 * 60 * 1000;
-let hearts = parseInt(localStorage.getItem('hearts') || String(MAX_HEARTS), 10);
-let heartRefillAt = parseInt(localStorage.getItem('heartRefillAt') || '0', 10);
+const LOW_WINGS = 5; // at or below this, show the "low" visual cue
+// New storage keys so everyone gets the new 15 default (old 'hearts' value ignored).
+let hearts = parseInt(localStorage.getItem('buckWings') || String(MAX_HEARTS), 10);
+let heartRefillAt = parseInt(localStorage.getItem('buckWingsRefillAt') || '0', 10);
+
+// Buck's wing icon — orange fill, brown outline + feather detail (matches the mascot).
+const WING_SVG =
+  '<svg class="wing-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">' +
+  '<path d="M3 15c3-1 6-3 9-6 1.5-1.5 3-3 4-4.5.5-.8 1.5-.6 1.8.2.3.9.2 2.1-.4 3.4-1 2.3-3 4.5-5.5 6-1.2.7-2.5 1.2-3.8 1.4-1.5.2-2.7-.1-3.6-.7-.6-.4-.6-1.2.5-1.8z" fill="#F97316" stroke="#6B4226" stroke-width="1.2" stroke-linejoin="round"/>' +
+  '<path d="M7.9 15.2c1.4-.6 2.7-1.4 3.8-2.4" stroke="#6B4226" stroke-width="1" stroke-linecap="round"/>' +
+  '<path d="M5.9 16.9c1.2-.5 2.3-1.2 3.2-2.1" stroke="#6B4226" stroke-width="1" stroke-linecap="round"/>' +
+  '</svg>';
 
 function saveHearts() {
-  localStorage.setItem('hearts', String(hearts));
-  localStorage.setItem('heartRefillAt', String(heartRefillAt || 0));
+  localStorage.setItem('buckWings', String(hearts));
+  localStorage.setItem('buckWingsRefillAt', String(heartRefillAt || 0));
 }
 
 function syncHearts() {
@@ -872,9 +882,9 @@ function updateHeartsTimer() {
   if (!modal || modal.classList.contains('hidden')) return;
   const heartsEl = document.getElementById('hm-hearts');
   if (heartsEl) {
-    let h = '';
-    for (let i = 0; i < MAX_HEARTS; i++) h += `<span class="life-heart${i < hearts ? '' : ' lost'}">\u2665</span>`;
-    heartsEl.innerHTML = h;
+    heartsEl.innerHTML =
+      '<span class="wing-hearts' + (hearts <= LOW_WINGS ? ' low' : '') + '">' +
+      WING_SVG + '<span class="hearts-count">' + hearts + '</span></span>';
   }
   const timerEl = document.getElementById('hm-timer');
   if (timerEl) timerEl.textContent = heartTimerLabel();
@@ -902,7 +912,7 @@ function loseHeart() {
 function gameOver() {
   for (let i = 0; i < flashcards.length; i++) {
     if (!results[i]) {
-      results[i] = { question: flashcards[i].question, type: flashcards[i].type, options: flashcards[i].options, correctAnswer: flashcards[i].answer, userAnswer: '—', verdict: 'wrong', feedback: 'Out of hearts' };
+      results[i] = { question: flashcards[i].question, type: flashcards[i].type, options: flashcards[i].options, correctAnswer: flashcards[i].answer, userAnswer: '—', verdict: 'wrong', feedback: 'Out of wings' };
     }
   }
   finishQuiz();
@@ -921,12 +931,15 @@ function heartTimerLabel() {
 }
 
 function heartsMarkup() {
-  let heartsHtml = '';
-  for (let i = 0; i < MAX_HEARTS; i++) {
-    heartsHtml += `<span class="life-heart${i < hearts ? '' : ' lost'}">\u2665</span>`;
-  }
-  const timer = hearts < MAX_HEARTS ? `<span class="hearts-timer">next \u2665 ${heartTimerLabel()}</span>` : '';
-  return `<span class="hearts-icons">${heartsHtml}</span><span class="hearts-count">${hearts}/${MAX_HEARTS}</span>${timer}`;
+  const low = hearts <= LOW_WINGS;
+  const timer = hearts < MAX_HEARTS ? `<span class="hearts-timer">next wing ${heartTimerLabel()}</span>` : '';
+  return (
+    '<span class="wing-hearts' + (low ? ' low' : '') + '" title="You have ' + hearts + ' wing' + (hearts === 1 ? '' : 's') + ' left!">' +
+    WING_SVG +
+    '<span class="hearts-count">' + hearts + '</span>' +
+    '</span>' +
+    timer
+  );
 }
 
 function renderHearts() {
