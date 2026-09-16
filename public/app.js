@@ -1777,39 +1777,46 @@ function confirmDialog(opts) {
 let currentPackId = null;
 /* ---------------- Highlighting (selection-based, question + answers) ---------------- */
 
-// Brand-aligned highlight colors.
+// Brand-aligned, soft-and-readable highlight colors.
 const HL = {
-  yellow: '#FCD34D',
-  green: '#86EFAC',
-  red: '#FCA5A5',
-  blue: '#93C5FD',
+  yellow: '#FDE68A',
+  green: '#A7F3D0',
+  red: '#FECACA',
+  blue: '#BFDBFE',
 };
+const HL_LABEL = { yellow: 'yellow', green: 'green', red: 'red', blue: 'blue' };
 const HL_ORDER = ['yellow', 'green', 'red', 'blue'];
 
-let hlActiveColor = 'yellow'; // last chosen color (shown on the header icon)
-let hlMarker = null;          // when set, newly selected text is auto-highlighted in this color
+let hlActiveColor = 'yellow'; // last used (shown with a ring in the palette)
+let hlLastApplied = null;     // { item, field, opt, s, e, color } for the pulse effect
+let hlUndo = [];              // undo stack of snapshots
 
-function renderHlPalette() {
-  const pal = document.getElementById('pack-hl-palette');
-  const btn = document.getElementById('pack-hl');
-  const dot = document.getElementById('pack-hl-dot');
-  const active = hlMarker || hlActiveColor;
-  if (pal) {
-    pal.querySelectorAll('.hl-dot').forEach((d) => d.classList.toggle('active', d.dataset.c === active));
-  }
-  if (dot) dot.style.background = HL[active] || HL.yellow;
-  if (btn) btn.classList.toggle('on', !!hlMarker);
+function hlAnnounce(msg) {
+  const live = document.getElementById('hl-live');
+  if (live) live.textContent = msg;
 }
 
-function setHlActive(color, marker) {
-  if (color) hlActiveColor = color;
-  hlMarker = marker ? color : null;
-  renderHlPalette();
+function hlSnapshot(item) {
+  return { item, hl: JSON.parse(JSON.stringify(Array.isArray(item.hl) ? item.hl : [])) };
 }
 
-function hideHeaderPalette() {
-  const pal = document.getElementById('pack-hl-palette');
-  if (pal) pal.classList.add('hidden');
+function hlPushUndo(item) {
+  hlUndo.push(hlSnapshot(item));
+  if (hlUndo.length > 30) hlUndo.shift();
+}
+
+function hlUndoLast() {
+  const snap = hlUndo.pop();
+  if (!snap) return false;
+  snap.item.hl = snap.hl;
+  updatePack(currentPackId, () => {});
+  renderPack();
+  hlAnnounce('Highlight undone');
+  return true;
+}
+
+function hlColorHex(key) {
+  return HL[key] || HL.yellow;
 }
 
 
@@ -1837,16 +1844,22 @@ function clipRanges(item, field, opt, start, end) {
 
 function applyHighlight(item, field, opt, start, end, color) {
   if (!Array.isArray(item.hl)) item.hl = [];
+  hlPushUndo(item);
   clipRanges(item, field, opt, start, end); // replace overlaps
   item.hl.push({ f: field, o: opt == null ? null : opt, s: start, e: end, c: color });
   item.hl.sort((a, b) => a.s - b.s);
+  hlLastApplied = { f: field, o: opt == null ? null : opt, s: start, e: end };
+  hlAnnounce('Text highlighted ' + (HL_LABEL[color] || ''));
 }
 
 function clearHighlightRange(item, field, opt, start, end) {
+  hlPushUndo(item);
   clipRanges(item, field, opt, start, end);
+  hlAnnounce('Highlight cleared');
 }
 
 function clearAllHighlights(item) {
+  hlPushUndo(item);
   item.hl = [];
   const legacy = ['hq', 'ha'];
   legacy.forEach((k) => { if (item[k]) delete item[k]; });
@@ -1866,9 +1879,11 @@ function renderHighlighted(text, item, field, opt) {
   let pos = 0;
   ranges.forEach((r) => {
     if (r.s > pos) html += escapeHtml(str.slice(pos, r.s));
-    const color = HL[r.c] || HL.yellow;
-    html += '<mark class="bhl" data-c="' + r.c + '" data-s="' + r.s + '" data-e="' + r.e + '"' +
-      ' style="background:' + color + '">' + escapeHtml(str.slice(r.s, r.e)) + '</mark>';
+    const pulse = hlLastApplied && hlLastApplied.f === field &&
+      (hlLastApplied.o == null ? opt == null : hlLastApplied.o === opt) &&
+      hlLastApplied.s === r.s && hlLastApplied.e === r.e;
+    html += '<mark class="bhl' + (pulse ? ' bhl-pulse' : '') + '" data-c="' + r.c + '" data-s="' + r.s +
+      '" data-e="' + r.e + '" style="background:' + hlColorHex(r.c) + '">' + escapeHtml(str.slice(r.s, r.e)) + '</mark>';
     pos = r.e;
   });
   if (pos < str.length) html += escapeHtml(str.slice(pos));
@@ -1927,22 +1942,38 @@ function showHlFloat(payload) {
   const float = document.getElementById('hl-float');
   if (!float) return;
   hlPending = payload;
-  float.innerHTML = HL_ORDER.map((c) =>
-    '<button type="button" class="hl-dot' + (c === hlActiveColor ? ' active' : '') + '" data-c="' + c +
-    '" aria-label="Highlight ' + c + '" title="Highlight ' + c +
-    '" style="background:' + HL[c] + '"></button>'
-  ).join('') + '<button type="button" class="hl-clear" data-clear="1" title="Clear highlight">&#10005;&nbsp;Clear</button>';
+  const showHint = !localStorage.getItem('buckHlHinted');
+  float.innerHTML =
+    (showHint ? '<span class="hl-bubble">Select text to highlight</span>' : '') +
+    HL_ORDER.map((c) =>
+      '<button type="button" class="hl-dot' + (c === hlActiveColor ? ' active' : '') + '" data-c="' + c +
+      '" aria-label="Highlight ' + c + '" title="Highlight ' + c +
+      '" style="background:' + HL[c] + '"></button>'
+    ).join('') +
+    '<span class="hl-sep"></span>' +
+    '<button type="button" class="hl-action hl-clear" data-clear="1" title="Clear highlight" aria-label="Clear highlight">&#10005;</button>' +
+    '<button type="button" class="hl-action hl-close" data-close="1" title="Close" aria-label="Close palette">&#10005;</button>';
   float.classList.remove('hidden');
 
   const r = payload.rect;
-  const fw = float.offsetWidth || 230;
-  const fh = float.offsetHeight || 40;
+  const fw = float.offsetWidth || 240;
+  const fh = float.offsetHeight || 44;
   let left = r.left + r.width / 2 - fw / 2;
-  let top = r.top - fh - 8;
   left = Math.max(8, Math.min(left, window.innerWidth - fw - 8));
-  if (top < 8) top = r.bottom + 8;
+  let top = r.top - fh - 10;
+  const flip = top < 8;
+  if (flip) top = r.bottom + 10;
+  float.classList.toggle('flip', flip);
   float.style.left = left + 'px';
   float.style.top = top + 'px';
+
+  // Caret points at the selection center
+  const caret = float.querySelector('.hl-caret') || document.createElement('span');
+  caret.className = 'hl-caret';
+  if (!caret.parentNode) float.appendChild(caret);
+  const cx = Math.max(14, Math.min(r.left + r.width / 2 - left, fw - 14));
+  caret.style.left = cx + 'px';
+  if (showHint) { try { localStorage.setItem('buckHlHinted', '1'); } catch (e) {} }
 }
 
 function hideHlFloat() {
@@ -1955,31 +1986,29 @@ function hideHlFloat() {
 function applyPending(colorKey) {
   if (!hlPending) return;
   const p = hlPending;
-  if (colorKey) applyHighlight(p.item, p.field, p.opt, p.start, p.end, colorKey);
-  else clearHighlightRange(p.item, p.field, p.opt, p.start, p.end);
+  if (colorKey) {
+    hlActiveColor = colorKey;
+    applyHighlight(p.item, p.field, p.opt, p.start, p.end, colorKey);
+  } else {
+    clearHighlightRange(p.item, p.field, p.opt, p.start, p.end);
+  }
   updatePack(currentPackId, () => {});
   hideHlFloat();
   const sel = window.getSelection();
   if (sel) sel.removeAllRanges();
   renderPack();
+  clearTimeout(hlPulseTimer);
+  hlPulseTimer = setTimeout(() => { hlLastApplied = null; }, 320);
 }
+
+let hlPulseTimer = null;
 
 function handleSelection() {
   if (hlInteracting) return;
   if (!packScreen || packScreen.classList.contains('hidden')) { hideHlFloat(); return; }
   const p = hlSelectionPayload();
-  if (!p) { hideHlFloat(); return; }
-  if (hlMarker) {
-    // Marker mode: selecting text highlights it immediately in the active color.
-    applyHighlight(p.item, p.field, p.opt, p.start, p.end, hlMarker);
-    updatePack(currentPackId, () => {});
-    hideHlFloat();
-    const sel = window.getSelection();
-    if (sel) sel.removeAllRanges();
-    renderPack();
-    return;
-  }
-  showHlFloat(p);
+  if (p) showHlFloat(p);
+  else hideHlFloat();
 }
 
 function showHlRemove(mark) {
@@ -2029,25 +2058,14 @@ document.addEventListener('mousedown', (e) => {
 
 document.addEventListener('click', (e) => {
   const dot = e.target.closest && e.target.closest('#hl-float .hl-dot');
-  if (dot) { setHlActive(dot.dataset.c, false); applyPending(dot.dataset.c); hlInteracting = false; return; }
+  if (dot) { applyPending(dot.dataset.c); hlInteracting = false; return; }
   const clr = e.target.closest && e.target.closest('#hl-float .hl-clear');
   if (clr) { applyPending(null); hlInteracting = false; return; }
-
-  // Header highlighter palette: pick a color → marker mode (auto-highlight on select)
-  const hdot = e.target.closest && e.target.closest('#pack-hl-palette .hl-dot');
-  if (hdot) {
-    setHlActive(hdot.dataset.c, true);
-    hideHeaderPalette();
-    // If text is already selected, apply immediately too.
-    const p = hlSelectionPayload();
-    if (p) {
-      applyHighlight(p.item, p.field, p.opt, p.start, p.end, hdot.dataset.c);
-      updatePack(currentPackId, () => {});
-      const sel = window.getSelection(); if (sel) sel.removeAllRanges();
-      renderPack();
-    } else {
-      showToast('Marker on ("' + hdot.dataset.c + '"). Select text to highlight ✏️', 'correct');
-    }
+  const close = e.target.closest && e.target.closest('#hl-float .hl-close');
+  if (close) {
+    hideHlFloat();
+    const sel = window.getSelection(); if (sel) sel.removeAllRanges();
+    hlInteracting = false;
     return;
   }
 
@@ -2075,10 +2093,6 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest || !e.target.closest('#hl-float')) {
     hlInteracting = false;
   }
-  // Close the header palette when clicking outside it
-  if (!e.target.closest || !e.target.closest('.pack-hlwrap')) {
-    hideHeaderPalette();
-  }
 });
 
 document.addEventListener('mouseover', (e) => {
@@ -2096,6 +2110,13 @@ document.addEventListener('mouseout', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  // Undo last highlight (Ctrl/Cmd+Z)
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && hlUndo.length) {
+    if (!packScreen || packScreen.classList.contains('hidden')) return;
+    e.preventDefault();
+    hlUndoLast();
+    return;
+  }
   const float = document.getElementById('hl-float');
   if (!float || float.classList.contains('hidden')) return;
   if (e.key === '0') { applyPending(null); }
@@ -2107,12 +2128,15 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// Dismiss the floating palette when the user scrolls.
+window.addEventListener('scroll', () => {
+  const float = document.getElementById('hl-float');
+  if (float && !float.classList.contains('hidden')) hideHlFloat();
+}, true);
+
 // Hides the floating palette when leaving the pack screen.
 function resetHighlightMode() {
   hideHlFloat();
-  hideHeaderPalette();
-  hlMarker = null;
-  renderHlPalette();
 }
 
 function openPack(id) {
@@ -2146,6 +2170,19 @@ function renderPack() {
     card.dataset.pi = i;
     card.innerHTML = `
       <div class="pk-menu">
+        <div class="pk-hlwrap">
+          <button class="pk-hl" title="Highlight colors" aria-label="Highlight colors">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+          </button>
+          <div class="pk-hl-pop hidden" role="toolbar" aria-label="Highlight colors">
+            <button type="button" class="hl-dot" data-c="yellow" aria-label="Highlight yellow" title="Highlight yellow" style="background:${HL.yellow}"></button>
+            <button type="button" class="hl-dot" data-c="green" aria-label="Highlight green" title="Highlight green" style="background:${HL.green}"></button>
+            <button type="button" class="hl-dot" data-c="red" aria-label="Highlight red" title="Highlight red" style="background:${HL.red}"></button>
+            <button type="button" class="hl-dot" data-c="blue" aria-label="Highlight blue" title="Highlight blue" style="background:${HL.blue}"></button>
+            <span class="pk-hl-sep"></span>
+            <button type="button" class="pk-hl-clear" title="Clear all highlights on this card" aria-label="Clear all highlights on this card">&#129529;</button>
+          </div>
+        </div>
         <button class="pk-more" title="Options">&#8942;</button>
         <div class="pk-dropdown hidden">
           <button class="pk-edit">&#9998;&#65039; Edit</button>
@@ -2170,16 +2207,70 @@ function renderPack() {
       if (opened) card.classList.add('menu-open');
     });
     dd.addEventListener('click', (e) => e.stopPropagation());
-    card.querySelector('.pk-edit').addEventListener('click', () => { close(); openEditQ(i); });
-    card.querySelector('.pk-clear-hl').addEventListener('click', () => {
+
+    // Per-card highlighter popover (fallback for discoverability)
+    const hlBtn = card.querySelector('.pk-hl');
+    const hlPop = card.querySelector('.pk-hl-pop');
+    hlBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
       close();
+      const willShow = hlPop.classList.contains('hidden');
+      document.querySelectorAll('.pk-hl-pop').forEach((p) => p.classList.add('hidden'));
+      if (willShow) {
+        hlPop.querySelectorAll('.hl-dot').forEach((d) => d.classList.toggle('active', d.dataset.c === hlActiveColor));
+        hlPop.classList.remove('hidden');
+      }
+    });
+    hlPop.addEventListener('click', (e) => e.stopPropagation());
+    hlPop.querySelectorAll('.hl-dot').forEach((d) => {
+      d.addEventListener('click', () => {
+        hlActiveColor = d.dataset.c;
+        hlPop.classList.add('hidden');
+        const p = hlSelectionPayload();
+        if (p && p.item === it) {
+          applyHighlight(it, p.field, p.opt, p.start, p.end, hlActiveColor);
+          updatePack(currentPackId, () => {});
+          const sel = window.getSelection(); if (sel) sel.removeAllRanges();
+          renderPack();
+        } else {
+          showToast('Now select text to highlight it ✏️', 'correct');
+        }
+      });
+    });
+    hlPop.querySelector('.pk-hl-clear').addEventListener('click', async () => {
+      hlPop.classList.add('hidden');
+      const ok = await confirmDialog({
+        title: 'Remove all highlights?',
+        message: 'This removes every highlight on this card. This cannot be undone.',
+        confirmText: 'Clear',
+        cancelText: 'Cancel',
+        danger: true,
+      });
+      if (!ok) return;
+      clearAllHighlights(it);
+      updatePack(pack.id, () => {});
+      renderPack();
+      showToast('Highlights cleared 🧹', 'correct');
+    });
+
+    card.querySelector('.pk-edit').addEventListener('click', () => { close(); openEditQ(i); });
+    card.querySelector('.pk-clear-hl').addEventListener('click', async (e) => {
+      close();
+      const ok = await confirmDialog({
+        title: 'Remove all highlights?',
+        message: 'This removes every highlight on this card. This cannot be undone.',
+        confirmText: 'Clear',
+        cancelText: 'Cancel',
+        danger: true,
+      });
+      if (!ok) return;
       clearAllHighlights(it);
       updatePack(pack.id, () => {});
       renderPack();
       showToast('Highlights cleared 🧹', 'correct');
     });
     card.querySelector('.pk-del').addEventListener('click', () => { close(); if (confirm('Delete this question?')) { updatePack(pack.id, (p) => { p.items.splice(i, 1); }); renderPack(); } });
-    card.addEventListener('click', close);
+    card.addEventListener('click', () => { close(); hlPop.classList.add('hidden'); });
     listEl.appendChild(card);
   });
 }
@@ -2435,14 +2526,6 @@ function wirePack() {
   document.getElementById('pack-back').addEventListener('click', () => resetToUpload());
   document.getElementById('pack-study').addEventListener('click', () => { if (requireHearts()) startPackQuiz(); });
   document.getElementById('pack-add').addEventListener('click', openAddQ);
-  document.getElementById('pack-hl').addEventListener('click', (e) => {
-    e.stopPropagation();
-    const pal = document.getElementById('pack-hl-palette');
-    const willShow = pal.classList.contains('hidden');
-    hideHeaderPalette();
-    if (willShow) { pal.classList.remove('hidden'); renderHlPalette(); }
-    else { hlMarker = null; renderHlPalette(); }
-  });
   document.getElementById('addq-save').addEventListener('click', saveAddQ);
   document.getElementById('addq-close').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
   document.getElementById('addq-backdrop').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));

@@ -825,20 +825,6 @@
             <span id="pack-count" class="pack-count">0 cards</span>
           </div>
           <div class="pack-actions">
-            <div class="pack-hlwrap">
-              <button id="pack-hl" class="pack-hl-btn" title="Highlighter" aria-label="Highlighter">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
-                <span class="pack-hl-dot" id="pack-hl-dot" aria-hidden="true"></span>
-              </button>
-              <div class="pack-hl-palette hidden" id="pack-hl-palette" role="toolbar" aria-label="Highlight colors">
-                <span class="pack-hl-title">Highlighter</span>
-                <button type="button" class="hl-dot" data-c="yellow" aria-label="Highlight yellow" title="Highlight yellow"></button>
-                <button type="button" class="hl-dot" data-c="green" aria-label="Highlight green" title="Highlight green"></button>
-                <button type="button" class="hl-dot" data-c="red" aria-label="Highlight red" title="Highlight red"></button>
-                <button type="button" class="hl-dot" data-c="blue" aria-label="Highlight blue" title="Highlight blue"></button>
-                <span class="pack-hl-hint">Select text, or turn on &amp; drag to mark</span>
-              </div>
-            </div>
             <button id="pack-study" class="pack-study">&#127918; Start Study</button>
           </div>
         </div>
@@ -992,6 +978,7 @@
   <!-- Floating highlight palette (appears above selected text) -->
   <div id="hl-float" class="hl-float hidden" role="toolbar" aria-label="Highlight colors"></div>
   <button id="hl-remove" class="hl-remove hidden" type="button" aria-label="Remove highlight">&#10005;</button>
+  <div id="hl-live" class="sr-only" role="status" aria-live="polite"></div>
 
   <script src="/vendor/supabase.js"></script>
   <script src="app.js"></script>

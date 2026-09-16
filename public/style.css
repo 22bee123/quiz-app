@@ -6073,69 +6073,49 @@ html[data-theme='dark'] .hl-float .hl-clear:hover { background: rgba(239, 68, 68
 html[data-theme='dark'] mark.bhl { color: #2a1c15; }
 html[data-theme='dark'] .pk-clear-hl { color: #ffe8d6; }
 
-/* ---- Header highlighter button + palette ---- */
-.pack-hlwrap { position: relative; }
+/* =====================================================================
+   Highlighter — refined
+   ===================================================================== */
+::selection { background: rgba(249, 115, 22, 0.3); }
 
-.pack-hl-btn {
-  position: relative;
-  width: 42px;
-  height: 42px;
-  border: 1px solid #eee0d2;
-  border-radius: 50%;
-  background: #fff;
+/* Per-card palette icon (next to ⋮) */
+.pk-hlwrap { position: relative; display: flex; align-items: center; }
+
+.pk-hl {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
   color: #b99c86;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  border-radius: 8px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s, color 0.15s;
 }
 
-.pack-hl-btn:hover { background: #fff1e6; color: #f97316; }
-.pack-hl-btn.on {
-  background: #fff1e6;
-  color: #ea580c;
-  border-color: #f3c9a4;
-  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.18);
-}
+.pk-hl:hover { background: #fff1e6; color: #ea580c; }
 
-.pack-hl-dot {
+.pk-hl-pop {
   position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1px #e6d5c6;
-  background: #FCD34D;
-  display: none;
-}
-
-.pack-hl-btn.on .pack-hl-dot { display: block; }
-
-.pack-hl-palette {
-  position: absolute;
-  top: calc(100% + 10px);
+  top: calc(100% + 8px);
   right: 0;
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 8px 10px;
   background: #fff8f0;
   border: 1px solid #e8d5c4;
   border-radius: 14px;
   box-shadow: 0 14px 34px rgba(62, 39, 35, 0.22);
-  padding: 10px 12px;
-  z-index: 40;
+  z-index: 30;
   white-space: nowrap;
   animation: hlFloatIn 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.pack-hl-palette.hidden { display: none; }
-.pack-hl-title { font-size: 0.7rem; font-weight: 800; color: #8b5e3c; text-transform: uppercase; letter-spacing: 0.08em; }
-.pack-hl-hint { font-size: 0.72rem; color: #b99c86; max-width: 150px; white-space: normal; line-height: 1.3; }
+.pk-hl-pop.hidden { display: none; }
 
-.pack-hl-palette .hl-dot {
+.pk-hl-pop .hl-dot {
   width: 20px;
   height: 20px;
   border-radius: 50%;
@@ -6147,23 +6127,147 @@ html[data-theme='dark'] .pk-clear-hl { color: #ffe8d6; }
   transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
 }
 
-.pack-hl-palette .hl-dot:hover { transform: scale(1.15); border-color: #6b4226; }
-.pack-hl-palette .hl-dot.active { box-shadow: 0 0 0 2px #f97316; transform: scale(1.12); }
-.pack-hl-palette .hl-dot[data-c='yellow'] { background: #FCD34D; }
-.pack-hl-palette .hl-dot[data-c='green'] { background: #86EFAC; }
-.pack-hl-palette .hl-dot[data-c='red'] { background: #FCA5A5; }
-.pack-hl-palette .hl-dot[data-c='blue'] { background: #93C5FD; }
+.pk-hl-pop .hl-dot:hover { transform: scale(1.15); border-color: #6b4226; }
+.pk-hl-pop .hl-dot.active { box-shadow: 0 0 0 2px #f97316; transform: scale(1.12); }
 
-html[data-theme='dark'] .pack-hl-btn { background: #3a2a20; border-color: rgba(243, 231, 219, 0.16); color: #ffe8d6; }
-html[data-theme='dark'] .pack-hl-btn:hover { background: #4a3128; color: #fdba74; }
-html[data-theme='dark'] .pack-hl-btn.on { background: rgba(249, 115, 22, 0.2); color: #fdba74; }
-html[data-theme='dark'] .pack-hl-palette { background: #3a2a20; border-color: rgba(243, 231, 219, 0.14); }
-html[data-theme='dark'] .pack-hl-title { color: #ffd9b0; }
-html[data-theme='dark'] .pack-hl-hint { color: #cbb4a2; }
+.pk-hl-sep { width: 1px; height: 20px; background: #e8d5c4; }
 
-@media (max-width: 640px) {
-  .pack-hl-palette { right: auto; left: 0; flex-wrap: wrap; max-width: 240px; }
+.pk-hl-clear {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: #fff1e6;
+  color: #6b4226;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s, color 0.15s;
 }
+
+.pk-hl-clear:hover { background: #fee2e2; color: #dc2626; }
+
+/* Floating selection palette */
+.hl-float {
+  position: fixed;
+  z-index: 2500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #fff8f0;
+  border: 1px solid #e8d5c4;
+  border-radius: 999px;
+  box-shadow: 0 14px 34px rgba(62, 39, 35, 0.22);
+  animation: hlFloatIn 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.hl-float.hidden { display: none; }
+
+@keyframes hlFloatIn {
+  from { opacity: 0; transform: translateY(5px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+.hl-bubble {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #8b5e3c;
+  padding: 0 4px 0 2px;
+  white-space: nowrap;
+}
+
+.hl-float .hl-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #e6d5c6;
+  cursor: pointer;
+  padding: 0;
+  flex: 0 0 auto;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+.hl-float .hl-dot:hover { transform: scale(1.15); border-color: #6b4226; box-shadow: 0 3px 8px rgba(62, 39, 35, 0.2); }
+.hl-float .hl-dot.active { box-shadow: 0 0 0 2.5px #6b4226; transform: scale(1.1); }
+.hl-float .hl-dot:focus-visible,
+.pk-hl-pop .hl-dot:focus-visible { outline: 3px solid rgba(249, 115, 22, 0.45); outline-offset: 2px; }
+
+.hl-sep { width: 1px; height: 22px; background: #e8d5c4; }
+
+.hl-action {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 900;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.hl-action.hl-clear { background: #fff1e6; color: #6b4226; }
+.hl-action.hl-clear:hover { background: #fee2e2; color: #dc2626; }
+.hl-action.hl-close { background: transparent; color: #b99c86; }
+.hl-action.hl-close:hover { background: #efe2d6; color: #6b4226; }
+
+/* little arrow pointing to the selection */
+.hl-caret {
+  position: absolute;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  background: #fff8f0;
+  border-right: 1px solid #e8d5c4;
+  border-bottom: 1px solid #e8d5c4;
+  transform: rotate(45deg);
+  margin-left: -6px;
+}
+
+.hl-float.flip .hl-caret {
+  bottom: auto;
+  top: -6px;
+  border: none;
+  border-left: 1px solid #e8d5c4;
+  border-top: 1px solid #e8d5c4;
+}
+
+/* pulse confirmation on the applied highlight */
+@keyframes hlPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+
+mark.bhl.bhl-pulse { animation: hlPulse 0.24s ease; }
+
+mark.bhl:hover { filter: brightness(0.94); box-shadow: 0 0 0 1px rgba(107, 66, 38, 0.35); cursor: pointer; }
+
+/* Cleaner card spacing + type */
+.pack-card { padding: 24px 56px 24px 24px; }
+.pk-q { font-size: 16px; line-height: 1.5; margin-bottom: 14px; }
+.pk-opt { font-size: 15px; padding: 12px 16px; }
+.pk-badge { right: 54px; }
+
+html[data-theme='dark'] .pk-hl { color: #cbb4a2; }
+html[data-theme='dark'] .pk-hl:hover { background: #4a3128; color: #fdba74; }
+html[data-theme='dark'] .pk-hl-pop { background: #3a2a20; border-color: rgba(243, 231, 219, 0.14); }
+html[data-theme='dark'] .pk-hl-sep { background: #4a3128; }
+html[data-theme='dark'] .pk-hl-clear { background: #4a3128; color: #ffe8d6; }
+html[data-theme='dark'] .hl-float { background: #3a2a20; border-color: rgba(243, 231, 219, 0.14); }
+html[data-theme='dark'] .hl-bubble { color: #cbb4a2; }
+html[data-theme='dark'] .hl-caret { background: #3a2a20; border-color: rgba(243, 231, 219, 0.14); }
+html[data-theme='dark'] .hl-float .hl-dot,
+html[data-theme='dark'] .pk-hl-pop .hl-dot { border-color: #3a2a20; box-shadow: 0 0 0 1px rgba(243, 231, 219, 0.2); }
+html[data-theme='dark'] .hl-action.hl-clear { background: #4a3128; color: #ffe8d6; }
+
+
 
 
 
