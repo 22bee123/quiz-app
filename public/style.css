@@ -6803,6 +6803,74 @@ html[data-theme='dark'] .chat-side-title { color: #fff8f0; }
 html[data-theme='dark'] .chat-side-head,
 html[data-theme='dark'] .chat-side-search { border-color: rgba(243, 231, 219, 0.12); }
 html[data-theme='dark'] .chat-side-search input { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); color: #fff8f0; }
+
+/* =====================================================================
+   Live generation banner (StudyPack)
+   ===================================================================== */
+.pack-banner {
+  margin: 0 0 14px;
+  background: #fff7ef;
+  border: 1.5px solid #f3c9a4;
+  border-radius: 16px;
+  padding: 12px 14px;
+}
+
+.pb-row { display: flex; align-items: center; gap: 10px; }
+.pb-mascot svg { width: 34px; height: 34px; display: block; }
+.pb-mascot { animation: buckBob 2.5s ease-in-out infinite; }
+.pb-text { flex: 1; font-weight: 800; color: #6b4226; font-size: 0.9rem; }
+.pb-actions { display: flex; gap: 8px; }
+
+.pb-btn {
+  border: 1.5px solid #e8d5c4;
+  background: #fff;
+  color: #6b4226;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 0.8rem;
+  padding: 7px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+.pb-btn:hover { background: #fff1e6; }
+.pb-btn:active { transform: scale(0.96); }
+.pb-btn.primary { background: linear-gradient(135deg, #f97316, #fb8c3a); color: #fff; border-color: transparent; }
+
+.pb-track { margin-top: 10px; height: 8px; background: #f0e4d8; border-radius: 999px; overflow: hidden; }
+.pb-track span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f97316, #fb8c3a);
+  transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Skeleton + freshly-arrived cards */
+.pack-card.pack-skeleton { display: flex; flex-direction: column; gap: 10px; }
+.pack-card.pack-skeleton span {
+  height: 12px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #f3e7db 25%, #fff8f0 37%, #f3e7db 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+.pack-card.pack-skeleton span:nth-child(1) { width: 70%; }
+.pack-card.pack-skeleton span:nth-child(2) { width: 90%; }
+.pack-card.pack-skeleton span:nth-child(3) { width: 50%; }
+
+.pack-card.card-new { animation: cardArrive 0.35s ease both; }
+@keyframes cardArrive {
+  0% { opacity: 0; transform: translateY(20px); }
+  60% { box-shadow: 0 0 0 6px rgba(249, 115, 22, 0.18); }
+  100% { opacity: 1; transform: none; box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+}
+
+html[data-theme='dark'] .pack-banner { background: rgba(249, 115, 22, 0.12); border-color: rgba(249, 115, 22, 0.35); }
+html[data-theme='dark'] .pb-text { color: #ffe8d6; }
+html[data-theme='dark'] .pb-btn { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); color: #ffe8d6; }
+html[data-theme='dark'] .pb-track { background: #4a3128; }
 html[data-theme='dark'] .chat-msg.them .bubble { background: #3a2a20; color: #f3e7db; border-color: rgba(243, 231, 219, 0.12); }
 html[data-theme='dark'] .chat-day { background: #3a2a20; border-color: rgba(243, 231, 219, 0.12); color: #cbb4a2; }
 html[data-theme='dark'] .chat-input { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); color: #fff8f0; }

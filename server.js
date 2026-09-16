@@ -583,13 +583,22 @@ app.post('/api/generate', async (req, res) => {
       }
     }
 
+    const parsedCount = Array.isArray(cards) ? cards.length : 0;
     const valid = normalizeFlashcards(cards);
-    const dropped = cards.length - valid.length;
-    if (debug) console.log(`[generate] done in ${Date.now() - startedAt}ms${dropped > 0 ? ' (dropped ' + dropped + ')' : ''}`);
+    // Exact-duplicate removal only (never drop merely similar questions).
+    const seenQ = new Set();
+    const deduped = valid.filter((c) => {
+      const k = String(c.question || '').toLowerCase().trim();
+      if (seenQ.has(k)) return false;
+      seenQ.add(k);
+      return true;
+    });
+    const dropped = parsedCount - deduped.length;
+    console.log(`[generate] requested=${count} parsed=${parsedCount} valid=${valid.length} deduped=${deduped.length} final=${deduped.length} dropped=${dropped} ms=${Date.now() - startedAt}`);
 
-    const result = valid.slice(0, count);
+    const result = deduped.slice(0, count);
     genCacheSet(cacheKey, result);
-    res.json({ flashcards: result, cached: false });
+    res.json({ flashcards: result, cached: false, requested: count, generated: result.length });
   } catch (err) {
     let code = classifyError(err);
     const visionPath = imageCount > 0;

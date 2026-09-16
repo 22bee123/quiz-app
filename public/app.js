@@ -634,119 +634,217 @@ async function startGeneration(count) {
   lastGenError = null;
   hideGenerationError();
 
-  // ---- Instant path: same document + count generated before (local cache) ----
+  // 1) Create the StudyPack immediately and show it with a live banner.
+  const pack = addPack(pendingContent.name || 'StudyPack', []);
+  genState = { packId: pack.id, target, cancelled: false, controller: null, seen: new Set(), error: null, running: true };
+  closeCreate();
+  stopCreateLoading();
+  openPack(pack.id);
+  renderPackBanner();
+  renderPack();
+
+  // 2) Instant path: same document cached locally.
   if (pendingContent.text) {
-    const hash = textHash(pendingContent.text);
-    const cachedCards = getCachedGen(hash, target);
-    if (cachedCards && cachedCards.length) {
-      const cards = ensureMixedChoice(cachedCards.slice(0, target));
-      await finalizeGeneration(cards, pendingContent.name, false);
+    const cached = getCachedGen(textHash(pendingContent.text), target);
+    if (cached && cached.length) {
+      appendLiveCards(ensureMixedChoice(cached.slice(0, target)));
+      finishLiveGeneration(false, null);
       showToast('⚡ Instant — loaded from cache', 'correct');
       return;
     }
   }
 
   savePendingDeck('generating', pendingContent.name, createMode);
-  startCreateLoading(true);
-  clCancel.classList.remove('hidden');
-  setLoadingSub(pendingContent.images ? 'Reading your pages as images…' : 'Warming up Buck…');
-  genState = { cancelled: false, controller: null };
-
-  const collected = [];
   try {
-    if (pendingContent.images && pendingContent.images.length) {
-      // Vision path: batch pages into small groups, run groups in parallel.
-      const images = pendingContent.images;
-      const groups = [];
-      for (let i = 0; i < images.length; i += 4) groups.push(images.slice(i, i + 4));
-      for (let i = 0; i < groups.length && collected.length < target; i += GEN_CONCURRENCY) {
-        if (genState.cancelled) break;
-        const batch = groups.slice(i, i + GEN_CONCURRENCY);
-        const per = Math.min(10, Math.max(5, Math.ceil((target - collected.length) / batch.length)));
-        const settled = await Promise.allSettled(batch.map((group) => callGenerateWithFallback({ images: group }, per)));
-        settled.forEach((r) => {
-          if (r.status === 'fulfilled') collected.push(...r.value);
-          else if (r.reason && r.reason.name !== 'AbortError') lastGenError = r.reason;
-        });
-        updateGenerationProgress(collected.length, target);
-      }
-    } else {
-      // Text path: chunks in parallel (concurrency capped).
-      const plan = planGeneration(pendingContent.text, target);
-      for (let i = 0; i < plan.chunks.length && collected.length < plan.total; i += GEN_CONCURRENCY) {
-        if (genState.cancelled) break;
-        const batch = plan.chunks.slice(i, i + GEN_CONCURRENCY);
-        const per = Math.min(PER_CALL_MAX, Math.max(5, Math.ceil((plan.total - collected.length) / batch.length)));
-        const settled = await Promise.allSettled(batch.map((chunk) => callGenerateWithFallback({ text: chunk }, per)));
-        settled.forEach((r) => {
-          if (r.status === 'fulfilled') collected.push(...r.value);
-          else if (r.reason && r.reason.name !== 'AbortError') lastGenError = r.reason;
-        });
-        updateGenerationProgress(collected.length, target);
-        if (!collected.length && i + GEN_CONCURRENCY >= plan.chunks.length) break;
-      }
-    }
+    await runLiveWaves(target);
   } catch (err) {
-    const aborted = err && err.name === 'AbortError';
-    if (!aborted && genState && !genState.cancelled) {
+    if (!(err && err.name === 'AbortError') && genState && !genState.cancelled) {
       console.warn('Generation error:', err.code || '', err.message);
-      lastGenError = err;
+      genState.error = err;
     }
   }
 
-  const cancelled = genState ? genState.cancelled : true;
-  const partial = cancelled || collected.length < target;
-  const finalCards = ensureMixedChoice(collected.slice(0, target));
-  genState = null;
-  clCancel.classList.add('hidden');
-  stopCreateLoading();
+  const cancelled = genState.cancelled;
+  const got = (getPack(genState.packId) || { items: [] }).items.length;
+  const complete = !cancelled && !genState.error && got >= target;
 
-  if (!finalCards.length) {
-    // Nothing usable — show the actionable error state, keep the user on the estimate panel.
+  if (!got) {
+    // Nothing usable → drop the empty pack and return to the estimate panel with the error.
+    const failedId = genState.packId;
+    genState = null;
+    studyPacks = studyPacks.filter((p) => p.id !== failedId);
+    savePacks();
+    if (currentPackId === failedId) currentPackId = null;
+    renderStudyPackList();
+    createModal.classList.remove('hidden');
+    estimatePanel.classList.remove('hidden');
+    createSourcePanel.classList.add('hidden');
+    renderPackBanner();
     showGenerationError(lastGenError || { code: 'EMPTY' });
-    showEstimatePanel();
-    genError.classList.remove('hidden');
     return;
   }
 
-  if (!partial && pendingContent.text) {
-    setCachedGen(textHash(pendingContent.text), target, finalCards);
-  }
-  await finalizeGeneration(finalCards, pendingContent.name, partial);
+  if (complete && pendingContent.text) setCachedGen(textHash(pendingContent.text), target, (getPack(genState.packId) || { items: [] }).items);
+
+  finishLiveGeneration(!complete, genState.error);
 }
 
-async function finalizeGeneration(cards, name, partial) {
-  stopCreateLoading();
-  if (!cards || !cards.length) {
-    showEstimatePanel();
-    showGenerationError(lastGenError || { code: 'EMPTY' });
+// Runs the parallel wave loop, appending cards to the pack as they arrive.
+async function runLiveWaves(target) {
+  const packId = genState.packId;
+  const got = () => ((getPack(packId) || { items: [] }).items || []).length;
+  const MAX_FILL_ROUNDS = 3;
+  let fillRound = 0;
+
+  while (got() < target && !genState.cancelled) {
+    const before = got();
+    const remaining = target - before;
+    const per = pendingContent.images ? Math.min(10, Math.max(5, Math.ceil(remaining / GEN_CONCURRENCY)))
+      : Math.min(PER_CALL_MAX, Math.max(5, Math.ceil(remaining / GEN_CONCURRENCY)));
+
+    let settled;
+    if (pendingContent.images && pendingContent.images.length) {
+      const groups = [];
+      for (let i = 0; i < pendingContent.images.length; i += 4) groups.push(pendingContent.images.slice(i, i + 4));
+      settled = await Promise.allSettled(groups.map((group) => callGenerateWithFallback({ images: group }, per)));
+    } else {
+      const plan = planGeneration(pendingContent.text, target);
+      // Cycle chunks if we need to fill more in later rounds.
+      const start = (fillRound * GEN_CONCURRENCY) % Math.max(1, plan.chunks.length);
+      const rotated = plan.chunks.slice(start).concat(plan.chunks.slice(0, start));
+      const batch = rotated.slice(0, GEN_CONCURRENCY);
+      settled = await Promise.allSettled(batch.map((chunk) => callGenerateWithFallback({ text: chunk }, per)));
+    }
+
+    if (genState.cancelled) break;
+
+    const incoming = [];
+    settled.forEach((r) => {
+      if (r.status === 'fulfilled') incoming.push(...r.value);
+      else if (r.reason && r.reason.name !== 'AbortError') { genState.error = r.reason; lastGenError = r.reason; }
+    });
+    appendLiveCards(incoming);
+
+    // No progress this round → ask the model for a smaller amount once more, else stop.
+    if (got() === before) {
+      fillRound++;
+      if (fillRound >= MAX_FILL_ROUNDS) break;
+    } else {
+      fillRound = 0;
+    }
+    renderPackBanner();
+  }
+}
+
+function appendLiveCards(cards) {
+  if (!genState || !cards || !cards.length) return;
+  const pack = getPack(genState.packId);
+  if (!pack) return;
+  const fresh = [];
+  cards.forEach((f) => {
+    if (!f || typeof f.question !== 'string') return;
+    const key = String(f.question).toLowerCase().trim();
+    if (genState.seen.has(key)) return; // exact-duplicate guard only
+    genState.seen.add(key);
+    fresh.push({
+      type: f.type === 'choice' ? 'choice' : 'flashcard',
+      question: f.question,
+      answer: f.answer,
+      options: f.type === 'choice' ? f.options : undefined,
+    });
+  });
+  if (!fresh.length) return;
+  const room = genState.target - (pack.items.length);
+  if (room <= 0) return;
+  const toAdd = fresh.slice(0, room);
+  updatePack(genState.packId, (p) => { toAdd.forEach((c) => p.items.push(c)); });
+  // Re-render and highlight the newly added cards.
+  renderPack();
+  const nodes = document.querySelectorAll('#pack-list .pack-card');
+  for (let i = nodes.length - toAdd.length; i < nodes.length; i++) {
+    if (i < 0 || !nodes[i]) continue;
+    nodes[i].classList.add('card-new');
+  }
+  renderPackBanner();
+}
+
+let bannerHideTimer = null;
+function renderPackBanner() {
+  const banner = document.getElementById('pack-banner');
+  if (!banner) return;
+  clearTimeout(bannerHideTimer);
+  if (!genState || genState.packId !== currentPackId) {
+    banner.classList.add('hidden');
     return;
   }
-  flashcards = cards;
-  results = new Array(cards.length).fill(null);
-  gradingPromises = {};
-  currentIndex = 0;
-  lastModuleName = name || 'Quiz';
-  savePendingDeck('ready', cards, name, createMode);
-  renderPendingDeck();
-  renderJumpBack();
+  const pack = getPack(genState.packId) || { items: [] };
+  const got = pack.items.length;
+  const target = genState.target;
+  const textEl = document.getElementById('pack-banner-text');
+  const actionsEl = document.getElementById('pack-banner-actions');
+  const fill = document.getElementById('pack-banner-fill');
+  banner.classList.remove('hidden');
+  if (fill) fill.style.width = Math.min(100, target ? (got / target) * 100 : 0) + '%';
 
-  const newPack = addPack(name || 'StudyPack', cards.map((f) => ({
-    type: f.type === 'choice' ? 'choice' : 'flashcard',
-    question: f.question,
-    answer: f.answer,
-    options: f.type === 'choice' ? f.options : undefined,
-  })));
-
-  if (hostingRoom) {
-    hostingRoom = false;
-    await hostCreateRoom(pendingContent, name, cards);
+  if (genState.running) {
+    textEl.textContent = 'Buck is writing… ' + got + ' of ' + target + ' ready';
+    actionsEl.innerHTML = '<button type="button" class="pb-btn" id="pb-cancel">Cancel</button>';
+  } else if (genState.error) {
+    textEl.textContent = 'Buck stopped at ' + got + ' of ' + target + '. Try again?';
+    actionsEl.innerHTML = '<button type="button" class="pb-btn primary" id="pb-continue">Finish the rest</button><button type="button" class="pb-btn" id="pb-keep">Keep as is</button>';
+  } else if (got < target) {
+    textEl.textContent = 'Buck could only write ' + got + ' of ' + target + ' questions from this PDF.';
+    actionsEl.innerHTML = '<button type="button" class="pb-btn primary" id="pb-continue">Try for more</button><button type="button" class="pb-btn" id="pb-keep">Keep as is</button>';
   } else {
-    // open the review view so the user can see Q&A, edit, then Start Study
-    openPack(newPack.id);
-    closeCreate();
+    textEl.textContent = got + ' cards ready! 🦆';
+    actionsEl.innerHTML = '<button type="button" class="pb-btn" id="pb-keep">Done</button>';
+    const myState = genState;
+    bannerHideTimer = setTimeout(() => {
+      if (genState === myState && !genState.running) banner.classList.add('hidden');
+    }, 4000);
   }
-  showToast(partial ? 'Saved the questions so far — add more anytime 🦆' : 'Quiz ready! 🦆', 'correct');
+}
+
+function cancelLiveGeneration() {
+  if (!genState) return;
+  genState.cancelled = true;
+  if (genState.controller) { try { genState.controller.abort(); } catch (e) {} }
+}
+
+async function continueLiveGeneration() {
+  if (!genState) return;
+  genState.cancelled = false;
+  genState.error = null;
+  genState.running = true;
+  renderPackBanner();
+  try { await runLiveWaves(genState.target); } catch (e) {}
+  const got = (getPack(genState.packId) || { items: [] }).items.length;
+  const complete = !genState.error && got >= genState.target;
+  if (complete && pendingContent.text) setCachedGen(textHash(pendingContent.text), genState.target, (getPack(genState.packId) || { items: [] }).items);
+  finishLiveGeneration(!complete, genState.error);
+}
+
+async function finishLiveGeneration(partial, error) {
+  if (!genState) return;
+  const pack = getPack(genState.packId) || { items: [] };
+  const got = pack.items.length;
+  genState.running = false;
+  genState.error = error || null;
+  renderPackBanner();
+  renderPack();
+  if (!partial && !error) {
+    showToast(got + ' cards added to your StudyPack! 🦆', 'correct');
+  } else if (error) {
+    showToast('Buck stopped at ' + got + ' of ' + genState.target + '.', 'wrong');
+  } else {
+    showToast('Saved ' + got + ' cards so far — add more anytime 🦆', 'correct');
+  }
+  savePendingDeck('ready', pack.items, pendingContent.name, createMode);
+  renderJumpBack();
+  if (hostingRoom && pack.items.length) {
+    hostingRoom = false;
+    await hostCreateRoom(pendingContent, pendingContent.name, pack.items);
+  }
 }
 
 async function fetchPdfContent(file) {
@@ -2617,6 +2715,7 @@ function openPack(id) {
   showScreen(packScreen);
   resetHighlightMode();
   renderHlPalette();
+  renderPackBanner();
   renderPack();
 }
 
@@ -2627,7 +2726,15 @@ function renderPack() {
   document.getElementById('pack-count').textContent = `${pack.items.length} card${pack.items.length === 1 ? '' : 's'}`;
   document.getElementById('pack-n').textContent = `(${pack.items.length})`;
   listEl.innerHTML = '';
+  const generating = genState && genState.packId === currentPackId && genState.running;
   if (!pack.items.length) {
+    if (generating) {
+      // Skeleton cards while Buck writes the first questions.
+      listEl.innerHTML = Array.from({ length: 3 }).map(() =>
+        '<div class="pack-card pack-skeleton"><span></span><span></span><span></span></div>'
+      ).join('');
+      return;
+    }
     listEl.innerHTML = '<div class="pack-empty">' +
       '<svg class="buck-svg empty-buck" viewBox="0 0 240 240" role="img" aria-label="Buck waiting to study"><use href="#buck-thinking" /></svg>' +
       'No cards yet. Add a question to get started.</div>';
@@ -2978,6 +3085,18 @@ function wirePack() {
   document.getElementById('pack-study').addEventListener('click', () => { if (requireHearts()) startPackQuiz(); });
   document.getElementById('pack-add').addEventListener('click', openAddQ);
   document.getElementById('pack-hl').addEventListener('click', toggleHighlightMode);
+  const bannerActions = document.getElementById('pack-banner-actions');
+  if (bannerActions) bannerActions.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    if (btn.id === 'pb-cancel') { cancelLiveGeneration(); renderPackBanner(); }
+    else if (btn.id === 'pb-continue') { continueLiveGeneration(); }
+    else if (btn.id === 'pb-keep') {
+      if (genState) { genState.running = false; genState.cancelled = true; }
+      const b = document.getElementById('pack-banner');
+      if (b) b.classList.add('hidden');
+    }
+  });
   document.getElementById('addq-save').addEventListener('click', saveAddQ);
   document.getElementById('addq-close').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
   document.getElementById('addq-backdrop').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
