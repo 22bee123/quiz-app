@@ -1775,39 +1775,281 @@ function confirmDialog(opts) {
 }
 
 let currentPackId = null;
-let hlMode = false; // global highlighter active (toggled from pack header)
-let hlColor = 'yellow';
-let hlDrag = null; // { card, field, from } while dragging across words
+/* ---------------- Highlighting (selection-based, question + answers) ---------------- */
 
+// Brand-aligned highlight colors.
 const HL = {
-  yellow: 'rgba(253,224,71,0.55)',
-  green: 'rgba(74,222,128,0.5)',
-  pink: 'rgba(244,114,182,0.5)',
-  blue: 'rgba(96,165,250,0.5)',
+  yellow: '#FCD34D',
+  green: '#86EFAC',
+  red: '#FCA5A5',
+  blue: '#93C5FD',
 };
+const HL_ORDER = ['yellow', 'green', 'red', 'blue'];
 
-function tokenText(text, map, clickable) {
-  const words = String(text).split(' ');
-  return words
-    .map((wd, wi) => {
-      const color = map && map[wi];
-      if (clickable) {
-        const css = color ? `background:${HL[color]};` : '';
-        return `<span class="hlw" data-wi="${wi}"${color ? ` data-c="${color}"` : ''} style="${css}">${escapeHtml(wd)}</span>`;
-      }
-      const css = color ? `background:${HL[color]};` : '';
-      return `<span class="hloff" style="${css}">${escapeHtml(wd)}</span>`;
-    })
-    .join(' ');
+let hlPending = null;      // { item, field, opt, start, end, rect, card }
+let hlInteracting = false; // true while pointer is on the floating palette
+let hlSelTimer = null;
+let hlHoverMark = null;
+
+function hlSameScope(a, b, opt) {
+  if (a.f !== b.f) return false;
+  return (a.o == null && opt == null) || (a.o != null && opt != null && a.o === opt);
 }
 
-function toggleWordHighlight(item, field, wi) {
-  const map = item[field] || {};
-  if (map[wi] === hlColor) delete map[wi];
-  else map[wi] = hlColor;
-  item[field] = map;
+function clipRanges(item, field, opt, start, end) {
+  const list = Array.isArray(item.hl) ? item.hl.slice() : [];
+  const out = [];
+  list.forEach((r) => {
+    if (!hlSameScope(r, { f: field }, opt)) { out.push(r); return; }
+    if (r.e <= start || r.s >= end) { out.push(r); return; }
+    if (r.s < start) out.push(Object.assign({}, r, { e: start }));
+    if (r.e > end) out.push(Object.assign({}, r, { s: end }));
+  });
+  item.hl = out;
+}
+
+function applyHighlight(item, field, opt, start, end, color) {
+  if (!Array.isArray(item.hl)) item.hl = [];
+  clipRanges(item, field, opt, start, end); // replace overlaps
+  item.hl.push({ f: field, o: opt == null ? null : opt, s: start, e: end, c: color });
+  item.hl.sort((a, b) => a.s - b.s);
+}
+
+function clearHighlightRange(item, field, opt, start, end) {
+  clipRanges(item, field, opt, start, end);
+}
+
+function clearAllHighlights(item) {
+  item.hl = [];
+  const legacy = ['hq', 'ha'];
+  legacy.forEach((k) => { if (item[k]) delete item[k]; });
+}
+
+function renderHighlighted(text, item, field, opt) {
+  const str = String(text == null ? '' : text);
+  if (!item) return escapeHtml(str);
+  const ranges = (Array.isArray(item.hl) ? item.hl : [])
+    .filter((r) => hlSameScope(r, { f: field }, opt))
+    .filter((r) => r.e > r.s && r.s < str.length)
+    .map((r) => ({ s: Math.max(0, r.s), e: Math.min(str.length, r.e), c: r.c }))
+    .sort((a, b) => a.s - b.s);
+  if (!ranges.length) return escapeHtml(str);
+
+  let html = '';
+  let pos = 0;
+  ranges.forEach((r) => {
+    if (r.s > pos) html += escapeHtml(str.slice(pos, r.s));
+    const color = HL[r.c] || HL.yellow;
+    html += '<mark class="bhl" data-c="' + r.c + '" data-s="' + r.s + '" data-e="' + r.e + '"' +
+      ' style="background:' + color + '">' + escapeHtml(str.slice(r.s, r.e)) + '</mark>';
+    pos = r.e;
+  });
+  if (pos < str.length) html += escapeHtml(str.slice(pos));
+  return html;
+}
+
+function hlFieldHolder(node) {
+  let el = node && node.nodeType === 3 ? node.parentElement : node;
+  if (!el || !el.closest) return null;
+  const holder = el.closest('[data-field]');
+  if (!holder) return null;
+  const card = holder.closest('.pack-card');
+  if (!card) return null;
+  return { holder, card };
+}
+
+function hlOffsetIn(holder, node, offset) {
+  let total = 0;
+  const walker = document.createTreeWalker(holder, NodeFilter.SHOW_TEXT, null);
+  let n;
+  while ((n = walker.nextNode())) {
+    if (n === node) return total + offset;
+    total += n.nodeValue ? n.nodeValue.length : 0;
+  }
+  return total;
+}
+
+function hlSelectionPayload() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  const a = hlFieldHolder(range.startContainer);
+  const b = hlFieldHolder(range.endContainer);
+  if (!a || !b || a.holder !== b.holder) return null;
+
+  const field = a.holder.dataset.field;
+  const optAttr = a.holder.dataset.opt;
+  const opt = optAttr != null && optAttr !== '' ? Number(optAttr) : null;
+  let start = hlOffsetIn(a.holder, range.startContainer, range.startOffset);
+  let end = hlOffsetIn(a.holder, range.endContainer, range.endOffset);
+  if (start > end) { const t = start; start = end; end = t; }
+  if (start === end) return null;
+
+  const pack = getPack(currentPackId);
+  const item = pack && pack.items[Number(a.card.dataset.pi)];
+  if (!item) return null;
+
+  const rect = typeof range.getBoundingClientRect === 'function'
+    ? range.getBoundingClientRect()
+    : { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
+
+  return { item, field, opt, start, end, rect };
+}
+
+function showHlFloat(payload) {
+  const float = document.getElementById('hl-float');
+  if (!float) return;
+  hlPending = payload;
+  float.innerHTML = HL_ORDER.map((c) =>
+    '<button type="button" class="hl-dot" data-c="' + c + '" aria-label="Highlight ' + c + '" title="Highlight ' + c +
+    '" style="background:' + HL[c] + '"></button>'
+  ).join('') + '<button type="button" class="hl-clear" data-clear="1" title="Clear highlight">&#10005;&nbsp;Clear</button>';
+  float.classList.remove('hidden');
+
+  const r = payload.rect;
+  const fw = float.offsetWidth || 230;
+  const fh = float.offsetHeight || 40;
+  let left = r.left + r.width / 2 - fw / 2;
+  let top = r.top - fh - 8;
+  left = Math.max(8, Math.min(left, window.innerWidth - fw - 8));
+  if (top < 8) top = r.bottom + 8;
+  float.style.left = left + 'px';
+  float.style.top = top + 'px';
+}
+
+function hideHlFloat() {
+  const float = document.getElementById('hl-float');
+  if (float) float.classList.add('hidden');
+  hlPending = null;
+  hideHlRemove();
+}
+
+function applyPending(colorKey) {
+  if (!hlPending) return;
+  const p = hlPending;
+  if (colorKey) applyHighlight(p.item, p.field, p.opt, p.start, p.end, colorKey);
+  else clearHighlightRange(p.item, p.field, p.opt, p.start, p.end);
   updatePack(currentPackId, () => {});
+  hideHlFloat();
+  const sel = window.getSelection();
+  if (sel) sel.removeAllRanges();
   renderPack();
+}
+
+function handleSelection() {
+  if (hlInteracting) return;
+  if (!packScreen || packScreen.classList.contains('hidden')) { hideHlFloat(); return; }
+  const p = hlSelectionPayload();
+  if (p) showHlFloat(p);
+  else hideHlFloat();
+}
+
+function showHlRemove(mark) {
+  const btn = document.getElementById('hl-remove');
+  if (!btn) return;
+  hlHoverMark = mark;
+  const r = mark.getBoundingClientRect();
+  btn.classList.remove('hidden');
+  btn.style.left = (r.right - 10) + 'px';
+  btn.style.top = (r.top - 12) + 'px';
+}
+
+function hideHlRemove() {
+  const btn = document.getElementById('hl-remove');
+  if (btn) btn.classList.add('hidden');
+  hlHoverMark = null;
+}
+
+function packItemFromEl(el) {
+  const card = el.closest && el.closest('.pack-card');
+  const pack = getPack(currentPackId);
+  if (!card || !pack) return null;
+  return pack.items[Number(card.dataset.pi)] || null;
+}
+
+// Selection triggers (mouse + touch + keyboard).
+document.addEventListener('mouseup', (e) => {
+  if (e.target.closest && (e.target.closest('#hl-float') || e.target.closest('#hl-remove'))) return;
+  setTimeout(handleSelection, 0);
+});
+document.addEventListener('touchend', (e) => {
+  if (e.target.closest && (e.target.closest('#hl-float') || e.target.closest('#hl-remove'))) return;
+  setTimeout(handleSelection, 120);
+});
+document.addEventListener('selectionchange', () => {
+  if (hlInteracting) return;
+  clearTimeout(hlSelTimer);
+  hlSelTimer = setTimeout(handleSelection, 220);
+});
+
+document.addEventListener('mousedown', (e) => {
+  if (e.target.closest && (e.target.closest('#hl-float') || e.target.closest('#hl-remove'))) {
+    e.preventDefault();
+    hlInteracting = true;
+  }
+});
+
+document.addEventListener('click', (e) => {
+  const dot = e.target.closest && e.target.closest('#hl-float .hl-dot');
+  if (dot) { applyPending(dot.dataset.c); hlInteracting = false; return; }
+  const clr = e.target.closest && e.target.closest('#hl-float .hl-clear');
+  if (clr) { applyPending(null); hlInteracting = false; return; }
+
+  // Hover "✕" remove button
+  if (e.target.id === 'hl-remove') {
+    const mark = hlHoverMark;
+    if (!mark) return;
+    const item = packItemFromEl(mark);
+    const holder = mark.closest('[data-field]');
+    if (!item || !holder) return;
+    const optAttr = holder.dataset.opt;
+    const opt = optAttr != null && optAttr !== '' ? Number(optAttr) : null;
+    clearHighlightRange(item, holder.dataset.field, opt, Number(mark.dataset.s), Number(mark.dataset.e));
+    updatePack(currentPackId, () => {});
+    hideHlRemove();
+    renderPack();
+    return;
+  }
+
+  // Hovering existing highlights → show ✕
+  const mark = e.target.closest && e.target.closest('mark.bhl');
+  if (mark && !hlHoverMark) { /* handled on mouseover */ }
+
+  // Clicking outside the palette dismisses it (unless a selection is being made)
+  if (!e.target.closest || !e.target.closest('#hl-float')) {
+    hlInteracting = false;
+  }
+});
+
+document.addEventListener('mouseover', (e) => {
+  const mark = e.target.closest && e.target.closest('mark.bhl');
+  if (mark) showHlRemove(mark);
+});
+document.addEventListener('mouseout', (e) => {
+  const mark = e.target.closest && e.target.closest('mark.bhl');
+  if (!mark) return;
+  setTimeout(() => {
+    const btn = document.getElementById('hl-remove');
+    if (btn && btn.matches(':hover')) return;
+    hideHlRemove();
+  }, 90);
+});
+
+document.addEventListener('keydown', (e) => {
+  const float = document.getElementById('hl-float');
+  if (!float || float.classList.contains('hidden')) return;
+  if (e.key === '0') { applyPending(null); }
+  else if (['1', '2', '3', '4'].includes(e.key)) { applyPending(HL_ORDER[Number(e.key) - 1]); }
+  else if (e.key === 'Escape') {
+    hideHlFloat();
+    const sel = window.getSelection();
+    if (sel) sel.removeAllRanges();
+  }
+});
+
+// Hides the floating palette when leaving the pack screen.
+function resetHighlightMode() {
+  hideHlFloat();
 }
 
 function openPack(id) {
@@ -1818,7 +2060,6 @@ function openPack(id) {
   setActiveNav('myd');
   showScreen(packScreen);
   resetHighlightMode();
-  renderHlPalette();
   renderPack();
 }
 
@@ -1836,26 +2077,24 @@ function renderPack() {
     return;
   }
   pack.items.forEach((it, i) => {
+    const hasHl = Array.isArray(it.hl) && it.hl.length > 0;
     const card = document.createElement('div');
-    card.className = 'pack-card' + (hlMode ? ' hl-mode' : '') + (it.type === 'choice' ? ' is-choice' : '');
+    card.className = 'pack-card' + (it.type === 'choice' ? ' is-choice' : '');
     card.dataset.pi = i;
-    const palette = Object.keys(HL)
-      .map((c) => `<span class="hl-dot ${c === hlColor ? 'active' : ''}" data-c="${c}" style="background:${HL[c]}"></span>`)
-      .join('');
     card.innerHTML = `
       <div class="pk-menu">
         <button class="pk-more" title="Options">&#8942;</button>
         <div class="pk-dropdown hidden">
           <button class="pk-edit">&#9998;&#65039; Edit</button>
+          <button class="pk-clear-hl"${hasHl ? '' : ' disabled'}>&#129529; Clear highlights</button>
           <button class="pk-del">&#128465; Delete</button>
         </div>
       </div>
       ${it.type === 'choice' ? '<span class="pk-badge">Multiple Choice</span>' : ''}
-      <div class="pk-q">${tokenText(it.question, it.hq, hlMode)}</div>
+      <div class="pk-q" data-field="question">${renderHighlighted(it.question, it, 'question', null)}</div>
       ${it.type === 'choice'
         ? `<div class="pk-a"><div class="pk-answers">${renderPackOptions(it)}</div></div>`
-        : `<div class="pk-a">${tokenText(it.answer, it.ha, hlMode)}</div>`}
-      ${hlMode ? `<div class="pk-palette">${palette}<span class="pk-palette-hint">drag or click words to highlight</span></div>` : ''}
+        : `<div class="pk-a" data-field="answer">${renderHighlighted(it.answer, it, 'answer', null)}</div>`}
     `;
     const more = card.querySelector('.pk-more');
     const dd = card.querySelector('.pk-dropdown');
@@ -1869,6 +2108,13 @@ function renderPack() {
     });
     dd.addEventListener('click', (e) => e.stopPropagation());
     card.querySelector('.pk-edit').addEventListener('click', () => { close(); openEditQ(i); });
+    card.querySelector('.pk-clear-hl').addEventListener('click', () => {
+      close();
+      clearAllHighlights(it);
+      updatePack(pack.id, () => {});
+      renderPack();
+      showToast('Highlights cleared 🧹', 'correct');
+    });
     card.querySelector('.pk-del').addEventListener('click', () => { close(); if (confirm('Delete this question?')) { updatePack(pack.id, (p) => { p.items.splice(i, 1); }); renderPack(); } });
     card.addEventListener('click', close);
     listEl.appendChild(card);
@@ -1886,68 +2132,15 @@ function renderPackOptions(it) {
   if (!correct.length) return '';
   const opts = it.options && it.options.length ? it.options : correct;
   return opts
-    .map((o) => {
+    .map((o, idx) => {
       const ok = correct.includes(o);
-      return `<div class="pk-opt ${ok ? 'ok' : 'no'}"><span class="pk-ic ${ok ? 'ok' : 'no'}">${ok ? '&#10003;' : '&#10005;'}</span><span class="pk-opt-txt">${escapeHtml(o)}</span></div>`;
+      return '<div class="pk-opt ' + (ok ? 'ok' : 'no') + '"><span class="pk-ic ' + (ok ? 'ok' : 'no') + '">' +
+        (ok ? '&#10003;' : '&#10005;') + '</span>' +
+        '<span class="pk-opt-txt" data-field="option" data-opt="' + idx + '">' +
+        renderHighlighted(o, it, 'option', idx) + '</span></div>';
     })
     .join('');
 }
-
-// word/highlighter clicks (delegated)
-document.addEventListener('click', (e) => {
-  const dot = e.target.closest('.hl-dot');
-  if (dot) {
-    hlColor = dot.dataset.c;
-    renderHlPalette();
-    renderPack();
-  }
-});
-
-function hlWordAt(e) {
-  let word = e.target && e.target.closest ? e.target.closest('.hlw') : null;
-  if (!word && typeof document.elementFromPoint === 'function') {
-    const el = document.elementFromPoint(e.clientX, e.clientY);
-    word = el && el.closest ? el.closest('.hlw') : null;
-  }
-  return word;
-}
-
-// highlighter: mousedown/mouseup across tokenized words => drag highlights range, single click toggles
-document.addEventListener('mousedown', (e) => {
-  if (!hlMode) return;
-  const word = hlWordAt(e);
-  if (!word) return;
-  const card = word.closest('.pack-card');
-  if (!card) return;
-  e.preventDefault();
-  hlDrag = { card, field: word.closest('.pk-q') ? 'hq' : 'ha', from: Number(word.dataset.wi) };
-});
-document.addEventListener('mouseup', (e) => {
-  if (!hlMode || !hlDrag) return;
-  const ds = hlDrag;
-  hlDrag = null;
-  const word = hlWordAt(e);
-  if (!word) return;
-  const card2 = word.closest('.pack-card');
-  if (!card2 || card2 !== ds.card) return;
-  const field = word.closest('.pk-q') ? 'hq' : 'ha';
-  if (field !== ds.field) return;
-  const pack = getPack(currentPackId);
-  const item = pack && pack.items[Number(ds.card.dataset.pi)];
-  if (!item) return;
-  const a = Math.min(ds.from, Number(word.dataset.wi));
-  const b = Math.max(ds.from, Number(word.dataset.wi));
-  const map = item[field] || {};
-  if (a === b) {
-    if (map[a] === hlColor) delete map[a];
-    else map[a] = hlColor;
-  } else {
-    for (let w = a; w <= b; w++) map[w] = hlColor;
-  }
-  item[field] = map;
-  updatePack(currentPackId, () => {});
-  renderPack();
-});
 
 let addqEditIndex = -1;
 let addqType = 'flashcard';
@@ -2179,7 +2372,6 @@ function wirePack() {
   document.getElementById('pack-back').addEventListener('click', () => resetToUpload());
   document.getElementById('pack-study').addEventListener('click', () => { if (requireHearts()) startPackQuiz(); });
   document.getElementById('pack-add').addEventListener('click', openAddQ);
-  document.getElementById('pack-hl').addEventListener('click', toggleHighlightMode);
   document.getElementById('addq-save').addEventListener('click', saveAddQ);
   document.getElementById('addq-close').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
   document.getElementById('addq-backdrop').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
@@ -2209,39 +2401,6 @@ function wirePack() {
   document.querySelectorAll('.aq-type-opt').forEach((b) => {
     b.addEventListener('click', () => setAddQType(b.dataset.t));
   });
-}
-
-function setHlMode(on) {
-  hlMode = !!on;
-  const btn = document.getElementById('pack-hl');
-  const pal = document.getElementById('pack-hl-palette');
-  if (btn) btn.classList.toggle('on', hlMode);
-  if (pal) pal.classList.toggle('hidden', !hlMode);
-  document.body.classList.toggle('hl-on', hlMode);
-  renderHlPalette();
-  if (!packScreen.classList.contains('hidden')) renderPack();
-}
-
-function toggleHighlightMode() {
-  setHlMode(!hlMode);
-}
-
-function resetHighlightMode() {
-  if (!hlMode) return;
-  hlMode = false;
-  const btn = document.getElementById('pack-hl');
-  const pal = document.getElementById('pack-hl-palette');
-  if (btn) btn.classList.remove('on');
-  if (pal) pal.classList.add('hidden');
-  document.body.classList.remove('hl-on');
-}
-
-function renderHlPalette() {
-  const pal = document.getElementById('pack-hl-palette');
-  if (!pal) return;
-  pal.innerHTML = Object.keys(HL)
-    .map((c) => `<span class="hl-dot ${c === hlColor ? 'active' : ''}" data-c="${c}" style="background:${HL[c]}"></span>`)
-    .join('');
 }
 
 /* ---------------- Pending deck (survives refresh / tab switch) ---------------- */

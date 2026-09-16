@@ -4181,17 +4181,6 @@ header h1 {
 
 .pack-card.hl-mode { border-color: rgba(245, 158, 11, 0.5); box-shadow: 0 0 0 2px rgba(245,158,11,0.12); }
 
-.pk-q .hlw,
-.pk-a .hlw {
-  cursor: pointer;
-  border-radius: 3px;
-  padding: 0 1px;
-  transition: background 0.1s;
-}
-
-.pk-q .hlw:hover,
-.pk-a .hlw:hover { outline: 1px dashed #f97316; }
-
 .pk-badge {
   position: absolute;
   top: 14px;
@@ -4206,33 +4195,111 @@ header h1 {
   border-radius: 999px;
 }
 
-.pk-palette {
+/* ---- Highlighting (selection-based) ---- */
+::selection { background: rgba(249, 115, 22, 0.25); }
+
+.pk-q,
+.pk-a,
+.pk-opt-txt {
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+mark.bhl {
+  color: #3e2723;
+  border-radius: 4px;
+  padding: 0 1px;
+  cursor: text;
+  transition: filter 0.12s ease, box-shadow 0.12s ease;
+}
+
+mark.bhl:hover {
+  filter: brightness(0.94);
+  box-shadow: 0 0 0 1px rgba(107, 66, 38, 0.35);
+}
+
+/* Floating palette above the selection */
+.hl-float {
+  position: fixed;
+  z-index: 2500;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px dashed #f0e4d8;
+  padding: 8px 10px;
+  background: #fff8f0;
+  border: 1px solid #e8d5c4;
+  border-radius: 14px;
+  box-shadow: 0 14px 34px rgba(62, 39, 35, 0.22);
+  animation: hlFloatIn 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.hl-dot {
+.hl-float.hidden { display: none; }
+
+@keyframes hlFloatIn {
+  from { opacity: 0; transform: translateY(4px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+.hl-float .hl-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #e6d5c6;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+.hl-float .hl-dot:hover {
+  transform: scale(1.15);
+  border-color: #6b4226;
+}
+
+.hl-float .hl-dot:focus-visible {
+  outline: 3px solid rgba(249, 115, 22, 0.4);
+  outline-offset: 2px;
+}
+
+.hl-float .hl-clear {
+  border: none;
+  background: #fff1e6;
+  color: #6b4226;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 0.78rem;
+  padding: 6px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.hl-float .hl-clear:hover { background: #fee2e2; color: #dc2626; }
+
+/* ✕ remove button shown on hover over a highlight */
+.hl-remove {
+  position: fixed;
+  z-index: 2600;
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  cursor: pointer;
   border: 2px solid #fff;
-  box-shadow: 0 0 0 1px #e6d5c6;
-  transition: transform 0.12s, box-shadow 0.12s;
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(62, 39, 35, 0.3);
+  display: grid;
+  place-items: center;
+  padding: 0;
 }
 
-.hl-dot:hover { transform: scale(1.15); }
-.hl-dot.active { box-shadow: 0 0 0 2px #f97316; transform: scale(1.1); }
+.hl-remove.hidden { display: none; }
+.hl-remove:hover { background: #b91c1c; transform: scale(1.08); }
 
-.pk-palette-hint {
-  margin-left: auto;
-  font-size: 0.72rem;
-  color: #b99c86;
-}
 
 /* ---------- Add / Edit question type toggle ---------- */
 .aq-type {
@@ -4262,77 +4329,13 @@ header h1 {
   color: #fff;
 }
 
-/* ---------- Pack header actions (highlighter + start study) ---------- */
+/* ---------- Pack header actions (start study) ---------- */
 .pack-actions {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
 }
-
-.pack-hlwrap {
-  position: relative;
-}
-
-.pack-hl-btn {
-  width: 42px;
-  height: 42px;
-  border: 1px solid #eee0d2;
-  border-radius: 50%;
-  background: #fff;
-  color: #b99c86;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.pack-hl-btn:hover { background: #fff1e6; color: #f97316; }
-.pack-hl-btn.on { background: #fef3dd; color: #d97706; border-color: #fcd9a8; }
-
-.pack-hl-palette {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  background: #fff;
-  border: 1px solid #f0e4d8;
-  border-radius: 12px;
-  box-shadow: 0 12px 30px rgba(62, 39, 35, 0.18);
-  padding: 8px 10px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  z-index: 30;
-  white-space: nowrap;
-}
-
-.pack-hl-palette::before {
-  content: 'Highlight';
-  font-size: 0.7rem;
-  font-weight: 800;
-  color: #b99c86;
-  margin-right: 2px;
-}
-
-.pack-hl-palette.hidden { display: none; }
-
-/* Highlighter cursor while hl-on */
-body.hl-on,
-body.hl-on .pack-list,
-body.hl-on .pk-q,
-body.hl-on .pk-a,
-body.hl-on .hlw {
-  cursor: url('hl-cursor.png') 1 1, crosshair;
-}
-
-body.hl-on .pk-q,
-body.hl-on .pk-a {
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-body.hl-on .hlw:hover { outline: 1px dashed #f97316; }
 
 .pk-badge { right: 46px; }
 
@@ -4632,7 +4635,6 @@ html[data-theme='dark'] .my-handle,
 html[data-theme='dark'] .friend-search,
 html[data-theme='dark'] .pack-card,
 html[data-theme='dark'] .pk-dropdown,
-html[data-theme='dark'] .pack-hl-palette,
 html[data-theme='dark'] .toast,
 html[data-theme='dark'] .aq-option-row,
 html[data-theme='dark'] .settings-option {
@@ -6054,6 +6056,23 @@ html[data-theme='dark'] .hm-hearts .hearts-count { color: #fff8f0; }
 @media (prefers-reduced-motion: reduce) {
   .wing-hearts.low { animation: none !important; }
 }
+
+/* ---- Highlight/card polish overrides ---- */
+.pack-card { padding: 18px 54px 18px 22px; }
+.pk-q { margin-bottom: 12px; }
+.pk-a { padding-top: 12px; }
+.pk-opt { padding: 14px 16px; }
+.pk-badge { right: 50px; }
+.pk-dropdown button:disabled { opacity: 0.5; cursor: default; }
+.pk-clear-hl { color: #6b4226; }
+
+html[data-theme='dark'] .hl-float { background: #3a2a20; border-color: rgba(243, 231, 219, 0.14); }
+html[data-theme='dark'] .hl-float .hl-dot { border-color: #3a2a20; box-shadow: 0 0 0 1px rgba(243, 231, 219, 0.2); }
+html[data-theme='dark'] .hl-float .hl-clear { background: rgba(249, 115, 22, 0.18); color: #ffe8d6; }
+html[data-theme='dark'] .hl-float .hl-clear:hover { background: rgba(239, 68, 68, 0.25); color: #fecaca; }
+html[data-theme='dark'] mark.bhl { color: #2a1c15; }
+html[data-theme='dark'] .pk-clear-hl { color: #ffe8d6; }
+
 
 
 html[data-theme='dark'] .estimate-copy { color: #cbb4a2; }
