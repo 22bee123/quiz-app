@@ -5724,6 +5724,17 @@ html[data-theme='dark'] .role-pill { background: rgba(249, 115, 22, 0.2); color:
   font-size: 0.95rem;
 }
 
+.estimate-note {
+  margin-top: 10px;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: #6b4226;
+  background: #fff1e6;
+  border: 1px solid #f3c9a4;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
 .cl-cancel {
   margin-top: 18px;
   max-width: 220px;
@@ -5755,6 +5766,7 @@ html[data-theme='dark'] .role-pill { background: rgba(249, 115, 22, 0.2); color:
 
 /* ---- Dark mode additions ---- */
 html[data-theme='dark'] .estimate-box { background: #2f211a; border-color: rgba(243, 231, 219, 0.14); }
+html[data-theme='dark'] .estimate-note { background: rgba(249, 115, 22, 0.14); border-color: rgba(249, 115, 22, 0.35); color: #ffe8d6; }
 html[data-theme='dark'] .estimate-copy { color: #cbb4a2; }
 html[data-theme='dark'] .estimate-file { color: #fff8f0; }
 html[data-theme='dark'] .confirm-message { color: #cbb4a2; }

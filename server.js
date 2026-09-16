@@ -15,6 +15,7 @@ const CHUNK_TARGET_CHARS = 6000;
 const RATE_LIMIT_FRIENDLY = "Buck got a little overwhelmed. Let's try that again in a moment.";
 // Set VISION_ENABLED=false (or 0) to reject scanned/image PDFs instead of using multimodal OCR.
 const VISION_ENABLED = !(process.env.VISION_ENABLED === 'false' || process.env.VISION_ENABLED === '0');
+const MAX_VISION_PAGES = 20; // cap pages sent to the vision model to control cost
 
 if (!process.env.DEEPSEEK_API_KEY) {
   console.error('ERROR: DEEPSEEK_API_KEY is not set. Copy .env.example to .env and add your key.');
@@ -135,6 +136,10 @@ function statusForCode(code) {
     case 'MODEL': return 502;
     case 'EMPTY': return 422;
     case 'IMAGE_PDF': return 422;
+    case 'VISION_FAILED': return 422;
+    case 'PDF_TOO_LARGE': return 422;
+    case 'VISION_401': return 401;
+    case 'VISION_429': return 429;
     case 'TOO_LARGE': return 413;
     case 'TIMEOUT': return 504;
     default: return 500;
@@ -288,7 +293,7 @@ async function generateOnce(text, images, count) {
   if (isImages) {
     const content = [
       { type: 'text', text: buildQuizPrompt(count, null, images) },
-      ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+      ...images.map((url) => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
     ];
     raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4, { jsonMode: true });
   } else {
@@ -308,11 +313,11 @@ async function generateOnce(text, images, count) {
       e.reason = 'context';
       throw e;
     }
-    // Scanned/image PDFs are a different problem from plain JSON glitches → its own code.
+    // Scanned/image PDFs: a vision parse failure is its own, actionable error.
     if (isImages && ['PARSE', 'EMPTY', 'UNKNOWN'].includes(classifyError(err))) {
-      const e = new Error('This PDF looks like images/scanned pages — Buck could not read text from it.');
-      e.code = 'IMAGE_PDF';
-      e.reason = err.reason || 'image';
+      const e = new Error('Buck could not read this PDF. It might be too blurry or too large.');
+      e.code = 'VISION_FAILED';
+      e.reason = err.reason || 'vision';
       e.rawSample = err.rawSample;
       throw e;
     }
@@ -351,7 +356,7 @@ app.post('/api/analyze', async (req, res) => {
     const images = Array.isArray(req.body.images)
       ? req.body.images
           .filter((s) => typeof s === 'string' && s.startsWith('data:image/'))
-          .slice(0, 8)
+          .slice(0, MAX_VISION_PAGES)
       : [];
 
     if (!text && images.length === 0) {
@@ -371,7 +376,7 @@ app.post('/api/analyze', async (req, res) => {
       const promptText = buildQuizPrompt(ask, null, images);
       const content = [
         { type: 'text', text: promptText },
-        ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+        ...images.map((url) => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
       ];
       const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(2000, ask * 200)), 0.4, { jsonMode: true });
       try {
@@ -453,11 +458,13 @@ app.post('/api/analyze', async (req, res) => {
 // The client splits the material into chunks, asks for a slice of questions each time,
 // and can cancel between calls (keeping any partial results).
 app.post('/api/generate', async (req, res) => {
+  let imageCount = 0;
   try {
     const text = typeof req.body.text === 'string' ? req.body.text.replace(/\s+/g, ' ').trim() : '';
     const images = Array.isArray(req.body.images)
-      ? req.body.images.filter((s) => typeof s === 'string' && s.startsWith('data:image/')).slice(0, 8)
+      ? req.body.images.filter((s) => typeof s === 'string' && s.startsWith('data:image/')).slice(0, MAX_VISION_PAGES)
       : [];
+    imageCount = images.length;
     const count = Math.min(Math.max(parseInt(req.body.count, 10) || 10, 1), PER_CHUNK_CARDS);
 
     if (!text && images.length === 0) {
@@ -498,12 +505,25 @@ app.post('/api/generate', async (req, res) => {
 
     res.json({ flashcards: valid.slice(0, count) });
   } catch (err) {
-    const code = classifyError(err);
-    if (code !== 'RATE') console.error('Generate error:', code, err.reason || '', err.message);
+    let code = classifyError(err);
+    const visionPath = imageCount > 0;
+    // Remap generic codes to vision-specific ones so the UI can react precisely.
+    if (visionPath) {
+      if (code === 'AUTH') code = 'VISION_401';
+      else if (code === 'RATE') code = 'VISION_429';
+      else if (code === 'TOO_LARGE') code = 'PDF_TOO_LARGE';
+      else if (['PARSE', 'EMPTY', 'UNKNOWN', 'IMAGE_PDF'].includes(code)) code = 'VISION_FAILED';
+    }
+    const friendly = code === 'VISION_429' ? "Buck is getting a lot of requests. Try again in a moment."
+      : code === 'VISION_401' ? 'AI key invalid — check your DeepSeek settings.'
+      : null;
+    if (code !== 'VISION_429') console.error('Generate error:', code, err.reason || '', err.message);
     res.status(statusForCode(code)).json({
-      error: code === 'RATE' ? RATE_LIMIT_FRIENDLY : `Failed to generate questions: ${err.message}`,
+      error: friendly || `Failed to generate questions: ${err.message}`,
       code,
       reason: err.reason || null,
+      path: visionPath ? 'vision' : 'text',
+      pages: visionPath ? imageCount : null,
       detail: err.message,
       rawSample: err.rawSample || null,
     });
@@ -615,7 +635,7 @@ async function requestChoiceOnly(text, images, cap) {
     if (images && images.length) {
       content = [
         { type: 'text', text: buildChoicePrompt(ask, null, true) },
-        ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+        ...images.map((url) => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
       ];
     } else {
       content = [{ type: 'text', text: buildChoicePrompt(ask, text || '', false) }];

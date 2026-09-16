@@ -185,6 +185,7 @@ const estimateGenerate = document.getElementById('estimate-generate');
 const estimateAll = document.getElementById('estimate-all');
 const estimateBack = document.getElementById('estimate-back');
 const estimateStatus = document.getElementById('estimate-status');
+const estimateNote = document.getElementById('estimate-note');
 const clCancel = document.getElementById('cl-cancel');
 const genError = document.getElementById('gen-error');
 const genErrorTitle = document.getElementById('gen-error-title');
@@ -195,6 +196,10 @@ const genRetry = document.getElementById('gen-retry');
 const genReduce = document.getElementById('gen-reduce');
 const genCopy = document.getElementById('gen-copy');
 const genDifferent = document.getElementById('gen-different');
+
+const MAX_VISION_PAGES = 20;  // pages sent to the vision model (cost cap)
+const PDF_MAX_PAGES = 50;     // reject longer PDFs
+const MAX_IMAGE_EDGE = 2000;  // longest edge per rendered page (px)
 const sourceHint = document.getElementById('source-hint');
 const sourcePdf = document.getElementById('source-pdf');
 const sourceText = document.getElementById('source-text');
@@ -372,6 +377,7 @@ function showEstimatePanel() {
   estimateSlider.max = estimate;
   estimateSlider.value = estimate;
   updateEstimateLabel();
+  if (estimateNote) estimateNote.classList.toggle('hidden', !(pendingContent && pendingContent.images));
 }
 
 function updateEstimateLabel() {
@@ -464,6 +470,8 @@ async function callGenerate(body) {
     e.code = first.data.code || statusToCode[status] || 'HTTP_' + status;
     e.reason = first.data.reason || null;
     e.rawSample = first.data.rawSample || null;
+    e.pages = first.data.pages || null;
+    e.path = first.data.path || null;
     e.detail = (first.data.detail || first.data.error || '') + ' (HTTP ' + status + ')';
     throw e;
   }
@@ -508,6 +516,10 @@ const GEN_ERROR_COPY = {
   HTTP_404: ['The AI service is not available on this server.', 'API route not found — the backend needs redeploying or restarting.'],
   HTTP_500: ['Buck hit a server error.', 'The server returned an error — please try again in a moment.'],
   IMAGE_PDF: ['Hmm, this PDF looks like images. 📄', 'Buck needs a text-based PDF to write questions. Try exporting your notes as text, or use a different file.'],
+  VISION_FAILED: ["Buck couldn't read this PDF.", 'It might be too blurry or too large. Try a clearer scan or a different file.'],
+  VISION_401: ['AI key invalid — check your DeepSeek settings.', 'The vision request was rejected. Verify DEEPSEEK_API_KEY.'],
+  VISION_429: ['Buck is getting a lot of requests.', 'The image reader is rate-limited. Try again in a moment.'],
+  PDF_TOO_LARGE: ['This PDF is too long.', 'Try splitting it into smaller files (max 50 pages), then import a part at a time.'],
   HTTP_413: ['That PDF is a bit too large.', 'Try a smaller file or generate fewer questions.'],
   HTTP_422: ['Buck could not read that file.', 'The PDF had no usable text. Try a text-based PDF.'],
   HTTP_504: ['That took a little too long.', 'The request timed out — try generating fewer questions.'],
@@ -517,6 +529,7 @@ const GEN_ERROR_COPY = {
 
 let lastGenError = null;
 let lastGenerationCount = 0;
+let lastVisionPages = 0;
 
 function showGenerationError(err) {
   const code = (err && err.code) || 'UNKNOWN';
@@ -540,6 +553,8 @@ function showGenerationError(err) {
     'Buck the Duck — generation error',
     'code: ' + code,
     'reason: ' + (reason || 'n/a'),
+    'path: ' + ((err && err.path) || (lastVisionPages ? 'vision (image PDF)' : 'text')),
+    'pages: ' + (lastVisionPages || (err && err.pages) || 'n/a'),
     'message: ' + ((err && err.detail) || (err && err.message) || 'unknown'),
     'source: ' + ((pendingContent && pendingContent.name) || 'n/a'),
     'requested: ' + (lastGenerationCount || 'n/a') + ' questions',
@@ -572,21 +587,35 @@ async function startGeneration(count) {
 
   const target = Math.min(count, pendingContent.images ? 40 : 200);
   lastGenerationCount = target;
+  lastVisionPages = (pendingContent.images && pendingContent.images.length) || 0;
   lastGenError = null;
   hideGenerationError();
   savePendingDeck('generating', pendingContent.name, createMode);
   startCreateLoading(true);
   clCancel.classList.remove('hidden');
-  setLoadingSub('Warming up Buck…');
+  setLoadingSub(pendingContent.images ? 'Reading your pages as images…' : 'Warming up Buck…');
   genState = { cancelled: false, controller: null };
 
   const collected = [];
   try {
     if (pendingContent.images && pendingContent.images.length) {
-      updateGenerationProgress(0, target);
-      const cards = await callGenerateWithFallback({ images: pendingContent.images }, Math.min(target, 15));
-      collected.push(...cards);
-      updateGenerationProgress(collected.length, target);
+      // Vision path: batch pages into small groups, never ask for too many at once.
+      const images = pendingContent.images;
+      const groups = [];
+      for (let i = 0; i < images.length; i += 4) groups.push(images.slice(i, i + 4));
+      let rounds = 0;
+      while (collected.length < target && rounds < 3) {
+        for (const group of groups) {
+          if (genState.cancelled || collected.length >= target) break;
+          const ask = Math.min(10, target - collected.length);
+          updateGenerationProgress(collected.length, target);
+          const cards = await callGenerateWithFallback({ images: group }, ask);
+          collected.push(...cards);
+          updateGenerationProgress(collected.length, target);
+        }
+        rounds++;
+        if (!collected.length) break; // no progress → stop and surface the error
+      }
     } else {
       const plan = planGeneration(pendingContent.text, target);
       for (let i = 0; i < plan.chunks.length && collected.length < plan.total; i++) {
@@ -662,11 +691,30 @@ async function fetchPdfContent(file) {
   const text = await extractTextFromPdf(file);
   const hasText = text && text.replace(/\s+/g, ' ').trim().length >= 100;
   if (hasText) return { text: text.trim() };
-  const images = await renderPdfImages(file);
-  if (!images.length) {
-    throw new Error('The PDF could not be read. It may be image-based or corrupted.');
+
+  // ---- Vision fallback: scanned / image-based PDF ----
+  const pages = await pdfPageCount(file);
+  if (pages > PDF_MAX_PAGES) {
+    const e = new Error('This PDF is too long. Try splitting it into smaller files.');
+    e.code = 'PDF_TOO_LARGE';
+    e.detail = 'PDF has ' + pages + ' pages (limit ' + PDF_MAX_PAGES + ').';
+    throw e;
   }
-  return { images };
+  const images = await renderPdfImages(file, MAX_VISION_PAGES);
+  if (!images.length) {
+    const e = new Error("Buck couldn't read this PDF. It might be too blurry or corrupted.");
+    e.code = 'VISION_FAILED';
+    throw e;
+  }
+  return { images, vision: true, pages: images.length };
+}
+
+async function pdfPageCount(file) {
+  const pdfjsLib = await import('/vendor/pdf.min.mjs');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.min.mjs';
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await pdfjsLib.getDocument({ data }).promise;
+  return doc.numPages;
 }
 
 async function extractTextFromPdf(file) {
@@ -685,7 +733,9 @@ async function extractTextFromPdf(file) {
   return text;
 }
 
-async function renderPdfImages(file, maxPages = 8) {
+// Render PDF pages to base64 JPEGs for the vision model. Scale 2x for legible small
+// text, with the longest edge capped at MAX_IMAGE_EDGE to control payload size.
+async function renderPdfImages(file, maxPages = MAX_VISION_PAGES) {
   const pdfjsLib = await import('/vendor/pdf.min.mjs');
   pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.min.mjs';
 
@@ -696,13 +746,15 @@ async function renderPdfImages(file, maxPages = 8) {
 
   for (let i = 1; i <= pageCount; i++) {
     const page = await doc.getPage(i);
-    const viewport = page.getViewport({ scale: 1.6 });
+    const base = page.getViewport({ scale: 1 });
+    const scale = Math.min(2.0, MAX_IMAGE_EDGE / Math.max(base.width, base.height));
+    const viewport = page.getViewport({ scale: Math.max(1, scale) });
     const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
     const ctx = canvas.getContext('2d');
     await page.render({ canvasContext: ctx, viewport }).promise;
-    images.push(canvas.toDataURL('image/jpeg', 0.8));
+    images.push(canvas.toDataURL('image/jpeg', 0.85));
   }
   return images;
 }
