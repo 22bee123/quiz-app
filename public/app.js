@@ -635,7 +635,11 @@ async function startGeneration(count) {
   hideGenerationError();
 
   // 1) Create the StudyPack immediately and show it with a live banner.
-  const pack = addPack(pendingContent.name || 'StudyPack', []);
+  const pack = addPack(pendingContent.name || 'StudyPack', [], {
+    target,
+    sourceText: pendingContent.text || '',
+    sourceName: pendingContent.name || 'StudyPack',
+  });
   genState = { packId: pack.id, target, cancelled: false, controller: null, seen: new Set(), error: null, running: true };
   closeCreate();
   stopCreateLoading();
@@ -788,13 +792,21 @@ function renderPackBanner() {
 
   if (genState.running) {
     textEl.textContent = 'Buck is writing… ' + got + ' of ' + target + ' ready';
-    actionsEl.innerHTML = '<button type="button" class="pb-btn" id="pb-cancel">Cancel</button>';
-  } else if (genState.error) {
-    textEl.textContent = 'Buck stopped at ' + got + ' of ' + target + '. Try again?';
-    actionsEl.innerHTML = '<button type="button" class="pb-btn primary" id="pb-continue">Finish the rest</button><button type="button" class="pb-btn" id="pb-keep">Keep as is</button>';
+    actionsEl.innerHTML =
+      '<button type="button" class="pb-btn primary" id="pb-writing" disabled>Writing…</button>' +
+      '<button type="button" class="pb-btn" id="pb-cancel">Cancel</button>';
   } else if (got < target) {
-    textEl.textContent = 'Buck could only write ' + got + ' of ' + target + ' questions from this PDF.';
-    actionsEl.innerHTML = '<button type="button" class="pb-btn primary" id="pb-continue">Try for more</button><button type="button" class="pb-btn" id="pb-keep">Keep as is</button>';
+    const missing = target - got;
+    textEl.textContent = genState.error
+      ? 'Buck stopped at ' + got + ' of ' + target + '.'
+      : 'Buck has ' + got + ' of ' + target + ' ready.';
+    const sub = ' Want Buck to write the last ' + missing + '?';
+    textEl.textContent += sub;
+    actionsEl.innerHTML =
+      '<button type="button" class="pb-btn primary" id="pb-continue">Finish the rest</button>' +
+      '<button type="button" class="pb-btn" id="pb-keep">Keep as is</button>' +
+      (genState.error ? '<button type="button" class="pb-btn" id="pb-manual">Add manually</button>' : '') +
+      '<button type="button" class="pb-btn linkish" id="pb-reduce">Reduce target to ' + got + '</button>';
   } else {
     textEl.textContent = got + ' cards ready! 🦆';
     actionsEl.innerHTML = '<button type="button" class="pb-btn" id="pb-keep">Done</button>';
@@ -811,16 +823,53 @@ function cancelLiveGeneration() {
   if (genState.controller) { try { genState.controller.abort(); } catch (e) {} }
 }
 
+// Dedicated resume: generate ONLY the missing amount, avoiding duplicates of existing cards.
+async function resumeGeneration(missing) {
+  const pack = getPack(genState.packId);
+  if (!pack || missing <= 0) return 0;
+  if (!pendingContent || (!pendingContent.text && !(pendingContent.images && pendingContent.images.length))) {
+    if (pack.sourceText) pendingContent = { text: pack.sourceText, name: pack.sourceName || pack.name };
+    else return 0;
+  }
+  const existing = pack.items.map((c) => c.question).slice(0, 60);
+  const BATCH = 3;
+  const MAX_ATTEMPTS = Math.max(4, Math.ceil(missing / BATCH) + 2);
+  let added = 0;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS && added < missing && !genState.cancelled; attempt++) {
+    const want = Math.min(BATCH, missing - added);
+    try {
+      const body = pendingContent.images && pendingContent.images.length
+        ? { images: pendingContent.images, existing }
+        : { text: pendingContent.text, existing };
+      console.log('[Resume] pack=' + pack.id, 'got=' + pack.items.length, 'target=' + genState.target, 'missing=' + missing, 'asking=' + want);
+      const cards = await callGenerateWithFallback(body, want);
+      const before = (getPack(genState.packId) || { items: [] }).items.length;
+      appendLiveCards(cards);
+      added += ((getPack(genState.packId) || { items: [] }).items.length) - before;
+    } catch (err) {
+      if (err && err.name === 'AbortError') break;
+      genState.error = err;
+      console.warn('[Resume] batch failed:', err && err.message);
+    }
+  }
+  return added;
+}
+
 async function continueLiveGeneration() {
-  if (!genState) return;
+  if (!genState || genState.running) return; // double-click guard
+  const pack = getPack(genState.packId) || { items: [] };
+  const missing = genState.target - pack.items.length;
+  if (missing <= 0) { finishLiveGeneration(false, null); return; }
   genState.cancelled = false;
   genState.error = null;
   genState.running = true;
   renderPackBanner();
-  try { await runLiveWaves(genState.target); } catch (e) {}
+  try {
+    await resumeGeneration(missing);
+  } catch (e) {}
   const got = (getPack(genState.packId) || { items: [] }).items.length;
   const complete = !genState.error && got >= genState.target;
-  if (complete && pendingContent.text) setCachedGen(textHash(pendingContent.text), genState.target, (getPack(genState.packId) || { items: [] }).items);
+  if (complete && pendingContent && pendingContent.text) setCachedGen(textHash(pendingContent.text), genState.target, (getPack(genState.packId) || { items: [] }).items);
   finishLiveGeneration(!complete, genState.error);
 }
 
@@ -2535,12 +2584,16 @@ function newPackId() {
   return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
-function addPack(name, items) {
+function addPack(name, items, meta) {
   const pack = {
     id: newPackId(),
     name: name || 'StudyPack',
     items: items.slice(), // [{question, answer}]
     createdAt: Date.now(),
+    target: (meta && meta.target) || items.length,
+    sourceText: (meta && meta.sourceText) || '',
+    sourceName: (meta && meta.sourceName) || name || 'StudyPack',
+    doneForNow: false,
   };
   studyPacks.unshift(pack);
   savePacks();
@@ -2715,6 +2768,18 @@ function openPack(id) {
   showScreen(packScreen);
   resetHighlightMode();
   renderHlPalette();
+  // Restore a resumable generation state (survives reload) unless one is actively running.
+  if (!(genState && genState.running) && pack.sourceText && (pack.target || 0) > pack.items.length && !pack.doneForNow) {
+    genState = {
+      packId: pack.id,
+      target: pack.target,
+      cancelled: false,
+      error: null,
+      running: false,
+      seen: new Set(pack.items.map((i) => String(i.question || '').toLowerCase().trim())),
+    };
+    if (!pendingContent || !pendingContent.text) pendingContent = { text: pack.sourceText, name: pack.sourceName || pack.name };
+  }
   renderPackBanner();
   renderPack();
 }
@@ -3091,7 +3156,21 @@ function wirePack() {
     if (!btn) return;
     if (btn.id === 'pb-cancel') { cancelLiveGeneration(); renderPackBanner(); }
     else if (btn.id === 'pb-continue') { continueLiveGeneration(); }
+    else if (btn.id === 'pb-manual') { openAddQ(); }
+    else if (btn.id === 'pb-reduce') {
+      const pack = getPack(currentPackId);
+      if (pack && genState) {
+        pack.target = pack.items.length;
+        pack.doneForNow = true;
+        genState = null;
+        savePacks();
+        renderPackBanner();
+        showToast('Target set to ' + pack.items.length + ' cards. Done! 🦆', 'correct');
+      }
+    }
     else if (btn.id === 'pb-keep') {
+      const pack = getPack(currentPackId);
+      if (pack) { pack.doneForNow = true; savePacks(); }
       if (genState) { genState.running = false; genState.cancelled = true; }
       const b = document.getElementById('pack-banner');
       if (b) b.classList.add('hidden');

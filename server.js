@@ -28,11 +28,12 @@ const GEN_CACHE_TTL = 24 * 60 * 60 * 1000;
 const GEN_CACHE_MAX = 300;
 const genCache = new Map();
 
-function genCacheKey(text, images, count) {
+function genCacheKey(text, images, count, existing) {
   const h = crypto.createHash('sha1');
   if (images && images.length) h.update('img:' + images.length + ':' + String(images[0]).slice(0, 64));
   else h.update(String(text || '').slice(0, 20000));
   h.update('|' + count);
+  h.update('|x' + ((existing && existing.length) || 0));
   return h.digest('hex');
 }
 function genCacheGet(key) {
@@ -360,7 +361,7 @@ function logMalformedResponse(raw, err) {
   console.error('full:', s.slice(0, 2000));
 }
 
-async function generateOnce(text, images, count) {
+async function generateOnce(text, images, count, existing) {
   const maxTokens = Math.min(8000, Math.max(1500, count * 220));
   const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
   const isImages = !!(images && images.length);
@@ -368,15 +369,15 @@ async function generateOnce(text, images, count) {
   let raw;
   if (isImages) {
     const content = [
-      { type: 'text', text: buildQuizPrompt(count, null, images, keywords) },
+      { type: 'text', text: buildQuizPrompt(count, null, images, keywords, existing) },
       ...images.map((url) => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
     ];
     raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4, { jsonMode: true });
   } else {
-    const prompt = buildQuizPrompt(count, text, null, keywords);
+    const prompt = buildQuizPrompt(count, text, null, keywords, existing);
     raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content: [{ type: 'text', text: prompt }] }], maxTokens, 0.4, { jsonMode: true });
   }
-  if (debug) console.log(`[generate] maxTokens=${maxTokens} keywords=${keywords.length}`);
+  if (debug) console.log(`[generate] maxTokens=${maxTokens} keywords=${keywords.length} existing=${(existing || []).length}`);
   try {
     return extractJson(raw);
   } catch (err) {
@@ -558,9 +559,13 @@ app.post('/api/generate', async (req, res) => {
     }
 
     const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
+    const existing = Array.isArray(req.body.existing)
+      ? req.body.existing.filter((s) => typeof s === 'string').slice(0, 60)
+      : [];
+    if (existing.length) console.log(`[Resume] count=${count} existing=${existing.length} chars=${text.length}`);
     if (debug) console.log(`[generate] ${images.length ? 'images=' + images.length : 'chars=' + text.length} count=${count} model=${ACTIVE_MODEL} jsonMode=${JSON_MODE_SUPPORTED}`);
 
-    const cacheKey = genCacheKey(text, images, count);
+    const cacheKey = genCacheKey(text, images, count, existing);
     const cachedCards = genCacheGet(cacheKey);
     if (cachedCards) {
       if (debug) console.log('[generate] cache hit');
@@ -570,14 +575,14 @@ app.post('/api/generate', async (req, res) => {
     const startedAt = Date.now();
     let cards;
     try {
-      cards = await generateOnce(text, images, count);
+      cards = await generateOnce(text, images, count, existing);
     } catch (err) {
       // Any parse/shape/truncation problem → retry once with a smaller batch.
       const retryable = ['PARSE', 'EMPTY'].includes(classifyError(err));
       const smaller = Math.max(5, Math.floor(count / 2));
       if (retryable && smaller < count) {
         console.warn(`[generate] ${err.reason || 'parse'} failure; retrying with ${smaller} questions.`);
-        cards = await generateOnce(text, images, smaller);
+        cards = await generateOnce(text, images, smaller, existing);
       } else {
         throw err;
       }
@@ -640,7 +645,7 @@ app.post('/api/estimate', (req, res) => {
 
 // Static instruction block FIRST (identical every call → DeepSeek context-cache friendly),
 // then the material, then the dynamic "make N questions" line LAST.
-function buildQuizPrompt(ask, chunk, images, keywords) {
+function buildQuizPrompt(ask, chunk, images, keywords, existing) {
   const staticInstructions = `You are an expert quiz creator. Based ONLY on the module material provided, create quiz questions that test understanding.
 
 Mix the question types — aim for about half "flashcard" (fill-in-the-blank) and half "choice" (multiple choice):
@@ -664,9 +669,13 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no extr
   const material = images
     ? 'Module images:'
     : 'Module content:\n' + String(chunk || '').slice(0, 30000);
-  const finalAsk = `\n\nNow create exactly ${ask} quiz questions from the material above. Respond with ONLY the JSON object described above.`;
+  const existingLine = (existing && existing.length)
+    ? '\n\nIMPORTANT: Do NOT duplicate or rephrase any of these already-used questions:\n' +
+      existing.slice(0, 60).map((q, i) => (i + 1) + '. ' + String(q).slice(0, 160)).join('\n')
+    : '';
+  const finalAsk = `\n\nNow create exactly ${ask} NEW quiz questions from the material above. Respond with ONLY the JSON object described above.`;
 
-  return staticInstructions + '\n\n' + keyLine + material + finalAsk;
+  return staticInstructions + '\n\n' + keyLine + material + existingLine + finalAsk;
 }
 
 function buildChoicePrompt(ask, contentText, imagesFlag, keywords) {

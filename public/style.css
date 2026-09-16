@@ -6836,6 +6836,8 @@ html[data-theme='dark'] .chat-side-search input { background: #2f211a; border-co
 .pb-btn:hover { background: #fff1e6; }
 .pb-btn:active { transform: scale(0.96); }
 .pb-btn.primary { background: linear-gradient(135deg, #f97316, #fb8c3a); color: #fff; border-color: transparent; }
+.pb-btn:disabled { opacity: 0.65; cursor: default; }
+.pb-btn.linkish { border: none; background: transparent; color: #ea580c; text-decoration: underline; padding: 7px 4px; }
 
 .pb-track { margin-top: 10px; height: 8px; background: #f0e4d8; border-radius: 999px; overflow: hidden; }
 .pb-track span {
