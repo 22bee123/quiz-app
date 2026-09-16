@@ -58,14 +58,21 @@ const deckNext = document.getElementById('deck-next');
 const deckFlip = document.getElementById('deck-flip');
 
 const authScreen = document.getElementById('auth-screen');
-const gateTabSignin = document.getElementById('gate-tab-signin');
-const gateTabSignup = document.getElementById('gate-tab-signup');
 const gateForm = document.getElementById('gate-form');
 const gateEmail = document.getElementById('gate-email');
 const gatePassword = document.getElementById('gate-password');
 const gateError = document.getElementById('gate-error');
 const gateSubmit = document.getElementById('gate-submit');
 const gateHint = document.getElementById('gate-hint');
+const gateForgot = document.getElementById('gate-forgot');
+const gateSignupLink = document.getElementById('gate-signup-link');
+const gateGoogle = document.getElementById('gate-google');
+const gateApple = document.getElementById('gate-apple');
+const gatePassToggle = document.getElementById('gate-pass-toggle');
+const gateEmailErr = document.getElementById('gate-email-err');
+const gatePassErr = document.getElementById('gate-pass-err');
+const gateLoading = document.getElementById('gate-loading');
+const gateLoadingText = document.getElementById('gate-loading-text');
 const resultsTitle = document.getElementById('results-title');
 const resultsSaveNote = document.getElementById('results-save-note');
 
@@ -94,7 +101,6 @@ const settingsBackdrop = document.getElementById('settings-backdrop');
 const settingsClose = document.getElementById('settings-close');
 const settingsOptions = document.getElementById('settings-options');
 
-let authMode = 'signin';
 let quizLength = parseInt(localStorage.getItem('quizLength') || '10', 10);
 let createSource = null;
 let createMode = null;
@@ -1075,6 +1081,14 @@ async function loadMyProfile() {
     if (input && !input.dataset.touched) input.value = data.username || '';
     const stats = document.getElementById('my-stats');
     if (stats) stats.innerHTML = statsHtml({ xp: data.xp, streak: data.streak }) || '';
+    const cache = getProfileCache();
+    if (data.username) cache.username = data.username;
+    if (data.email) cache.email = data.email;
+    if (typeof data.xp === 'number') cache.xp = data.xp;
+    if (typeof data.streak === 'number') cache.streak = data.streak;
+    if (typeof data.questions === 'number') cache.mastered = data.questions;
+    saveProfileCache(cache);
+    updateAuthUI();
   } catch (e) {}
 }
 
@@ -2399,34 +2413,92 @@ function initSupabase() {
 }
 
 function showAuthGate() {
-  setGateMode('signin');
   gateError.textContent = '';
   gateHint.textContent = '';
+  if (gateEmailErr) gateEmailErr.textContent = '';
+  if (gatePassErr) gatePassErr.textContent = '';
+  if (gateLoading) gateLoading.classList.add('hidden');
   setActiveNav(null);
   showScreen(authScreen);
+  setTimeout(() => { try { gateEmail.focus(); } catch (e) {} }, 80);
+}
+
+function validEmail(v) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+}
+
+function friendlyAuthError(msg) {
+  const m = String(msg || '').toLowerCase();
+  if (m.includes('invalid login')) return "Hmm, that email or password doesn't look right — try again?";
+  if (m.includes('email not confirmed')) return 'Almost! Please confirm your email first — check your inbox.';
+  if (m.includes('rate limit') || m.includes('too many')) return 'Whoa, too many tries. Give it a minute and try again.';
+  if (m.includes('already registered') || m.includes('already exists')) return 'Looks like that email already has an account — try logging in instead.';
+  if (m.includes('password')) return 'That password is a little too short — 6 characters minimum.';
+  return msg || "Something went wrong. Let's try that again.";
+}
+
+function setGateLoading(on, text) {
+  if (!gateLoading) return;
+  if (gateLoadingText && text) gateLoadingText.textContent = text;
+  gateLoading.classList.toggle('hidden', !on);
 }
 
 function wireAuthUI() {
   navAccount.addEventListener('click', () => {
-    if (!currentUser) showAuthGate();
+    if (currentUser) openProfile();
+    else showAuthGate();
   });
   navSignout.addEventListener('click', async () => {
     await supabaseClient.auth.signOut();
   });
-  gateTabSignin.addEventListener('click', () => setGateMode('signin'));
-  gateTabSignup.addEventListener('click', () => setGateMode('signup'));
+
+  gatePassToggle.addEventListener('click', () => {
+    const show = gatePassword.type === 'password';
+    gatePassword.type = show ? 'text' : 'password';
+    gatePassToggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  });
+
+  gateGoogle.addEventListener('click', () => oauthLogin('google'));
+  gateApple.addEventListener('click', () => oauthLogin('apple'));
+  gateForgot.addEventListener('click', () => forgotPassword());
+  gateSignupLink.addEventListener('click', openSignup);
   gateForm.addEventListener('submit', handleGateSubmit);
+
+  wireSignup();
+  wireProfile();
 }
 
-function setGateMode(mode) {
-  authMode = mode;
+async function oauthLogin(provider) {
+  if (!supabaseClient) return;
   gateError.textContent = '';
-  gateHint.textContent = '';
-  document.getElementById('auth-gate-title').textContent = mode === 'signin' ? 'Sign in to continue' : 'Create your account';
-  gateSubmit.querySelector('.btn-label').textContent = mode === 'signin' ? 'Sign in' : 'Create account';
-  gateTabSignin.classList.toggle('active', mode === 'signin');
-  gateTabSignup.classList.toggle('active', mode === 'signup');
-  gatePassword.autocomplete = mode === 'signin' ? 'current-password' : 'new-password';
+  try {
+    const { error } = await supabaseClient.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: window.location.origin + '/app' },
+    });
+    if (error) throw error;
+  } catch (err) {
+    gateError.textContent = friendlyAuthError(err.message);
+  }
+}
+
+async function forgotPassword() {
+  const email = gateEmail.value.trim();
+  if (!validEmail(email)) {
+    gateEmailErr.textContent = "Pop your email in first and Buck will send a reset link.";
+    gateEmail.focus();
+    return;
+  }
+  gateHint.textContent = 'Sending a reset link…';
+  try {
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + '/app',
+    });
+    if (error) throw error;
+    gateHint.textContent = "Sent! Check your inbox for Buck's reset link 📬";
+  } catch (err) {
+    gateHint.textContent = friendlyAuthError(err.message);
+  }
 }
 
 async function handleGateSubmit(e) {
@@ -2434,23 +2506,34 @@ async function handleGateSubmit(e) {
   const email = gateEmail.value.trim();
   const password = gatePassword.value;
   gateError.textContent = '';
+  gateEmailErr.textContent = '';
+  gatePassErr.textContent = '';
+
+  let bad = false;
+  if (!validEmail(email)) {
+    gateEmailErr.textContent = "Hmm, that email doesn't look right — try again?";
+    bad = true;
+  }
+  if (!password) {
+    gatePassErr.textContent = "Don't forget your password!";
+    bad = true;
+  }
+  if (bad) return;
+
   gateSubmit.disabled = true;
-  gateSubmit.querySelector('.btn-label').textContent = 'Please wait…';
+  gateSubmit.querySelector('.btn-label').textContent = 'Logging in…';
+  setGateLoading(true, 'Letting you in…');
 
   try {
-    if (authMode === 'signup') {
-      const { error } = await supabaseClient.auth.signUp({ email, password });
-      if (error) throw new Error(error.message);
-      gateHint.textContent = 'Check your email to confirm your account, then sign in.';
-    } else {
-      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
-      if (error) throw new Error(error.message);
-    }
+    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    // success → onAuthStateChange redirects to the dashboard automatically
   } catch (err) {
-    gateError.textContent = err.message;
+    setGateLoading(false);
+    gateError.textContent = friendlyAuthError(err.message);
   } finally {
     gateSubmit.disabled = false;
-    gateSubmit.querySelector('.btn-label').textContent = authMode === 'signin' ? 'Sign in' : 'Create account';
+    gateSubmit.querySelector('.btn-label').textContent = 'Log In';
   }
 }
 
@@ -2460,18 +2543,745 @@ function requireAuth() {
   return false;
 }
 
+/* ---------------- Profile data helpers ---------------- */
+
+function userMeta() {
+  return (currentUser && currentUser.user_metadata) || {};
+}
+
+function getProfileCache() {
+  try { return JSON.parse(localStorage.getItem('buckProfile') || '{}'); } catch (e) { return {}; }
+}
+
+function saveProfileCache(p) {
+  try { localStorage.setItem('buckProfile', JSON.stringify(p)); } catch (e) {}
+}
+
+function lookProfileRoleLabel(role) {
+  return role === 'teacher' ? '📚 Teacher' : '🎓 Student';
+}
+
+function getProfileData() {
+  const meta = userMeta();
+  const cache = getProfileCache();
+  const email = (currentUser && currentUser.email) || cache.email || '';
+  const fallbackUser = email ? email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').toLowerCase() : 'you';
+  return {
+    name: cache.name || meta.full_name || meta.name || (email ? email.split('@')[0] : 'Buck fan'),
+    email,
+    username: cache.username || meta.username || fallbackUser,
+    role: cache.role || meta.role || 'student',
+    school: cache.school || meta.school || '',
+    avatar: cache.avatar || meta.avatar || meta.avatar_url || '',
+    streak: cache.streak || meta.streak || 0,
+    mastered: cache.mastered || cache.masteredCards || 0,
+  };
+}
+
+function renameClean(v) {
+  return String(v || '').replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+}
+
+function avatarMarkup(profile, initial) {
+  if (profile && profile.avatar) return '<img src="' + profile.avatar + '" alt="" />';
+  return '<svg viewBox="0 0 64 64" role="img" aria-label="Buck avatar"><use href="#buck-mark" /></svg>';
+}
+
 function updateAuthUI() {
   if (currentUser) {
-    navAccountName.textContent = currentUser.email || 'Signed in';
-    navAccountEmail.textContent = '';
-    navAvatar.textContent = (currentUser.email || '?')[0].toUpperCase();
+    const p = getProfileData();
+    navAccountName.textContent = p.name || p.username || p.email || 'Signed in';
+    navAccountEmail.textContent = p.email ? '@' + p.username : '';
+    navAvatar.innerHTML = p.avatar
+      ? '<img src="' + p.avatar + '" alt="" />'
+      : escapeHtml((p.name || p.username || p.email || '?')[0].toUpperCase());
     navSignout.classList.remove('hidden');
   } else {
     navAccountName.textContent = 'Sign in';
     navAccountEmail.textContent = '';
-    navAvatar.textContent = '';
+    navAvatar.innerHTML = '';
     navSignout.classList.add('hidden');
   }
+}
+
+/* ---------------- Signup wizard ---------------- */
+
+const SIGNUP_STEPS = 6;
+const SCHOOLS = [
+  'Harvard University', 'Stanford University', 'MIT', 'Oxford University', 'Cambridge University',
+  'University of Toronto', 'University of Melbourne', 'National University of Singapore',
+  'University of Cape Town', 'University of Lagos', 'University of Nairobi', 'Cairo University',
+  'University of Delhi', 'Tsinghua University', 'University of São Paulo',
+  'Arizona State University', 'Boston University', 'New York University', 'UCLA', 'University of Michigan',
+  'Ohio State University', 'Penn State University', 'University of Washington', 'Purdue University',
+  'Duke University', 'Yale University', 'Princeton University', 'Columbia University',
+];
+
+let suStep = 1;
+let suSchoolManual = false;
+let suUserOk = false;
+let suUserTimer = null;
+let suAvatarData = '';
+let suRole = '';
+
+function loadSignupDraft() {
+  try { return JSON.parse(localStorage.getItem('buckSignupDraft') || 'null'); } catch (e) { return null; }
+}
+
+function saveSignupDraft() {
+  try {
+    const draft = {
+      step: suStep,
+      emailMode: suEmailMode,
+      email: document.getElementById('su-email').value,
+      name: document.getElementById('su-name').value,
+      username: document.getElementById('su-username').value,
+      role: suRole,
+      school: document.getElementById('su-school-input').value,
+      schoolManual: suSchoolManual,
+    };
+    localStorage.setItem('buckSignupDraft', JSON.stringify(draft));
+  } catch (e) {}
+}
+
+let suEmailMode = '';
+
+function suStepEls() {
+  return document.querySelectorAll('#signup-modal .su-step');
+}
+
+function setSuStep(n) {
+  suStep = Math.max(1, Math.min(SIGNUP_STEPS, n));
+  suStepEls().forEach((s) => s.classList.toggle('hidden', Number(s.dataset.step) !== suStep));
+
+  const fill = document.getElementById('su-fill');
+  if (fill) fill.style.width = (suStep / SIGNUP_STEPS) * 100 + '%';
+  const label = document.getElementById('su-step-label');
+  if (label) label.textContent = 'Step ' + suStep + ' of ' + SIGNUP_STEPS;
+
+  document.querySelectorAll('#su-dots span').forEach((d, i) => {
+    d.classList.toggle('done', i + 1 < suStep);
+    d.classList.toggle('active', i + 1 === suStep);
+  });
+
+  const back = document.getElementById('su-back');
+  if (back) back.disabled = suStep === 1;
+
+  const next = document.getElementById('su-next');
+  if (next) next.textContent = suStep === 5 ? 'Create my account' : 'Continue';
+
+  const actions = document.getElementById('su-actions');
+  if (actions) actions.classList.toggle('hidden', suStep === 6);
+
+  if (suStep === 4) {
+    const title = document.getElementById('su-school-title');
+    if (title) title.textContent = suRole === 'teacher' ? 'Where do you currently teach?' : 'Where do you currently study?';
+    renderSchoolList('');
+  }
+
+  saveSignupDraft();
+  const step = document.querySelector('#signup-modal .su-step:not(.hidden)');
+  const focusable = step && step.querySelector('input, .choice-card, button');
+  if (focusable && suStep !== 6) setTimeout(() => { try { focusable.focus(); } catch (e) {} }, 60);
+}
+
+function openSignup() {
+  const draft = loadSignupDraft();
+  suStep = 1;
+  suEmailMode = draft && draft.emailMode ? draft.emailMode : '';
+  suRole = draft && draft.role ? draft.role : '';
+  suSchoolManual = draft && draft.schoolManual ? true : false;
+  suUserOk = false;
+  suAvatarData = '';
+
+  document.getElementById('su-email').value = (draft && draft.email) || '';
+  document.getElementById('su-name').value = (draft && draft.name) || '';
+  document.getElementById('su-username').value = (draft && draft.username) || '';
+  document.getElementById('su-school-input').value = (draft && draft.school) || '';
+  document.getElementById('su-password').value = '';
+  document.getElementById('su-confirm').value = '';
+  document.getElementById('su-terms').checked = false;
+  document.getElementById('su-email-err').textContent = '';
+  document.getElementById('su-name-err').textContent = '';
+  document.getElementById('su-pw-err').textContent = '';
+  document.getElementById('su-terms-err').textContent = '';
+  document.getElementById('su-school-err').textContent = '';
+  document.getElementById('su-error').textContent = '';
+  document.getElementById('su-user-status').textContent = '';
+  document.getElementById('su-pw-fill').style.width = '0';
+  document.getElementById('su-pw-label').textContent = '';
+
+  document.querySelectorAll('#signup-modal .choice-card[data-email-mode]').forEach((c) =>
+    c.classList.toggle('selected', c.dataset.emailMode === suEmailMode)
+  );
+  document.querySelectorAll('#signup-modal .role-card').forEach((c) =>
+    c.classList.toggle('selected', c.dataset.role === suRole)
+  );
+  document.getElementById('su-manual-email').classList.toggle('hidden', suEmailMode !== 'manual');
+  document.getElementById('su-provider-email').classList.toggle('hidden', suEmailMode !== 'choose');
+  renderSchoolChip();
+  updateAvatarPreview(document.getElementById('su-avatar-btn'), suAvatarData);
+
+  const dots = document.getElementById('su-dots');
+  dots.innerHTML = '';
+  for (let i = 0; i < SIGNUP_STEPS; i++) {
+    const s = document.createElement('span');
+    dots.appendChild(s);
+  }
+
+  document.getElementById('signup-modal').classList.remove('hidden');
+  setSuStep(1);
+  if (suEmailMode && suEmailMode === 'manual') {
+    const el = document.getElementById('su-email');
+    if (el) setTimeout(() => el.focus(), 80);
+  }
+}
+
+function closeSignup() {
+  saveSignupDraft();
+  document.getElementById('signup-modal').classList.add('hidden');
+}
+
+function suStepValid() {
+  document.getElementById('su-error').textContent = '';
+  if (suStep === 1) {
+    document.getElementById('su-email-err').textContent = '';
+    if (!suEmailMode) {
+      document.getElementById('su-error').textContent = "Pick an option above and we'll get rolling!";
+      return false;
+    }
+    if (suEmailMode === 'manual') {
+      const email = document.getElementById('su-email').value.trim();
+      if (!validEmail(email)) {
+        document.getElementById('su-email-err').textContent = "Hmm, that email doesn't look right — try again?";
+        return false;
+      }
+    } else {
+      document.getElementById('su-error').textContent = 'Choose a provider above, or pick "Type my email".';
+      return false;
+    }
+    return true;
+  }
+
+  if (suStep === 2) {
+    document.getElementById('su-name-err').textContent = '';
+    const name = document.getElementById('su-name').value.trim();
+    const username = renameClean(document.getElementById('su-username').value);
+    if (!name) {
+      document.getElementById('su-name-err').textContent = 'Buck needs a name to cheer for!';
+      return false;
+    }
+    if (username.length < 3) {
+      document.getElementById('su-user-status').textContent = 'too short';
+      document.getElementById('su-user-status').className = 'user-status bad';
+      return false;
+    }
+    if (!suUserOk) {
+      document.getElementById('su-user-status').textContent = 'checking…';
+      document.getElementById('su-user-status').className = 'user-status checking';
+      checkUsernameLive(username);
+      return false;
+    }
+    return true;
+  }
+
+  if (suStep === 3) {
+    if (!suRole) {
+      document.getElementById('su-error').textContent = 'Pick one so Buck knows how to help!';
+      return false;
+    }
+    return true;
+  }
+
+  if (suStep === 4) {
+    document.getElementById('su-school-err').textContent = '';
+    const school = document.getElementById('su-school-input').value.trim();
+    if (!school) {
+      document.getElementById('su-school-err').textContent = "Search a school above, or add yours manually.";
+      return false;
+    }
+    return true;
+  }
+
+  if (suStep === 5) return suPasswordValid();
+  return true;
+}
+
+function suPasswordValid() {
+  const pw = document.getElementById('su-password').value;
+  const confirm = document.getElementById('su-confirm').value;
+  const terms = document.getElementById('su-terms').checked;
+  document.getElementById('su-pw-err').textContent = '';
+  document.getElementById('su-terms-err').textContent = '';
+  if (pw.length < 6) {
+    document.getElementById('su-pw-err').textContent = 'Make it at least 6 characters — you got this!';
+    return false;
+  }
+  if (pw !== confirm) {
+    document.getElementById('su-pw-err').textContent = "Those passwords don't match yet. One more try?";
+    return false;
+  }
+  if (!terms) {
+    document.getElementById('su-terms-err').textContent = 'Please agree to the Terms to continue.';
+    return false;
+  }
+  return true;
+}
+
+function scorePassword(pw) {
+  let score = 0;
+  if (pw.length >= 6) score++;
+  if (pw.length >= 10) score++;
+  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
+  if (/\d/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  return Math.min(score, 5);
+}
+
+function updatePasswordMeter() {
+  const pw = document.getElementById('su-password').value;
+  const score = scorePassword(pw);
+  const fill = document.getElementById('su-pw-fill');
+  const label = document.getElementById('su-pw-label');
+  const pct = Math.min(100, (score / 5) * 100);
+  fill.style.width = pct + '%';
+  const labels = ['', 'Weak', 'Fair', 'Good', 'Strong', 'Strong'];
+  const colors = ['#e3d3c4', '#ef4444', '#f59e0b', '#fb923c', '#22c55e', '#16a34a'];
+  label.textContent = pw ? 'Strength: ' + (labels[score] || 'Weak') : '';
+  fill.style.background = colors[score] || colors[1];
+}
+
+async function checkUsernameAvailable(username) {
+  const reserved = ['buck', 'admin', 'support', 'help', 'root', 'official', 'team'];
+  if (reserved.includes(username)) return false;
+  if (!supabaseClient) return true;
+  try {
+    const { data, error } = await supabaseClient.from('profiles').select('id').eq('username', username).limit(1);
+    if (error) return true; // don't block if lookup isn't permitted
+    return !(data && data.length);
+  } catch (e) {
+    return true;
+  }
+}
+
+function checkUsernameLive(username) {
+  const status = document.getElementById('su-user-status');
+  suUserOk = false;
+  if (username.length < 3) {
+    status.textContent = '';
+    status.className = 'user-status';
+    return;
+  }
+  status.textContent = 'checking…';
+  status.className = 'user-status checking';
+  clearTimeout(suUserTimer);
+  suUserTimer = setTimeout(async () => {
+    const free = await checkUsernameAvailable(username);
+    suUserOk = free;
+    status.textContent = free ? 'available ✓' : 'taken';
+    status.className = 'user-status ' + (free ? 'ok' : 'bad');
+    if (free) showToast('Nice — that username is all yours 🎉', 'correct');
+  }, 450);
+}
+
+function renderSchoolList(query) {
+  const list = document.getElementById('su-school-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (suSchoolManual) {
+    list.innerHTML = '<p class="school-empty">Type your school name above, then hit Continue.</p>';
+    return;
+  }
+  const q = (query || '').toLowerCase();
+  const matches = SCHOOLS.filter((s) => s.toLowerCase().includes(q)).slice(0, 8);
+  if (!matches.length) {
+    list.innerHTML = '<p class="school-empty">No match — try "Add my school manually".</p>';
+    return;
+  }
+  matches.forEach((name) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'school-item';
+    btn.innerHTML = '<span class="school-logo">' + escapeHtml(initialsOf(name)) + '</span>' + escapeHtml(name);
+    btn.addEventListener('click', () => {
+      document.getElementById('su-school-input').value = name;
+      renderSchoolChip();
+      document.getElementById('su-school-err').textContent = '';
+      saveSignupDraft();
+    });
+    list.appendChild(btn);
+  });
+}
+
+function initialsOf(name) {
+  return name.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+}
+
+function renderSchoolChip() {
+  const chip = document.getElementById('su-school-chip');
+  const value = document.getElementById('su-school-input').value.trim();
+  if (!chip) return;
+  if (value) {
+    chip.classList.remove('hidden');
+    chip.innerHTML = '<span class="school-logo">' + escapeHtml(initialsOf(value)) + '</span>' + escapeHtml(value);
+  } else {
+    chip.classList.add('hidden');
+    chip.innerHTML = '';
+  }
+}
+
+function updateAvatarPreview(btn, dataUrl) {
+  if (!btn) return;
+  if (dataUrl) btn.innerHTML = '<img src="' + dataUrl + '" alt="Profile photo" />';
+  else btn.innerHTML = '<svg viewBox="0 0 64 64" role="img" aria-label="Buck placeholder avatar"><use href="#buck-mark" /></svg>';
+}
+
+function readImageResized(file, cb) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const s = Math.min(img.width, img.height);
+      ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+      cb(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function createAccount() {
+  const errEl = document.getElementById('su-error');
+  errEl.textContent = '';
+  const email = document.getElementById('su-email').value.trim();
+  const password = document.getElementById('su-password').value;
+  const name = document.getElementById('su-name').value.trim();
+  const username = renameClean(document.getElementById('su-username').value);
+  const school = document.getElementById('su-school-input').value.trim();
+  const next = document.getElementById('su-next');
+
+  if (!supabaseClient) {
+    errEl.textContent = 'Accounts are not configured, but you can study right away!';
+    return;
+  }
+
+  next.disabled = true;
+  next.textContent = 'Creating…';
+  try {
+    const { data, error } = await supabaseClient.auth.signUp({
+      email,
+      password,
+      options: { data: { full_name: name, username, role: suRole, school } },
+    });
+    if (error) throw error;
+
+    const p = {
+      name,
+      email,
+      username,
+      role: suRole,
+      school,
+      avatar: suAvatarData || '',
+      streak: 0,
+      mastered: 0,
+    };
+    saveProfileCache(p);
+
+    if (data && data.user) {
+      try { await supabaseClient.from('profiles').update({ username }).eq('id', data.user.id); } catch (e) {}
+    }
+
+    localStorage.removeItem('buckSignupDraft');
+    renderWelcome(data && data.session ? false : true);
+    setSuStep(6);
+  } catch (err) {
+    errEl.textContent = friendlyAuthError(err.message);
+  } finally {
+    next.disabled = false;
+    next.textContent = 'Create my account';
+  }
+}
+
+function renderWelcome(confirmEmail) {
+  const p = {
+    name: document.getElementById('su-name').value.trim() || 'friend',
+    username: renameClean(document.getElementById('su-username').value),
+    role: suRole,
+    school: document.getElementById('su-school-input').value.trim(),
+  };
+  document.getElementById('su-welcome-title').textContent = 'Welcome aboard, ' + p.name + '! 🎉';
+  const summary = document.getElementById('su-summary');
+  summary.innerHTML =
+    '<li><span>Role</span><span>' + escapeHtml(lookProfileRoleLabel(p.role)) + '</span></li>' +
+    '<li><span>Username</span><span>@' + escapeHtml(p.username) + '</span></li>' +
+    (p.school ? '<li><span>School</span><span>' + escapeHtml(p.school) + '</span></li>' : '') +
+    (confirmEmail ? '<li><span>Next</span><span>Confirm your email</span></li>' : '');
+}
+
+function wireSignup() {
+  const modal = document.getElementById('signup-modal');
+  document.getElementById('su-close').addEventListener('click', closeSignup);
+  document.getElementById('signup-backdrop').addEventListener('click', closeSignup);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeSignup();
+  });
+
+  document.getElementById('su-back').addEventListener('click', () => {
+    if (suStep > 1) setSuStep(suStep - 1);
+    else closeSignup();
+  });
+  document.getElementById('su-back-btn').addEventListener('click', () => {
+    if (suStep > 1) setSuStep(suStep - 1);
+    else closeSignup();
+  });
+
+  document.getElementById('su-next').addEventListener('click', () => {
+    if (suStep === 5) {
+      if (suStepValid()) createAccount();
+      return;
+    }
+    if (!suStepValid()) return;
+    setSuStep(suStep + 1);
+  });
+
+  document.getElementById('su-start').addEventListener('click', () => {
+    closeSignup();
+    resetToUpload();
+  });
+
+  document.querySelectorAll('#signup-modal .choice-card[data-email-mode]').forEach((card) => {
+    card.addEventListener('click', () => {
+      suEmailMode = card.dataset.emailMode;
+      document.querySelectorAll('#signup-modal .choice-card[data-email-mode]').forEach((c) =>
+        c.classList.toggle('selected', c === card)
+      );
+      document.getElementById('su-manual-email').classList.toggle('hidden', suEmailMode !== 'manual');
+      document.getElementById('su-provider-email').classList.toggle('hidden', suEmailMode !== 'choose');
+      document.getElementById('su-error').textContent = '';
+      saveSignupDraft();
+      if (suEmailMode === 'manual') document.getElementById('su-email').focus();
+    });
+  });
+
+  document.querySelectorAll('#signup-modal [data-oauth]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      closeSignup();
+      oauthLogin(btn.dataset.oauth);
+    });
+  });
+
+  document.querySelectorAll('#signup-modal .role-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      suRole = card.dataset.role;
+      document.querySelectorAll('#signup-modal .role-card').forEach((c) => c.classList.toggle('selected', c === card));
+      document.getElementById('su-error').textContent = '';
+      saveSignupDraft();
+    });
+  });
+
+  document.getElementById('su-email').addEventListener('input', saveSignupDraft);
+  document.getElementById('su-name').addEventListener('input', saveSignupDraft);
+  document.getElementById('su-username').addEventListener('input', (e) => {
+    e.target.value = renameClean(e.target.value);
+    checkUsernameLive(e.target.value);
+    saveSignupDraft();
+  });
+  document.getElementById('su-school-input').addEventListener('input', (e) => {
+    suSchoolManual = false;
+    renderSchoolList(e.target.value);
+    renderSchoolChip();
+    saveSignupDraft();
+  });
+  document.getElementById('su-school-manual').addEventListener('click', () => {
+    suSchoolManual = true;
+    renderSchoolList('');
+    const input = document.getElementById('su-school-input');
+    input.placeholder = 'Type your school name…';
+    input.focus();
+  });
+  document.getElementById('su-password').addEventListener('input', updatePasswordMeter);
+
+  document.getElementById('su-avatar-btn').addEventListener('click', () => {
+    document.getElementById('su-avatar-input').click();
+  });
+  document.getElementById('su-avatar-input').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    readImageResized(file, (dataUrl) => {
+      suAvatarData = dataUrl;
+      updateAvatarPreview(document.getElementById('su-avatar-btn'), dataUrl);
+    });
+  });
+}
+
+/* ---------------- Profile modal ---------------- */
+
+let peRole = 'student';
+let peAvatar = '';
+let peEmail = '';
+
+function openProfile() {
+  if (!currentUser) { showAuthGate(); return; }
+  const p = getProfileData();
+  peRole = p.role;
+  peAvatar = p.avatar;
+  peEmail = p.email;
+  closeProfileEdit();
+  renderProfileView();
+  document.getElementById('profile-modal').classList.remove('hidden');
+}
+
+function closeProfile() {
+  document.getElementById('profile-modal').classList.add('hidden');
+}
+
+function renderProfileView() {
+  const p = getProfileData();
+  document.getElementById('pv-avatar').innerHTML = avatarMarkup(p, (p.name || p.username || '?')[0].toUpperCase());
+  document.getElementById('profile-name').textContent = p.name;
+  document.getElementById('pv-username').textContent = '@' + p.username;
+  document.getElementById('pv-role').textContent = lookProfileRoleLabel(p.role);
+  document.getElementById('pv-school').innerHTML = p.school
+    ? '<span class="school-logo">' + escapeHtml(initialsOf(p.school)) + '</span> ' + escapeHtml(p.school)
+    : 'No school set yet — add one in Edit Profile.';
+  document.getElementById('pv-school').style.display = 'flex';
+  document.getElementById('pv-school').style.alignItems = 'center';
+  document.getElementById('pv-school').style.gap = '8px';
+
+  const sets = Array.isArray(studyPacks) ? studyPacks.length : 0;
+  const mastered = p.mastered || (Array.isArray(historyEntries) ? historyEntries.length : 0);
+  document.getElementById('pv-stats').innerHTML =
+    '<div class="pf-stat"><strong>🔥 ' + (p.streak || 0) + '</strong><span>Day streak</span></div>' +
+    '<div class="pf-stat"><strong>' + sets + '</strong><span>Sets created</span></div>' +
+    '<div class="pf-stat"><strong>' + mastered + '</strong><span>Cards mastered</span></div>';
+
+  const themeVal = document.getElementById('pm-theme-val');
+  if (themeVal) themeVal.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? 'Dark' : 'Light';
+}
+
+function openProfileEdit() {
+  const p = getProfileData();
+  peRole = p.role;
+  peAvatar = p.avatar;
+  peEmail = p.email;
+  document.getElementById('pe-avatar').innerHTML = avatarMarkup(p, (p.name || p.username || '?')[0].toUpperCase());
+  document.getElementById('pe-name').value = p.name;
+  document.getElementById('pe-username').value = p.username;
+  document.getElementById('pe-school').value = p.school;
+  document.getElementById('pe-email').value = p.email;
+  document.querySelectorAll('#profile-edit .role-pill-btn').forEach((b) =>
+    b.classList.toggle('active', b.dataset.role === peRole)
+  );
+  document.getElementById('profile-view').classList.add('hidden');
+  document.getElementById('profile-edit').classList.remove('hidden');
+}
+
+function closeProfileEdit() {
+  document.getElementById('profile-view').classList.remove('hidden');
+  document.getElementById('profile-edit').classList.add('hidden');
+}
+
+async function saveProfileEdit() {
+  const name = document.getElementById('pe-name').value.trim();
+  const username = renameClean(document.getElementById('pe-username').value);
+  const school = document.getElementById('pe-school').value.trim();
+  const status = document.getElementById('pe-user-status');
+  if (!name) { showToast('Buck needs a name to cheer for!', 'wrong'); return; }
+  if (username.length < 3) { showToast('Usernames need at least 3 characters.', 'wrong'); return; }
+
+  status.textContent = 'saving…';
+  status.className = 'user-status checking';
+
+  const p = getProfileCache();
+  const previousUsername = p.username || '';
+  if (username !== previousUsername) {
+    const free = await checkUsernameAvailable(username);
+    if (!free) {
+      status.textContent = 'taken';
+      status.className = 'user-status bad';
+      showToast('That username is taken — try another.', 'wrong');
+      return;
+    }
+  }
+
+  const next = Object.assign(getProfileCache(), { name, username, role: peRole, school, avatar: peAvatar, email: peEmail });
+  saveProfileCache(next);
+
+  try {
+    if (supabaseClient && currentUser) {
+      await supabaseClient.auth.updateUser({ data: { full_name: name, username, role: peRole, school } });
+      if (username !== previousUsername) {
+        try { await supabaseClient.from('profiles').update({ username }).eq('id', currentUser.id); } catch (e) {}
+      }
+    }
+  } catch (e) {}
+
+  status.textContent = '';
+  closeProfileEdit();
+  renderProfileView();
+  updateAuthUI();
+  showToast('Profile updated! Looking good, ' + name + ' 🦆', 'correct');
+}
+
+function wireProfile() {
+  document.getElementById('profile-close').addEventListener('click', closeProfile);
+  document.getElementById('profile-backdrop').addEventListener('click', closeProfile);
+
+  document.getElementById('profile-edit-btn').addEventListener('click', openProfileEdit);
+  document.getElementById('profile-cancel').addEventListener('click', closeProfileEdit);
+  document.getElementById('profile-save').addEventListener('click', saveProfileEdit);
+
+  document.querySelectorAll('#profile-edit .role-pill-btn').forEach((b) => {
+    b.addEventListener('click', () => {
+      peRole = b.dataset.role;
+      document.querySelectorAll('#profile-edit .role-pill-btn').forEach((x) => x.classList.toggle('active', x === b));
+    });
+  });
+
+  document.getElementById('pe-photo-btn').addEventListener('click', () => document.getElementById('pe-photo-input').click());
+  document.getElementById('pe-photo-input').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    readImageResized(file, (dataUrl) => {
+      peAvatar = dataUrl;
+      document.getElementById('pe-avatar').innerHTML = '<img src="' + dataUrl + '" alt="Profile photo" />';
+    });
+  });
+  document.getElementById('pe-photo-remove').addEventListener('click', () => {
+    peAvatar = '';
+    document.getElementById('pe-avatar').innerHTML = avatarMarkup({ avatar: '' }, 'B');
+  });
+
+  document.getElementById('pe-change-password').addEventListener('click', async () => {
+    if (!supabaseClient || !peEmail) return;
+    showToast('Sending a password reset link…', '');
+    try {
+      await supabaseClient.auth.resetPasswordForEmail(peEmail, { redirectTo: window.location.origin + '/app' });
+      showToast('Check your inbox for the reset link 📬', 'correct');
+    } catch (e) {
+      showToast('Could not send the reset link. Try again later.', 'wrong');
+    }
+  });
+
+  document.getElementById('pm-notifications').addEventListener('click', () => showToast('Notification settings are coming soon, Buck promises!', ''));
+  document.getElementById('pm-plan').addEventListener('click', () => showToast('You are on the Free plan. Pro is on the way! ⭐', ''));
+  document.getElementById('pm-help').addEventListener('click', () => showToast('Need a wing? Reach us at hello@bucktheduck.app', ''));
+  document.getElementById('pm-theme').addEventListener('click', () => {
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    if (dark) document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', 'dark');
+    try { localStorage.setItem('buckTheme', dark ? 'light' : 'dark'); } catch (e) {}
+    renderProfileView();
+  });
+  document.getElementById('pm-logout').addEventListener('click', async () => {
+    closeProfile();
+    if (supabaseClient) await supabaseClient.auth.signOut();
+  });
 }
 
 /* ---------------- Sidebar + Settings ---------------- */
