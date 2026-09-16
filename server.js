@@ -191,6 +191,15 @@ async function generateTextChunk(ask, chunk, extraInstruction) {
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Lightweight API access log so you can see what the server is actually receiving.
+app.use((req, res, next) => {
+  if (req.method === 'POST' && ['/api/generate', '/api/analyze', '/api/estimate', '/api/scrape', '/api/grade'].includes(req.path)) {
+    const kb = Math.round((Number(req.headers['content-length']) || 0) / 1024);
+    console.log(`[api] ${req.method} ${req.path} (~${kb}KB)`);
+  }
+  next();
+});
+
 app.post('/api/analyze', async (req, res) => {
   try {
     const text = typeof req.body.text === 'string' ? req.body.text.replace(/\s+/g, ' ').trim() : '';
@@ -612,10 +621,36 @@ app.get('/api/config', (req, res) => {
     supabaseAnonKey,
   });
 });
-app.get('/api/*', (req, res) => res.status(404).json({ error: 'Not found.' }));
+
+// Health/version probe — lets you curl the deployed backend to confirm which routes exist.
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    build: 'buck-gen-2',
+    model: DEEPSEEK_MODEL,
+    routes: [
+      'GET /api/config',
+      'GET /api/health',
+      'POST /api/analyze',
+      'POST /api/generate',
+      'POST /api/estimate',
+      'POST /api/scrape',
+      'POST /api/grade',
+    ],
+    time: new Date().toISOString(),
+  });
+});
+
+// Any unknown /api route (any method) returns JSON (not an HTML 404 page).
+app.all('/api/*', (req, res) =>
+  res.status(404).json({ error: `No API route for ${req.method} ${req.originalUrl}`, code: 'ROUTE_MISSING' })
+);
+
 app.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 app.listen(PORT, () => {
-  console.log(`Quiz app running at http://localhost:${PORT}`);
+  console.log(`Buck the Duck running at http://localhost:${PORT}`);
+  console.log(`Model: ${DEEPSEEK_MODEL}`);
+  console.log('API routes: GET /api/config · GET /api/health · POST /api/analyze · POST /api/generate · POST /api/estimate · POST /api/scrape · POST /api/grade');
 });

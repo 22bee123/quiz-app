@@ -421,29 +421,51 @@ function splitTextForGeneration(str, parts) {
 async function callGenerate(body) {
   const controller = new AbortController();
   if (genState) genState.controller = controller;
-  let res;
-  try {
-    res = await fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (netErr) {
-    if (netErr && netErr.name === 'AbortError') throw netErr;
-    const e = new Error('Could not reach the server.');
-    e.code = 'NETWORK';
-    e.detail = netErr && netErr.message;
+
+  const post = async (path) => {
+    let res;
+    try {
+      res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (netErr) {
+      if (netErr && netErr.name === 'AbortError') throw netErr;
+      const e = new Error('Could not reach the server.');
+      e.code = 'NETWORK';
+      e.detail = netErr && netErr.message;
+      throw e;
+    }
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  };
+
+  const first = await post('/api/generate');
+
+  // Resilience: if the running backend predates /api/generate, fall back to /api/analyze.
+  if (first.res.status === 404) {
+    const fb = await post('/api/analyze');
+    if (fb.res.ok) {
+      const cards = Array.isArray(fb.data.flashcards) ? fb.data.flashcards : [];
+      return cards.slice(0, body.count || cards.length);
+    }
+    const e = new Error('API route not found.');
+    e.code = 'ROUTE_MISSING';
+    e.detail = 'POST /api/generate returned 404 and the /api/analyze fallback failed — the backend needs to be redeployed/restarted.';
     throw e;
   }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const e = new Error(data.error || 'Generation failed.');
-    e.code = data.code || 'UNKNOWN';
-    e.detail = data.detail || data.error || '';
+
+  if (!first.res.ok) {
+    const status = first.res.status;
+    const e = new Error(first.data.error || 'Generation failed.');
+    e.code = first.data.code || (status === 401 || status === 403 ? 'AUTH' : status === 429 ? 'RATE' : 'HTTP_' + status);
+    e.detail = (first.data.detail || first.data.error || '') + ' (HTTP ' + status + ')';
     throw e;
   }
-  return Array.isArray(data.flashcards) ? data.flashcards : [];
+
+  return Array.isArray(first.data.flashcards) ? first.data.flashcards : [];
 }
 
 // Retry a single batch once with half the size before giving up (unless the error
@@ -477,6 +499,9 @@ const GEN_ERROR_COPY = {
   PARSE: ['Buck got a little tongue-tied.', 'The AI returned malformed data. Tap Try again and Buck will retry.'],
   EMPTY: ['Buck could not write questions this time.', 'The AI returned no usable questions. Give it another go?'],
   NETWORK: ['Buck lost the connection.', 'Check your internet connection and try again.'],
+  ROUTE_MISSING: ['The AI service is not available on this server.', 'API route not found — the backend needs redeploying or restarting.'],
+  HTTP_404: ['The AI service is not available on this server.', 'API route not found — the backend needs redeploying or restarting.'],
+  HTTP_500: ['Buck hit a server error.', 'The server returned an error — please try again in a moment.'],
   NO_HEARTS: ['Buck is out of hearts.', 'Wait for a heart to refill, then try again.'],
   UNKNOWN: ['Buck could not write questions this time.', 'Something unexpected happened. Try again, or reduce the count.'],
 };
