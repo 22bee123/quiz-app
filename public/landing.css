@@ -452,6 +452,20 @@ img.buck {
   box-shadow: 0 18px 44px rgba(62, 39, 35, 0.18);
 }
 
+/* Gentle floating motion for Buck */
+@keyframes mascotFloat {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-7px) rotate(0.6deg); }
+}
+
+img.buck {
+  animation: mascotFloat 5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  img.buck { animation: none !important; }
+}
+
 .buck-hero {
   width: min(340px, 84%);
   animation: buckBob 5s ease-in-out infinite;

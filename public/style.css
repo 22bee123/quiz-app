@@ -4487,6 +4487,34 @@ img.buck-svg,
 .friend-empty img { width: 104px; height: auto; }
 .pf-corner-buck { object-fit: contain; }
 
+/* Gentle floating motion for Buck artwork */
+@keyframes mascotFloat {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-6px) rotate(0.6deg); }
+}
+
+.mascot img,
+img.buck-svg,
+.al-mascot img,
+.pb-mascot img,
+.cl-core img,
+.empty-buck,
+.pf-corner-buck {
+  animation: mascotFloat 5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot img,
+  img.buck-svg,
+  .al-mascot img,
+  .pb-mascot img,
+  .cl-core img,
+  .empty-buck,
+  .pf-corner-buck {
+    animation: none !important;
+  }
+}
+
 .mascot-buck {
   width: 168px;
   max-width: 58%;

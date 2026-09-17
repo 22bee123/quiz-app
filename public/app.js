@@ -1750,7 +1750,7 @@ window.__buckAvatarErr = function (img) {
   try {
     const span = document.createElement('span');
     span.className = 'buck-av-fallback';
-    span.innerHTML = '<img src="/favicon.png" alt="Buck avatar" />';
+    span.innerHTML = '<img src="/buck-svg/favicon.svg" alt="Buck avatar" />';
     img.replaceWith(span);
   } catch (e) {}
 };
@@ -2035,7 +2035,7 @@ function renderFriendList() {
   if (!myFriends.length) {
     el.innerHTML =
       '<div class="friend-empty">' +
-      '<img class="empty-buck" src="/buck-thinking.png" alt="Buck waiting for friends" />' +
+      '<img class="empty-buck" src="/buck-svg/thinking.svg" alt="Buck waiting for friends" />' +
       '<strong>No friends yet!</strong>' +
       '<span>Search above to find study buddies, or invite someone with your username.</span>' +
       '<button type="button" class="btn btn-primary" id="empty-invite">Invite a friend</button>' +
@@ -2342,7 +2342,7 @@ function renderChatThread() {
     const p = friendProfilesById[activeChatId] || {};
     el.innerHTML =
       '<div class="friend-empty">' +
-      '<img class="empty-buck" src="/buck-celebrating.png" alt="Buck waving" />' +
+      '<img class="empty-buck" src="/buck-svg/celebrating.svg" alt="Buck waving" />' +
       '<strong>Say hi to ' + escapeHtml(atName(p)) + '! \u{1F44B}</strong>' +
       '<span>Your messages are private between you two.</span>' +
       '</div>';
@@ -2385,7 +2385,7 @@ function renderConversations() {
   if (!convos.length) {
     el.innerHTML =
       '<div class="friend-empty">' +
-      '<img class="empty-buck" src="/buck-thinking.png" alt="Buck" />' +
+      '<img class="empty-buck" src="/buck-svg/thinking.svg" alt="Buck" />' +
       '<strong>' + (searchQuery ? 'No matches' : 'No messages yet') + '</strong>' +
       '<span>' + (searchQuery ? 'Try a different name.' : 'Start a chat from the Friends tab! \u{1F4AC}') + '</span>' +
       '</div>';
@@ -2893,7 +2893,7 @@ function renderPack() {
       return;
     }
     listEl.innerHTML = '<div class="pack-empty">' +
-      '<img class="buck-svg empty-buck" src="/buck-thinking.png" alt="Buck waiting to study" />' +
+      '<img class="buck-svg empty-buck" src="/buck-svg/thinking.svg" alt="Buck waiting to study" />' +
       'No cards yet. Add a question to get started.</div>';
     return;
   }
@@ -4105,7 +4105,7 @@ function renameClean(v) {
 
 function avatarMarkup(profile, initial) {
   if (profile && profile.avatar) return '<img src="' + profile.avatar + '" alt="" />';
-  return '<img src="/favicon.png" alt="Buck avatar" />';
+  return '<img src="/buck-svg/favicon.svg" alt="Buck avatar" />';
 }
 
 function updateAuthUI() {
@@ -4586,7 +4586,7 @@ function renderSchoolList(query) {
 function updateAvatarPreview(btn, dataUrl) {
   if (!btn) return;
   if (dataUrl) btn.innerHTML = '<img src="' + dataUrl + '" alt="Profile photo" />';
-  else btn.innerHTML = '<img src="/favicon.png" alt="Buck placeholder avatar" />';
+  else btn.innerHTML = '<img src="/buck-svg/favicon.svg" alt="Buck placeholder avatar" />';
 }
 
 // Resize to a square of `size` and re-encode as JPEG (keeps uploads small).
