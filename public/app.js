@@ -5675,6 +5675,18 @@ let calSelectedDay = null;
 let editingEventId = null;
 let evType = 'exam';
 let calRemoteLoaded = false;
+let calLastBreakpoint = '';
+
+function calWidth() {
+  return (window.innerWidth || document.documentElement.clientWidth || 0);
+}
+function calBreakpoint() {
+  const w = calWidth();
+  if (w < 768) return 'mobile';
+  if (w < 1024) return 'tablet';
+  return 'desktop';
+}
+function isMobileCal() { return calBreakpoint() === 'mobile'; }
 
 function saveEventsLocal() { try { localStorage.setItem('buckEvents', JSON.stringify(events)); } catch (e) {} }
 function newEventId() { return 'ev' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
@@ -5721,8 +5733,9 @@ function openCalendar() {
   showScreen(calendarScreen);
   calCursor = new Date();
   calSelectedDay = dkey(new Date());
-  if (window.matchMedia && window.matchMedia('(max-width: 900px)').matches) calView = 'agenda';
+  if (isMobileCal()) calView = 'agenda';
   setCalView(calView, true);
+  calLastBreakpoint = calBreakpoint();
   renderCalendar();
   loadRemoteEvents();
   checkEventReminders();
@@ -5760,6 +5773,9 @@ function renderMonth() {
   const startDow = new Date(y, m, 1).getDay();
   const start = new Date(y, m, 1 - startDow);
   const todayKey = dkey(new Date());
+  const bp = calBreakpoint();
+  const chipLimit = bp === 'desktop' ? 3 : bp === 'tablet' ? 1 : 0;
+  const dotLimit = bp === 'mobile' ? 4 : 3;
   let html = '<div class="cal-month">';
   ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach((d) => { html += '<div class="cal-dow">' + d + '</div>'; });
   for (let i = 0; i < 42; i++) {
@@ -5769,10 +5785,13 @@ function renderMonth() {
     const hasExam = evs.some((e) => e.type === 'exam');
     const cls = 'cal-day' + (out ? ' out' : '') + (hasExam ? ' has-exam' : '') + (k === todayKey ? ' today' : '') + (k === calSelectedDay ? ' selected' : '');
     html += '<div class="' + cls + '" data-day="' + k + '"><span class="cal-day-num">' + d.getDate() + '</span><span class="cal-day-add">+</span>';
+    const dots = evs.slice(0, dotLimit);
     if (evs.length) {
-      html += '<div class="cal-dots">' + evs.slice(0, 3).map((e) => '<span class="cal-dot ' + (e.type === 'study' ? 'study' : e.type === 'deadline' ? 'deadline' : '') + '"></span>').join('') + '</div>';
-      html += evs.slice(0, 2).map((e) => '<span class="cal-chip ' + (e.type === 'study' ? 'study' : e.type === 'deadline' ? 'deadline' : '') + '" data-ev="' + e.id + '" title="' + escapeHtml(e.title) + '">' + escapeHtml(e.title) + '</span>').join('');
-      if (evs.length > 2) html += '<span class="cal-more">+' + (evs.length - 2) + ' more</span>';
+      html += '<div class="cal-dots">' + dots.map((e) => '<span class="cal-dot ' + (e.type === 'study' ? 'study' : e.type === 'deadline' ? 'deadline' : '') + '"></span>').join('') + '</div>';
+      if (chipLimit) {
+        html += evs.slice(0, chipLimit).map((e) => '<span class="cal-chip ' + (e.type === 'study' ? 'study' : e.type === 'deadline' ? 'deadline' : '') + '" data-ev="' + e.id + '" title="' + escapeHtml(e.title) + '">' + escapeHtml(e.title) + '</span>').join('');
+        if (evs.length > chipLimit) html += '<span class="cal-more">+' + (evs.length - chipLimit) + ' more</span>';
+      }
     }
     html += '</div>';
   }
@@ -5887,21 +5906,35 @@ function updatePackNote() {
   } else note.textContent = '';
 }
 
+function evTypeLabel(t) {
+  return t === 'study' ? 'study session' : t === 'deadline' ? 'deadline' : 'exam';
+}
+function updateEventHeading() {
+  const el = document.getElementById('event-heading');
+  if (el) el.textContent = (editingEventId ? 'Edit ' : 'Add ') + evTypeLabel(evType);
+}
+
 function setEvType(t) {
   evType = t;
   document.querySelectorAll('.ev-type').forEach((b) => b.classList.toggle('active', b.dataset.t === t));
   document.getElementById('ev-exam-fields').classList.toggle('hidden', t !== 'exam');
   document.getElementById('ev-study-fields').classList.toggle('hidden', t !== 'study');
+  updateEventHeading();
 }
 
 function openEventModal(ev, dateStr) {
   editingEventId = ev ? ev.id : null;
-  document.getElementById('event-heading').textContent = ev ? 'Edit event' : 'Add event';
+  setEvType(ev ? ev.type : 'exam');
+  updateEventHeading();
   document.getElementById('event-save').textContent = ev ? 'Save changes' : 'Save event';
   document.getElementById('event-delete').classList.toggle('hidden', !ev);
-  setEvType(ev ? ev.type : 'exam');
   document.getElementById('ev-title').value = ev ? ev.title : '';
-  document.getElementById('ev-date').value = ev ? ev.date : (dateStr || dkey(new Date()));
+  const todayKey = dkey(new Date());
+  const minDate = ev && ev.date && ev.date < todayKey ? ev.date : todayKey;
+  const dateEl = document.getElementById('ev-date');
+  dateEl.min = minDate;
+  const dflt = dateStr && dateStr >= todayKey ? dateStr : todayKey;
+  dateEl.value = ev ? ev.date : dflt;
   const allDay = ev ? ev.allDay !== false : true;
   document.getElementById('ev-allday').checked = allDay;
   document.getElementById('ev-time').value = ev && ev.time ? ev.time : '';
@@ -5915,10 +5948,14 @@ function openEventModal(ev, dateStr) {
   document.getElementById('ev-error').textContent = '';
   populatePackOptions(ev ? ev.studypackId : '');
   document.getElementById('event-modal').classList.remove('hidden');
+  document.body.classList.add('cal-sheet-open');
   setTimeout(() => document.getElementById('ev-title').focus(), 60);
 }
 
-function closeEventModal() { document.getElementById('event-modal').classList.add('hidden'); }
+function closeEventModal() {
+  document.getElementById('event-modal').classList.add('hidden');
+  syncCalScrollLock();
+}
 
 function collectEvent() {
   const title = document.getElementById('ev-title').value.trim();
@@ -5926,6 +5963,10 @@ function collectEvent() {
   const allDay = document.getElementById('ev-allday').checked;
   if (!title) return { error: 'Buck needs a title for this event.' };
   if (!date) return { error: 'Pick a date for this event.' };
+  const existing = editingEventId ? events.find((e) => e.id === editingEventId) : null;
+  const todayKey = dkey(new Date());
+  const canKeepPast = existing && existing.date && existing.date < todayKey && date === existing.date;
+  if (date < todayKey && !canKeepPast) return { error: 'You can only add events for today or future dates.' };
   const sel = document.getElementById('ev-pack').value;
   const ev = {
     id: editingEventId || newEventId(),
@@ -6034,8 +6075,9 @@ function openEventDrawer(id) {
   document.getElementById('ed-edit').onclick = () => { closeEventDrawer(); openEventModal(ev); };
   document.getElementById('ed-del').onclick = () => deleteEventById(id);
   document.getElementById('event-drawer').classList.remove('hidden');
+  syncCalScrollLock();
 }
-function closeEventDrawer() { document.getElementById('event-drawer').classList.add('hidden'); }
+function closeEventDrawer() { document.getElementById('event-drawer').classList.add('hidden'); syncCalScrollLock(); }
 
 /* Reminders + weekly summary */
 function checkEventReminders() {
@@ -6069,21 +6111,70 @@ function maybeWeeklySummary() {
   showToast('Weekly plan: you have ' + next.length + ' event' + (next.length === 1 ? '' : 's') + ' next week. Buck has a plan! \u{1F986}', 'correct');
 }
 
-/* Day popover */
+/* Day popover: clamped/flipped popover on desktop, bottom sheet on mobile */
 function openDayPop(dayKey, anchorEl) {
   const pop = document.getElementById('cal-day-pop');
+  const back = document.getElementById('cal-day-backdrop');
   const evs = eventsOn(dayKey);
+  const canAdd = dayKey >= dkey(new Date());
   pop.innerHTML = '<h4>' + parseKey(dayKey).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) + '</h4>' +
-    (evs.length ? evs.map((e) => '<div class="cal-ag-item" data-ev="' + e.id + '"><span class="cal-ag-icon">' + EV_META[e.type].icon + '</span><span><div class="cal-ag-title" style="font-size:.86rem">' + escapeHtml(e.title) + '</div><div class="cal-ag-meta">' + (!e.allDay && e.time ? escapeHtml(e.time) : 'All day') + '</div></span></div>').join('') : '<div class="cal-load-empty">No events this day.</div>') +
-    '<button type="button" class="btn btn-primary" id="cal-day-add" style="margin-top:8px">+ Add event</button>';
+    (evs.length ? evs.map((e) => '<div class="cal-ag-item" data-ev="' + e.id + '"><span class="cal-ag-icon">' + EV_META[e.type].icon + '</span><span style="min-width:0"><div class="cal-ag-title" style="font-size:.86rem">' + escapeHtml(e.title) + '</div><div class="cal-ag-meta">' + (!e.allDay && e.time ? escapeHtml(e.time) : 'All day') + '</div></span></div>').join('') : '<div class="cal-load-empty">No events this day.</div>') +
+    (canAdd
+      ? '<button type="button" class="btn btn-primary" id="cal-day-add" style="margin-top:8px">+ Add event</button>'
+      : '<div class="cal-load-empty" style="margin-top:8px">Past days can\u2019t be edited.</div>');
   pop.classList.remove('hidden');
+  const dayAdd = pop.querySelector('#cal-day-add');
+  if (dayAdd) dayAdd.addEventListener('click', () => { closeDayPop(); openEventModal(null, dayKey); });
+
+  if (isMobileCal()) {
+    pop.classList.add('sheet');
+    pop.style.left = '';
+    pop.style.top = '';
+    pop.style.visibility = '';
+    if (back) back.classList.remove('hidden');
+    document.body.classList.add('cal-sheet-open');
+    return;
+  }
+
+  pop.classList.remove('sheet');
+  if (back) back.classList.add('hidden');
+  pop.style.visibility = 'hidden';
+  pop.style.left = '0px';
+  pop.style.top = '0px';
+  const margin = 8;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const w = pop.offsetWidth;
+  const h = pop.offsetHeight;
   const r = anchorEl.getBoundingClientRect();
-  const left = Math.min(window.innerWidth - 300, Math.max(8, r.left));
+  let left = r.left;
+  let top = r.bottom + 6;
+  if (left + w > vw - margin) left = vw - margin - w;
+  if (left < margin) left = margin;
+  if (top + h > vh - margin) {
+    const above = r.top - h - 6;
+    top = above >= margin ? above : Math.max(margin, vh - margin - h);
+  }
+  if (top < margin) top = margin;
   pop.style.left = left + 'px';
-  pop.style.top = Math.min(window.innerHeight - 240, r.bottom + 6) + 'px';
-  pop.querySelector('#cal-day-add').addEventListener('click', () => { pop.classList.add('hidden'); openEventModal(null, dayKey); });
+  pop.style.top = top + 'px';
+  pop.style.visibility = '';
 }
-function closeDayPop() { const p = document.getElementById('cal-day-pop'); if (p) p.classList.add('hidden'); }
+
+function closeDayPop() {
+  const p = document.getElementById('cal-day-pop');
+  if (p) { p.classList.add('hidden'); p.classList.remove('sheet'); p.style.visibility = ''; p.style.left = ''; p.style.top = ''; }
+  const back = document.getElementById('cal-day-backdrop');
+  if (back) back.classList.add('hidden');
+  syncCalScrollLock();
+}
+
+function syncCalScrollLock() {
+  const open = !document.getElementById('event-modal').classList.contains('hidden') ||
+    !document.getElementById('event-drawer').classList.contains('hidden') ||
+    !document.getElementById('cal-day-pop').classList.contains('hidden');
+  document.body.classList.toggle('cal-sheet-open', open);
+}
 
 function wireCalendar() {
   if (!navCalendar) return;
@@ -6092,7 +6183,6 @@ function wireCalendar() {
   const prev = document.getElementById('cal-prev');
   const next = document.getElementById('cal-next');
   const today = document.getElementById('cal-today');
-  const add = document.getElementById('cal-add');
   if (prev) prev.addEventListener('click', () => {
     if (calView === 'week') calCursor.setDate(calCursor.getDate() - 7);
     else calCursor.setMonth(calCursor.getMonth() - 1);
@@ -6104,7 +6194,6 @@ function wireCalendar() {
     renderCalendar();
   });
   if (today) today.addEventListener('click', () => { calCursor = new Date(); calSelectedDay = dkey(new Date()); renderCalendar(); });
-  if (add) add.addEventListener('click', () => openEventModal(null, calSelectedDay || dkey(new Date())));
 
   const body = document.getElementById('cal-main-body');
   if (body) body.addEventListener('click', (e) => {
@@ -6119,6 +6208,7 @@ function wireCalendar() {
 
   const modal = document.getElementById('event-modal');
   document.getElementById('event-close').addEventListener('click', closeEventModal);
+  document.getElementById('event-cancel').addEventListener('click', closeEventModal);
   document.getElementById('event-backdrop').addEventListener('click', closeEventModal);
   document.getElementById('event-save').addEventListener('click', saveEventFromModal);
   document.getElementById('event-delete').addEventListener('click', () => { if (editingEventId) deleteEventById(editingEventId); });
@@ -6131,6 +6221,9 @@ function wireCalendar() {
   document.getElementById('ed-close').addEventListener('click', closeEventDrawer);
   document.getElementById('ed-backdrop').addEventListener('click', closeEventDrawer);
 
+  const dayBack = document.getElementById('cal-day-backdrop');
+  if (dayBack) dayBack.addEventListener('click', closeDayPop);
+
   document.addEventListener('click', (e) => {
     const pop = document.getElementById('cal-day-pop');
     if (pop && !pop.classList.contains('hidden') && !e.target.closest('#cal-day-pop') && !e.target.closest('[data-day]')) closeDayPop();
@@ -6142,10 +6235,61 @@ function wireCalendar() {
     else closeDayPop();
   });
 
+  enableSheetSwipe(document.querySelector('#event-modal .event-card'));
+  enableSheetSwipe(document.querySelector('#event-drawer .drawer-card'));
+  enableSheetSwipe(document.getElementById('cal-day-pop'));
+
+  let calResizeT = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(calResizeT);
+    calResizeT = setTimeout(() => {
+      const bp = calBreakpoint();
+      if (bp !== calLastBreakpoint) {
+        calLastBreakpoint = bp;
+        if (!calendarScreen.classList.contains('hidden')) renderCalendar();
+      }
+      const pop = document.getElementById('cal-day-pop');
+      if (pop && !pop.classList.contains('hidden') && !isMobileCal()) closeDayPop();
+    }, 120);
+  });
+
   setInterval(checkEventReminders, 60000);
   checkEventReminders();
   maybeWeeklySummary();
   updateCalendarBadge();
+}
+
+function enableSheetSwipe(sheet) {
+  if (!sheet) return;
+  let startY = 0;
+  let dragging = false;
+  const onStart = (e) => {
+    if (!isMobileCal()) return;
+    startY = e.touches[0].clientY;
+    dragging = true;
+    sheet.style.transition = 'none';
+  };
+  const onMove = (e) => {
+    if (!dragging) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy > 0) sheet.style.transform = 'translateY(' + dy + 'px)';
+  };
+  const onEnd = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    sheet.style.transition = '';
+    const dy = (e.changedTouches && e.changedTouches[0].clientY - startY) || 0;
+    sheet.style.transform = '';
+    if (dy > 90) {
+      if (sheet.id === 'cal-day-pop') closeDayPop();
+      else if (sheet.closest('#event-modal')) closeEventModal();
+      else closeEventDrawer();
+    }
+  };
+  sheet.addEventListener('touchstart', onStart, { passive: true });
+  sheet.addEventListener('touchmove', onMove, { passive: true });
+  sheet.addEventListener('touchend', onEnd, { passive: true });
+  sheet.addEventListener('touchcancel', onEnd, { passive: true });
 }
 
 wireCalendar();

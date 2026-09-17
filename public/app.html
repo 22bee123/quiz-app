@@ -830,7 +830,6 @@
                 <span class="cal-label" id="cal-label"></span>
               </div>
               <div id="cal-main-body" class="cal-main-body"></div>
-              <button type="button" id="cal-add" class="cal-fab">+ Add exam</button>
             </div>
 
             <aside class="cal-side">
@@ -850,6 +849,7 @@
           </div>
         </div>
         <div id="cal-day-pop" class="cal-day-pop hidden"></div>
+        <div id="cal-day-backdrop" class="cal-day-backdrop hidden"></div>
       </section>
 
       <!-- StudyPack detail screen -->
@@ -1014,71 +1014,77 @@
   </div>
 
   <!-- Event modal -->
-  <div id="event-modal" class="modal hidden">
+  <div id="event-modal" class="modal event-sheet hidden">
     <div class="modal-backdrop" id="event-backdrop"></div>
-    <div class="modal-card event-card">
+    <div class="modal-card event-card" role="dialog" aria-modal="true" aria-labelledby="event-heading">
+      <span class="sheet-handle" aria-hidden="true"></span>
       <div class="modal-head">
-        <h3 id="event-heading">Add event</h3>
-        <button id="event-close" class="modal-close">&times;</button>
+        <h3 id="event-heading">Add exam</h3>
+        <button id="event-close" class="modal-close" aria-label="Close">&times;</button>
       </div>
 
-      <div class="ev-types" role="tablist" aria-label="Event type">
-        <button type="button" class="ev-type active" data-t="exam" role="tab">&#127891; Exam</button>
-        <button type="button" class="ev-type" data-t="study" role="tab">&#128214; Study</button>
-        <button type="button" class="ev-type" data-t="deadline" role="tab">&#9200; Deadline</button>
-      </div>
-
-      <label class="field-label" for="ev-title">Title</label>
-      <input id="ev-title" class="signup-input" placeholder="e.g. Nursing Board Exam" />
-
-      <div class="ev-row">
-        <div>
-          <label class="field-label" for="ev-date">Date</label>
-          <input id="ev-date" class="signup-input" type="date" />
+      <div class="event-form-body">
+        <div class="ev-types" role="tablist" aria-label="Event type">
+          <button type="button" class="ev-type active" data-t="exam" role="tab">&#127891; Exam</button>
+          <button type="button" class="ev-type" data-t="study" role="tab">&#128214; Study</button>
+          <button type="button" class="ev-type" data-t="deadline" role="tab">&#9200; Deadline</button>
         </div>
-        <div>
-          <label class="field-label" for="ev-time">Time</label>
-          <input id="ev-time" class="signup-input" type="time" />
-          <label class="ev-check"><input type="checkbox" id="ev-allday" checked /> All day</label>
+
+        <label class="field-label" for="ev-title">Title</label>
+        <input id="ev-title" class="signup-input" placeholder="e.g. Nursing Board Exam" />
+
+        <div class="ev-row">
+          <div>
+            <label class="field-label" for="ev-date">Date</label>
+            <input id="ev-date" class="signup-input" type="date" />
+          </div>
+          <div>
+            <label class="field-label" for="ev-time">Time</label>
+            <input id="ev-time" class="signup-input" type="time" />
+            <label class="ev-check"><input type="checkbox" id="ev-allday" checked /> All day</label>
+          </div>
         </div>
+
+        <div id="ev-exam-fields">
+          <label class="field-label" for="ev-subject">Subject / Course</label>
+          <input id="ev-subject" class="signup-input" placeholder="e.g. Nursing" />
+          <label class="field-label" for="ev-location">Location</label>
+          <input id="ev-location" class="signup-input" placeholder="e.g. Room 204" />
+          <label class="field-label" for="ev-pack">Link a StudyPack</label>
+          <select id="ev-pack" class="signup-input"></select>
+          <div class="ev-pack-note" id="ev-pack-note"></div>
+          <label class="field-label" for="ev-reminder">Reminder</label>
+          <select id="ev-reminder" class="signup-input">
+            <option value="">None</option>
+            <option value="1440">1 day before</option>
+            <option value="4320">3 days before</option>
+            <option value="10080">1 week before</option>
+          </select>
+        </div>
+
+        <div id="ev-study-fields" class="hidden">
+          <label class="field-label" for="ev-duration">Duration</label>
+          <select id="ev-duration" class="signup-input">
+            <option value="30">30 minutes</option>
+            <option value="60" selected>1 hour</option>
+            <option value="120">2 hours</option>
+          </select>
+          <label class="field-label" for="ev-focus">Focus topic</label>
+          <input id="ev-focus" class="signup-input" placeholder="e.g. Pharmacology" />
+        </div>
+
+        <label class="field-label" for="ev-notes">Notes</label>
+        <textarea id="ev-notes" class="signup-input" rows="2" placeholder="Optional"></textarea>
+
+        <div id="ev-error" class="auth-error"></div>
       </div>
 
-      <div id="ev-exam-fields">
-        <label class="field-label" for="ev-subject">Subject / Course</label>
-        <input id="ev-subject" class="signup-input" placeholder="e.g. Nursing" />
-        <label class="field-label" for="ev-location">Location</label>
-        <input id="ev-location" class="signup-input" placeholder="e.g. Room 204" />
-        <label class="field-label" for="ev-pack">Link a StudyPack</label>
-        <select id="ev-pack" class="signup-input"></select>
-        <div class="ev-pack-note" id="ev-pack-note"></div>
-        <label class="field-label" for="ev-reminder">Reminder</label>
-        <select id="ev-reminder" class="signup-input">
-          <option value="">None</option>
-          <option value="1440">1 day before</option>
-          <option value="4320">3 days before</option>
-          <option value="10080">1 week before</option>
-        </select>
-      </div>
-
-      <div id="ev-study-fields" class="hidden">
-        <label class="field-label" for="ev-duration">Duration</label>
-        <select id="ev-duration" class="signup-input">
-          <option value="30">30 minutes</option>
-          <option value="60" selected>1 hour</option>
-          <option value="120">2 hours</option>
-        </select>
-        <label class="field-label" for="ev-focus">Focus topic</label>
-        <input id="ev-focus" class="signup-input" placeholder="e.g. Pharmacology" />
-      </div>
-
-      <label class="field-label" for="ev-notes">Notes</label>
-      <textarea id="ev-notes" class="signup-input" rows="2" placeholder="Optional"></textarea>
-
-      <div id="ev-error" class="auth-error"></div>
-
-      <div class="modal-actions">
-        <button id="event-delete" class="btn btn-secondary hidden">Delete</button>
-        <button id="event-save" class="btn btn-primary">Save event</button>
+      <div class="event-form-foot">
+        <div class="modal-actions">
+          <button id="event-cancel" class="btn btn-secondary" type="button">Cancel</button>
+          <button id="event-delete" class="btn btn-secondary hidden" type="button">Delete</button>
+          <button id="event-save" class="btn btn-primary" type="button">Save event</button>
+        </div>
       </div>
     </div>
   </div>
