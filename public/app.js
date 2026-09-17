@@ -2722,18 +2722,28 @@ function renderStudyPackList() {
     const item = document.createElement('div');
     item.className = 'hist-item studypack-item';
     item.dataset.packId = pack.id;
+    const linked = eventsForPack(pack.id).slice(0, 2);
+    const chips = linked.map((e) => {
+      const meta = EV_META[e.type] || EV_META.exam;
+      return '<span class="pack-ev-chip" data-ev="' + e.id + '" title="Open in calendar">' + meta.icon + ' ' + escapeHtml(e.title) + ' \u00b7 ' + formatDate(e.date) + '</span>';
+    }).join('');
     item.innerHTML = `
       <span class="hi-dot" style="background:${deckColor(pack.name)}"></span>
       <button class="hi-main-btn">
         <span class="hi-name">${escapeHtml(pack.name)}</span>
         <span class="hi-meta">${pack.items.length} cards</span>
+        ${chips}
       </button>
       <button class="hi-del" title="Delete StudyPack" aria-label="Delete StudyPack ${escapeHtml(pack.name)}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
       </button>
       <button class="pin-btn" title="Open">&#8250;</button>
     `;
-    item.querySelector('.hi-main-btn').addEventListener('click', () => openPack(pack.id));
+    item.querySelector('.hi-main-btn').addEventListener('click', (e) => {
+      const chipEl = e.target.closest('.pack-ev-chip');
+      if (chipEl) { e.stopPropagation(); openCalendarEvent(chipEl.dataset.ev); return; }
+      openPack(pack.id);
+    });
     item.querySelector('.pin-btn').addEventListener('click', () => openPack(pack.id));
     item.querySelector('.hi-del').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -5666,6 +5676,50 @@ const EV_META = {
   deadline: { icon: '\u23F0', color: '#E8D5C4', label: 'Deadline', cls: 'deadline' },
 };
 
+const EVENT_COLORS = ['#F97316', '#6B4226', '#E8D5C4', '#16A34A', '#3B82F6', '#8B5CF6', '#EF4444', '#EC4899', '#14B8A6', '#78716C'];
+
+function textOn(hex) {
+  const c = String(hex || '').replace('#', '');
+  if (c.length !== 6) return '#fff';
+  const r = parseInt(c.substr(0, 2), 16);
+  const g = parseInt(c.substr(2, 2), 16);
+  const b = parseInt(c.substr(4, 2), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 168 ? '#3E2723' : '#FFFFFF';
+}
+
+function eventsForPack(packId) {
+  if (!packId || !window.__calEventsReady) return [];
+  return events.filter((e) => e.studypackId === packId)
+    .sort((a, b) => parseKey(a.date) - parseKey(b.date));
+}
+
+function renderColorRow(container, selected, onPick) {
+  if (!container) return;
+  const cur = (selected || '#F97316').toUpperCase();
+  container.innerHTML = EVENT_COLORS.map((c) =>
+    '<button type="button" class="color-swatch' + (c.toUpperCase() === cur ? ' active' : '') + '" data-color="' + c + '" title="' + c + '" aria-label="Color ' + c + '" style="background:' + c + '"></button>'
+  ).join('');
+  container.querySelectorAll('.color-swatch').forEach((b) => {
+    b.addEventListener('click', () => {
+      container.querySelectorAll('.color-swatch').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      if (onPick) onPick(b.dataset.color);
+    });
+  });
+}
+
+function openCalendarEvent(id) {
+  const ev = events.find((e) => e.id === id);
+  if (!ev) return;
+  if (authEnabled && !currentUser && !requireAuth()) return;
+  calCursor = parseKey(ev.date);
+  calSelectedDay = ev.date;
+  setActiveNav('calendar');
+  showScreen(calendarScreen);
+  renderCalendar();
+  openEventPanel(id);
+}
+
 const CAL_HOUR_H = 44;
 const CAL_GUTTER = 48;
 const CAL_SNAP = 15;
@@ -5673,6 +5727,7 @@ const CAL_SNAP = 15;
 let events = [];
 try { events = JSON.parse(localStorage.getItem('buckEvents') || '[]'); } catch (e) { events = []; }
 if (!Array.isArray(events)) events = [];
+window.__calEventsReady = true;
 
 let calView = 'week';
 let calCursor = new Date();
@@ -5941,8 +5996,10 @@ function layoutDayEvents(list) {
 function timeGridBlock(e, allDay, style) {
   const meta = EV_META[e.type] || EV_META.exam;
   const pack = e.studypackId ? getPack(e.studypackId) : null;
-  let html = '<div class="tg-event ' + meta.cls + (allDay ? ' allday' : '') + '" data-ev="' + e.id + '"' +
-    (style ? ' style="' + style + '"' : '') + '>';
+  const color = e.color || meta.color;
+  const fg = textOn(color);
+  const inline = (style ? style + ';' : '') + 'background:' + color + ';color:' + fg + ';';
+  let html = '<div class="tg-event ' + meta.cls + (allDay ? ' allday' : '') + '" data-ev="' + e.id + '" style="' + inline + '">';
   html += '<div class="tg-event-title">' + escapeHtml(e.title) + '</div>';
   if (!allDay) html += '<div class="tg-event-time">' + fmtRange(e.time, e.endTime) + '</div>';
   if (pack) html += '<div class="tg-event-pack">\u{1F4DA} ' + escapeHtml(pack.name) + '</div>';
@@ -5970,9 +6027,9 @@ function renderMonth() {
     const cls = 'cal-day' + (out ? ' out' : '') + (hasExam ? ' has-exam' : '') + (k === todayKey ? ' today' : '') + (k === calSelectedDay ? ' selected' : '');
     html += '<div class="' + cls + '" data-day="' + k + '"><span class="cal-day-num">' + d.getDate() + '</span><span class="cal-day-add">+</span>';
     if (evs.length) {
-      html += '<div class="cal-dots">' + evs.slice(0, dotLimit).map((e) => '<span class="cal-dot ' + (EV_META[e.type] ? EV_META[e.type].cls : '') + '"></span>').join('') + '</div>';
+      html += '<div class="cal-dots">' + evs.slice(0, dotLimit).map((e) => '<span class="cal-dot" style="background:' + (e.color || (EV_META[e.type] ? EV_META[e.type].color : '#f97316')) + '"></span>').join('') + '</div>';
       if (chipLimit) {
-        html += evs.slice(0, chipLimit).map((e) => '<span class="cal-chip ' + (EV_META[e.type] ? EV_META[e.type].cls : '') + '" data-ev="' + e.id + '" title="' + escapeHtml(e.title) + '">' + escapeHtml(e.title) + '</span>').join('');
+        html += evs.slice(0, chipLimit).map((e) => '<span class="cal-chip ' + (EV_META[e.type] ? EV_META[e.type].cls : '') + '" data-ev="' + e.id + '" title="' + escapeHtml(e.title) + '" style="border-left-color:' + (e.color || (EV_META[e.type] ? EV_META[e.type].color : '#f97316')) + '">' + escapeHtml(e.title) + '</span>').join('');
         if (evs.length > chipLimit) html += '<span class="cal-more">+' + (evs.length - chipLimit) + ' more</span>';
       }
     }
@@ -6006,7 +6063,8 @@ function renderAgenda() {
 function agendaItem(e) {
   const meta = EV_META[e.type] || EV_META.exam;
   const pack = e.studypackId ? getPack(e.studypackId) : null;
-  let html = '<div class="cal-ag-item" data-ev="' + e.id + '"><span class="cal-ag-icon">' + meta.icon + '</span><span style="flex:1;min-width:0">';
+  const color = e.color || meta.color;
+  let html = '<div class="cal-ag-item" data-ev="' + e.id + '" style="border-left:4px solid ' + color + '"><span class="cal-ag-icon">' + meta.icon + '</span><span style="flex:1;min-width:0">';
   html += '<div class="cal-ag-title">' + escapeHtml(e.title) + (e.type === 'exam' && daysUntil(e) >= 0 ? ' \u00b7 <span class="cal-countdown">' + countdownLabel(daysUntil(e)) + '</span>' : '') + '</div>';
   html += '<div class="cal-ag-meta">' + (!e.allDay && e.time ? fmtRange(e.time, e.endTime) + ' \u00b7 ' : 'All day \u00b7 ') + escapeHtml(e.subject || meta.label) + (e.location ? ' \u00b7 ' + escapeHtml(e.location) : '') + '</div>';
   if (pack) {
@@ -6141,12 +6199,22 @@ function renderEventPanel(id) {
   }
   document.getElementById('ed-tip').textContent = '\u{1F986} Buck: ' + buckTip(days);
 
+  renderColorRow(document.getElementById('ed-color-row'), ev.color || meta.color, (c) => {
+    ev.color = c;
+    saveEventsLocal();
+    pushEventRemote(ev);
+    renderCalendar();
+    renderEventPanel(ev.id);
+    if (typeof renderStudyPackList === 'function') renderStudyPackList();
+  });
+
   const pack = ev.studypackId ? getPack(ev.studypackId) : null;
   const packEl = document.getElementById('ed-pack');
   if (pack) {
     const pr = packProgress(pack);
     packEl.classList.remove('hidden');
-    packEl.innerHTML = '<div class="cal-ag-title">\u{1F4DA} ' + escapeHtml(pack.name) + '</div><div class="cal-ag-meta">' + pr.total + ' cards</div><div class="cal-bar"><span style="width:' + pr.pct + '%"></span></div><div class="cal-ag-meta">' + pr.done + ' / ' + pr.total + ' mastered</div>';
+    packEl.innerHTML = '<div class="ed-pack-link" title="Open StudyPack"><div class="cal-ag-title">\u{1F4DA} ' + escapeHtml(pack.name) + '</div><div class="cal-ag-meta">' + pr.total + ' cards</div><div class="cal-bar"><span style="width:' + pr.pct + '%"></span></div><div class="cal-ag-meta">' + pr.done + ' / ' + pr.total + ' mastered</div><div class="cal-ag-meta">Tap to open this StudyPack \u2192</div></div>';
+    packEl.querySelector('.ed-pack-link').onclick = () => { closePanel(); openPack(pack.id); };
   } else packEl.classList.add('hidden');
 
   const notes = document.getElementById('ed-notes');
@@ -6181,6 +6249,11 @@ function setEvType(t) {
   if (ex) ex.classList.toggle('hidden', t !== 'exam');
   if (st) st.classList.toggle('hidden', t !== 'study');
   updateEventHeading();
+  const hidden = document.getElementById('ev-color');
+  if (hidden) {
+    hidden.value = EV_META[t] ? EV_META[t].color : '#F97316';
+    renderColorRow(document.getElementById('ev-color-row'), hidden.value, (c) => { hidden.value = c; });
+  }
 }
 
 function updateTimeRow() {
@@ -6231,6 +6304,9 @@ function openEventForm(ev, dateStr, range, forceAllDay) {
   editingEventId = ev ? ev.id : null;
   setEvType(ev ? ev.type : 'exam');
   updateEventHeading();
+  const colorVal = ev && ev.color ? ev.color : (EV_META[evType] ? EV_META[evType].color : '#F97316');
+  document.getElementById('ev-color').value = colorVal;
+  renderColorRow(document.getElementById('ev-color-row'), colorVal, (c) => { document.getElementById('ev-color').value = c; });
   document.getElementById('event-save').textContent = ev ? 'Save changes' : 'Save event';
   document.getElementById('event-delete').classList.toggle('hidden', !ev);
   document.getElementById('ev-title').value = ev ? ev.title : '';
@@ -6316,7 +6392,7 @@ function collectEvent() {
     location: document.getElementById('ev-location').value.trim(),
     focus: document.getElementById('ev-focus').value.trim(),
     studypackId: sel && sel !== '__new' ? sel : null,
-    color: EV_META[evType].color,
+    color: document.getElementById('ev-color').value || EV_META[evType].color,
     reminderOffsetMinutes: document.getElementById('ev-reminder').value ? Number(document.getElementById('ev-reminder').value) : null,
     notes: document.getElementById('ev-notes').value.trim(),
   };
@@ -6329,6 +6405,7 @@ async function saveEventFromForm() {
   const idx = events.findIndex((e) => e.id === r.ev.id);
   if (idx >= 0) events[idx] = r.ev; else events.push(r.ev);
   saveEventsLocal();
+  if (typeof renderStudyPackList === 'function') renderStudyPackList();
   selectedEventId = r.ev.id;
   renderCalendar();
   popEventBlock(r.ev.id);
@@ -6347,6 +6424,7 @@ async function deleteEventById(id) {
   if (!ok) return;
   events = events.filter((e) => e.id !== id);
   saveEventsLocal();
+  if (typeof renderStudyPackList === 'function') renderStudyPackList();
   selectedEventId = null;
   renderCalendar();
   closePanel();
@@ -6391,6 +6469,7 @@ async function loadRemoteEvents() {
       if (i >= 0) events[i] = mapped; else events.push(mapped);
     });
     saveEventsLocal();
+    if (typeof renderStudyPackList === 'function') renderStudyPackList();
     renderCalendar();
   } catch (e) {}
 }
@@ -6677,6 +6756,12 @@ function wireCalendar() {
   if (body) {
     body.addEventListener('click', onCalBodyClick);
     body.addEventListener('mousedown', onCalMouseDown);
+    body.addEventListener('wheel', (e) => {
+      if (!e.shiftKey) return;
+      if (body.scrollWidth <= body.clientWidth) return;
+      body.scrollLeft += (e.deltaY || e.deltaX);
+      e.preventDefault();
+    }, { passive: false });
   }
 
   const panelEl = document.getElementById('cal-panel');
@@ -6752,3 +6837,4 @@ function wireCalendar() {
 }
 
 wireCalendar();
+if (typeof renderStudyPackList === 'function') renderStudyPackList();
