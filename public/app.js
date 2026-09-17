@@ -234,6 +234,7 @@ function showScreen(screen) {
   [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen, friendsScreen, packScreen, calendarScreen].forEach((s) => s.classList.add('hidden'));
   screen.classList.remove('hidden');
   document.body.classList.toggle('cal-open', screen === calendarScreen);
+  document.body.classList.toggle('home-open', screen === uploadScreen);
   if (screen !== packScreen) resetHighlightMode();
 }
 

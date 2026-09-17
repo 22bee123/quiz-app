@@ -7338,6 +7338,8 @@ body.cal-open .tg-week { min-width: 720px; }
 
 /* Full-bleed calendar: middle grid owns all remaining space (Notion-style) */
 body.cal-open .app > header { display: none; }
+/* The home hero header only shows on the Home (upload) tab */
+body:not(.home-open) .app > header { display: none; }
 body.cal-open .cal-shell {
   min-height: 100vh; min-height: 100dvh; height: 100vh; height: 100dvh;
   border: none; border-radius: 0; box-shadow: none;
