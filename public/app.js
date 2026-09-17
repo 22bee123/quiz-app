@@ -5685,6 +5685,7 @@ let calPanelState = 'welcome';
 let selectedEventId = null;
 let calDrag = null;
 let calSuppressClick = false;
+let miniCalCursor = new Date();
 
 function calWidth() {
   return (window.innerWidth || document.documentElement.clientWidth || 0);
@@ -5830,8 +5831,44 @@ function renderCalendar() {
     else body.innerHTML = renderTimeGrid(calView === 'day' ? 1 : 7, calView === 'day' ? new Date(calCursor) : startOfWeek(calCursor));
   }
   updateCalendarBadge();
+  miniCalCursor = new Date(calCursor.getFullYear(), calCursor.getMonth(), 1);
+  renderMiniCal();
   if (calView === 'day' || calView === 'week') autoScrollTimeGrid();
   refreshPanel();
+}
+
+/* Mini-month calendar in the sidebar */
+function renderMiniCal() {
+  const grid = document.getElementById('mini-cal-grid');
+  if (!grid) return;
+  const title = document.getElementById('mini-cal-title');
+  if (title) title.textContent = miniCalCursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const y = miniCalCursor.getFullYear(), m = miniCalCursor.getMonth();
+  const startDow = new Date(y, m, 1).getDay();
+  const start = new Date(y, m, 1 - startDow);
+  const todayKey = dkey(new Date());
+  let html = '';
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const k = dkey(d); const out = d.getMonth() !== m;
+    const has = events.some((e) => e.date === k);
+    const cls = 'mini-cal-day' + (out ? ' out' : '') + (k === todayKey ? ' today' : '') + (k === calSelectedDay ? ' selected' : '') + (has ? ' has-events' : '');
+    html += '<button type="button" class="' + cls + '" data-mday="' + k + '" aria-label="' + k + '">' + d.getDate() + '</button>';
+  }
+  grid.innerHTML = html;
+}
+
+function onMiniCalClick(e) {
+  const b = e.target.closest('[data-mday]');
+  if (!b) return;
+  const k = b.dataset.mday;
+  const d = parseKey(k);
+  miniCalCursor = new Date(d.getFullYear(), d.getMonth(), 1);
+  calCursor = new Date(d);
+  calSelectedDay = k;
+  if (calView === 'agenda') calView = 'day';
+  renderCalendar();
+  renderMiniCal();
 }
 
 function autoScrollTimeGrid() {
@@ -6251,7 +6288,18 @@ function openEventForm(ev, dateStr, range, forceAllDay) {
   populatePackOptions(ev ? ev.studypackId : '');
   updateTimeRow();
   openPanelState('form');
-  setTimeout(() => { try { document.getElementById('ev-title').focus(); } catch (e) {} }, 80);
+  if (!calDrag) setTimeout(() => { try { document.getElementById('ev-title').focus(); } catch (e) {} }, 80);
+}
+
+function syncFormRange(startMin, endMin) {
+  if (calPanelState !== 'form') return;
+  const allday = document.getElementById('ev-allday');
+  if (allday && allday.checked) { allday.checked = false; updateTimeRow(); }
+  const s = document.getElementById('ev-time');
+  const e = document.getElementById('ev-endtime');
+  if (s) s.value = fromMin(startMin);
+  if (e) e.value = fromMin(endMin);
+  updateDurationNote();
 }
 
 function closeEventForm() { closePanel(); }
@@ -6451,6 +6499,7 @@ function startCreate(e, col) {
   col.appendChild(prev);
   calDrag = { mode: 'create', day: col.dataset.day, col, colTop, start, end: Math.min(1440, start + 30), prev, moved: false, startX: e.clientX, startY: e.clientY };
   updatePreview();
+  openEventForm(null, col.dataset.day, { start: calDrag.start, end: calDrag.end });
   document.body.style.userSelect = 'none';
   document.addEventListener('mousemove', onCalMouseMove);
   document.addEventListener('mouseup', onCalMouseUp);
@@ -6499,6 +6548,7 @@ function onCalMouseMove(e) {
     if (b - a < CAL_SNAP) b = a + CAL_SNAP;
     calDrag.start = a; calDrag.end = Math.min(1440, b);
     updatePreview();
+    syncFormRange(calDrag.start, calDrag.end);
   } else if (calDrag.mode === 'move') {
     const under = document.elementFromPoint(e.clientX, e.clientY);
     const col = under && under.closest ? under.closest('.tg-col') : null;
@@ -6542,8 +6592,8 @@ function onCalMouseUp() {
   if (d.mode === 'create') {
     if (d.prev) d.prev.remove();
     calSuppressClick = true;
-    if (!d.moved) openEventForm(null, d.day, { start: d.start, end: d.start + 60 });
-    else openEventForm(null, d.day, { start: d.start, end: d.end });
+    if (!d.moved) { d.end = Math.min(1440, d.start + 60); syncFormRange(d.start, d.end); }
+    setTimeout(() => { try { document.getElementById('ev-title').focus(); } catch (e) {} }, 30);
   } else if (d.mode === 'move') {
     d.evEl.classList.remove('dragging');
     d.evEl.style.pointerEvents = '';
@@ -6585,6 +6635,7 @@ function escapeCancelsDrag() {
   if (calDrag.mode === 'create' && calDrag.prev) calDrag.prev.remove();
   if (calDrag.evEl) { calDrag.evEl.classList.remove('dragging'); calDrag.evEl.style.pointerEvents = ''; }
   if (calDrag.mode === 'move' || calDrag.mode === 'resize') renderCalendar();
+  else if (calDrag.mode === 'create') closePanel();
   calDrag = null;
   calSuppressClick = true;
   return true;
@@ -6619,6 +6670,13 @@ function wireCalendar() {
   if (!navCalendar) return;
   navCalendar.addEventListener('click', openCalendar);
   document.querySelectorAll('.cal-view').forEach((b) => b.addEventListener('click', () => setCalView(b.dataset.view)));
+
+  const miniPrev = document.getElementById('mini-cal-prev');
+  const miniNext = document.getElementById('mini-cal-next');
+  const miniGrid = document.getElementById('mini-cal-grid');
+  if (miniPrev) miniPrev.addEventListener('click', () => { miniCalCursor.setMonth(miniCalCursor.getMonth() - 1); renderMiniCal(); });
+  if (miniNext) miniNext.addEventListener('click', () => { miniCalCursor.setMonth(miniCalCursor.getMonth() + 1); renderMiniCal(); });
+  if (miniGrid) miniGrid.addEventListener('click', onMiniCalClick);
 
   const prev = document.getElementById('cal-prev');
   const next = document.getElementById('cal-next');
