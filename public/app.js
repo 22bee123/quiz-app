@@ -6111,68 +6111,10 @@ function maybeWeeklySummary() {
   showToast('Weekly plan: you have ' + next.length + ' event' + (next.length === 1 ? '' : 's') + ' next week. Buck has a plan! \u{1F986}', 'correct');
 }
 
-/* Day popover: clamped/flipped popover on desktop, bottom sheet on mobile */
-function openDayPop(dayKey, anchorEl) {
-  const pop = document.getElementById('cal-day-pop');
-  const back = document.getElementById('cal-day-backdrop');
-  const evs = eventsOn(dayKey);
-  const canAdd = dayKey >= dkey(new Date());
-  pop.innerHTML = '<h4>' + parseKey(dayKey).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) + '</h4>' +
-    (evs.length ? evs.map((e) => '<div class="cal-ag-item" data-ev="' + e.id + '"><span class="cal-ag-icon">' + EV_META[e.type].icon + '</span><span style="min-width:0"><div class="cal-ag-title" style="font-size:.86rem">' + escapeHtml(e.title) + '</div><div class="cal-ag-meta">' + (!e.allDay && e.time ? escapeHtml(e.time) : 'All day') + '</div></span></div>').join('') : '<div class="cal-load-empty">No events this day.</div>') +
-    (canAdd
-      ? '<button type="button" class="btn btn-primary" id="cal-day-add" style="margin-top:8px">+ Add event</button>'
-      : '<div class="cal-load-empty" style="margin-top:8px">Past days can\u2019t be edited.</div>');
-  pop.classList.remove('hidden');
-  const dayAdd = pop.querySelector('#cal-day-add');
-  if (dayAdd) dayAdd.addEventListener('click', () => { closeDayPop(); openEventModal(null, dayKey); });
-
-  if (isMobileCal()) {
-    pop.classList.add('sheet');
-    pop.style.left = '';
-    pop.style.top = '';
-    pop.style.visibility = '';
-    if (back) back.classList.remove('hidden');
-    document.body.classList.add('cal-sheet-open');
-    return;
-  }
-
-  pop.classList.remove('sheet');
-  if (back) back.classList.add('hidden');
-  pop.style.visibility = 'hidden';
-  pop.style.left = '0px';
-  pop.style.top = '0px';
-  const margin = 8;
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const w = pop.offsetWidth;
-  const h = pop.offsetHeight;
-  const r = anchorEl.getBoundingClientRect();
-  let left = r.left;
-  let top = r.bottom + 6;
-  if (left + w > vw - margin) left = vw - margin - w;
-  if (left < margin) left = margin;
-  if (top + h > vh - margin) {
-    const above = r.top - h - 6;
-    top = above >= margin ? above : Math.max(margin, vh - margin - h);
-  }
-  if (top < margin) top = margin;
-  pop.style.left = left + 'px';
-  pop.style.top = top + 'px';
-  pop.style.visibility = '';
-}
-
-function closeDayPop() {
-  const p = document.getElementById('cal-day-pop');
-  if (p) { p.classList.add('hidden'); p.classList.remove('sheet'); p.style.visibility = ''; p.style.left = ''; p.style.top = ''; }
-  const back = document.getElementById('cal-day-backdrop');
-  if (back) back.classList.add('hidden');
-  syncCalScrollLock();
-}
-
+/* Clicking a day opens the add-event form directly (no floating popover) */
 function syncCalScrollLock() {
   const open = !document.getElementById('event-modal').classList.contains('hidden') ||
-    !document.getElementById('event-drawer').classList.contains('hidden') ||
-    !document.getElementById('cal-day-pop').classList.contains('hidden');
+    !document.getElementById('event-drawer').classList.contains('hidden');
   document.body.classList.toggle('cal-sheet-open', open);
 }
 
@@ -6198,9 +6140,18 @@ function wireCalendar() {
   const body = document.getElementById('cal-main-body');
   if (body) body.addEventListener('click', (e) => {
     const evEl = e.target.closest('[data-ev]');
-    if (evEl) { closeDayPop(); openEventDrawer(evEl.dataset.ev); return; }
+    if (evEl) { openEventDrawer(evEl.dataset.ev); return; }
     const dayEl = e.target.closest('[data-day]');
-    if (dayEl) { calSelectedDay = dayEl.dataset.day; openDayPop(calSelectedDay, dayEl); renderCalendar(); }
+    if (dayEl) {
+      const dayKey = dayEl.dataset.day;
+      calSelectedDay = dayKey;
+      if (dayKey < dkey(new Date())) {
+        renderCalendar();
+        showToast('Past days can\u2019t be edited.', '');
+        return;
+      }
+      openEventModal(null, dayKey);
+    }
   });
 
   const up = document.getElementById('cal-upcoming');
@@ -6221,23 +6172,14 @@ function wireCalendar() {
   document.getElementById('ed-close').addEventListener('click', closeEventDrawer);
   document.getElementById('ed-backdrop').addEventListener('click', closeEventDrawer);
 
-  const dayBack = document.getElementById('cal-day-backdrop');
-  if (dayBack) dayBack.addEventListener('click', closeDayPop);
-
-  document.addEventListener('click', (e) => {
-    const pop = document.getElementById('cal-day-pop');
-    if (pop && !pop.classList.contains('hidden') && !e.target.closest('#cal-day-pop') && !e.target.closest('[data-day]')) closeDayPop();
-  });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (!document.getElementById('event-modal').classList.contains('hidden')) closeEventModal();
     else if (!document.getElementById('event-drawer').classList.contains('hidden')) closeEventDrawer();
-    else closeDayPop();
   });
 
   enableSheetSwipe(document.querySelector('#event-modal .event-card'));
   enableSheetSwipe(document.querySelector('#event-drawer .drawer-card'));
-  enableSheetSwipe(document.getElementById('cal-day-pop'));
 
   let calResizeT = null;
   window.addEventListener('resize', () => {
@@ -6248,8 +6190,6 @@ function wireCalendar() {
         calLastBreakpoint = bp;
         if (!calendarScreen.classList.contains('hidden')) renderCalendar();
       }
-      const pop = document.getElementById('cal-day-pop');
-      if (pop && !pop.classList.contains('hidden') && !isMobileCal()) closeDayPop();
     }, 120);
   });
 
@@ -6281,8 +6221,7 @@ function enableSheetSwipe(sheet) {
     const dy = (e.changedTouches && e.changedTouches[0].clientY - startY) || 0;
     sheet.style.transform = '';
     if (dy > 90) {
-      if (sheet.id === 'cal-day-pop') closeDayPop();
-      else if (sheet.closest('#event-modal')) closeEventModal();
+      if (sheet.closest('#event-modal')) closeEventModal();
       else closeEventDrawer();
     }
   };
