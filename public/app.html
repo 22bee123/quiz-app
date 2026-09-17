@@ -69,6 +69,11 @@
         <span class="nav-emoji">&#128218;</span>
         <span class="nav-label">StudyPack</span>
       </button>
+      <button class="nav-item" id="nav-calendar" title="Calendar">
+        <span class="nav-emoji cal-nav-emoji">&#128197;<span class="cal-nav-dot hidden" id="nav-calendar-dot"></span></span>
+        <span class="nav-label">Calendar</span>
+        <span class="nav-badge hidden" id="nav-calendar-badge">0</span>
+      </button>
       <button class="nav-item" id="nav-live" title="Live">
         <span class="nav-emoji">&#127942;</span>
         <span class="nav-label">Live</span>
@@ -801,6 +806,52 @@
         </div>
       </aside>
 
+      <!-- Calendar / Study planner screen -->
+      <section id="calendar-screen" class="screen hidden">
+        <div class="cal-shell">
+          <div class="cal-top">
+            <div class="cal-title-wrap">
+              <h1 class="cal-title">&#128197; Calendar</h1>
+              <p class="cal-sub">Plan exams, sessions and deadlines &mdash; Buck keeps you on track.</p>
+            </div>
+            <div class="cal-views" role="tablist" aria-label="Calendar view">
+              <button type="button" class="cal-view active" data-view="month" role="tab" aria-selected="true">Month</button>
+              <button type="button" class="cal-view" data-view="week" role="tab" aria-selected="false">Week</button>
+              <button type="button" class="cal-view" data-view="agenda" role="tab" aria-selected="false">Agenda</button>
+            </div>
+          </div>
+
+          <div class="cal-grid-wrap">
+            <div class="cal-main">
+              <div class="cal-nav">
+                <button type="button" id="cal-prev" class="cal-nav-btn" aria-label="Previous">&#8249;</button>
+                <button type="button" id="cal-today" class="cal-today">Today</button>
+                <button type="button" id="cal-next" class="cal-nav-btn" aria-label="Next">&#8250;</button>
+                <span class="cal-label" id="cal-label"></span>
+              </div>
+              <div id="cal-main-body" class="cal-main-body"></div>
+              <button type="button" id="cal-add" class="cal-fab">+ Add exam</button>
+            </div>
+
+            <aside class="cal-side">
+              <div class="cal-card">
+                <h3 class="cal-card-title">Upcoming exams</h3>
+                <div id="cal-upcoming" class="cal-upcoming"></div>
+              </div>
+              <div class="cal-card">
+                <h3 class="cal-card-title">Study streak</h3>
+                <div id="cal-streak" class="cal-streak"></div>
+              </div>
+              <div class="cal-card">
+                <h3 class="cal-card-title">This week's load</h3>
+                <div id="cal-load" class="cal-load"></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+        <div id="cal-day-pop" class="cal-day-pop hidden"></div>
+      </section>
+
       <!-- StudyPack detail screen -->
       <section id="pack-screen" class="screen hidden">
         <div class="pack-head">
@@ -958,6 +1009,99 @@
       <div class="confirm-actions">
         <button class="btn btn-ghost" id="confirm-cancel">Cancel</button>
         <button class="btn btn-danger" id="confirm-ok">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Event modal -->
+  <div id="event-modal" class="modal hidden">
+    <div class="modal-backdrop" id="event-backdrop"></div>
+    <div class="modal-card event-card">
+      <div class="modal-head">
+        <h3 id="event-heading">Add event</h3>
+        <button id="event-close" class="modal-close">&times;</button>
+      </div>
+
+      <div class="ev-types" role="tablist" aria-label="Event type">
+        <button type="button" class="ev-type active" data-t="exam" role="tab">&#127891; Exam</button>
+        <button type="button" class="ev-type" data-t="study" role="tab">&#128214; Study</button>
+        <button type="button" class="ev-type" data-t="deadline" role="tab">&#9200; Deadline</button>
+      </div>
+
+      <label class="field-label" for="ev-title">Title</label>
+      <input id="ev-title" class="signup-input" placeholder="e.g. Nursing Board Exam" />
+
+      <div class="ev-row">
+        <div>
+          <label class="field-label" for="ev-date">Date</label>
+          <input id="ev-date" class="signup-input" type="date" />
+        </div>
+        <div>
+          <label class="field-label" for="ev-time">Time</label>
+          <input id="ev-time" class="signup-input" type="time" />
+          <label class="ev-check"><input type="checkbox" id="ev-allday" checked /> All day</label>
+        </div>
+      </div>
+
+      <div id="ev-exam-fields">
+        <label class="field-label" for="ev-subject">Subject / Course</label>
+        <input id="ev-subject" class="signup-input" placeholder="e.g. Nursing" />
+        <label class="field-label" for="ev-location">Location</label>
+        <input id="ev-location" class="signup-input" placeholder="e.g. Room 204" />
+        <label class="field-label" for="ev-pack">Link a StudyPack</label>
+        <select id="ev-pack" class="signup-input"></select>
+        <div class="ev-pack-note" id="ev-pack-note"></div>
+        <label class="field-label" for="ev-reminder">Reminder</label>
+        <select id="ev-reminder" class="signup-input">
+          <option value="">None</option>
+          <option value="1440">1 day before</option>
+          <option value="4320">3 days before</option>
+          <option value="10080">1 week before</option>
+        </select>
+      </div>
+
+      <div id="ev-study-fields" class="hidden">
+        <label class="field-label" for="ev-duration">Duration</label>
+        <select id="ev-duration" class="signup-input">
+          <option value="30">30 minutes</option>
+          <option value="60" selected>1 hour</option>
+          <option value="120">2 hours</option>
+        </select>
+        <label class="field-label" for="ev-focus">Focus topic</label>
+        <input id="ev-focus" class="signup-input" placeholder="e.g. Pharmacology" />
+      </div>
+
+      <label class="field-label" for="ev-notes">Notes</label>
+      <textarea id="ev-notes" class="signup-input" rows="2" placeholder="Optional"></textarea>
+
+      <div id="ev-error" class="auth-error"></div>
+
+      <div class="modal-actions">
+        <button id="event-delete" class="btn btn-secondary hidden">Delete</button>
+        <button id="event-save" class="btn btn-primary">Save event</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Event detail drawer -->
+  <div id="event-drawer" class="drawer hidden">
+    <div id="ed-backdrop" class="drawer-backdrop"></div>
+    <div class="drawer-card">
+      <div class="drawer-head">
+        <span class="ed-type" id="ed-type">&#127891; Exam</span>
+        <button id="ed-close" class="modal-close">&times;</button>
+      </div>
+      <h3 id="ed-title" class="ed-title">Event</h3>
+      <div class="ed-meta" id="ed-meta"></div>
+      <div id="ed-pack" class="ed-pack hidden"></div>
+      <div class="ed-countdown" id="ed-countdown"></div>
+      <div class="ed-tip" id="ed-tip"></div>
+      <p class="ed-notes" id="ed-notes"></p>
+      <div class="drawer-actions">
+        <button id="ed-study" class="btn btn-primary hidden">Study now</button>
+        <button id="ed-addcards" class="btn btn-secondary hidden">Add more cards</button>
+        <button id="ed-edit" class="link-btn">&#9998;&#65039; Edit</button>
+        <button id="ed-del" class="link-btn danger">&#128465; Delete</button>
       </div>
     </div>
   </div>

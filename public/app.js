@@ -7,6 +7,7 @@ let gradingPromises = {};
 let deckCards = [];
 let selectedFile = null;
 let lastModuleName = 'Quiz';
+let lastPackQuizId = null;
 let roomMode = false;
 let roomCode = null;
 let myPlayerId = null;
@@ -31,6 +32,7 @@ const resultsScreen = document.getElementById('results-screen');
 const liveScreen = document.getElementById('live-screen');
 const friendsScreen = document.getElementById('friends-screen');
 const packScreen = document.getElementById('pack-screen');
+const calendarScreen = document.getElementById('calendar-screen');
 
 const fileInput = document.getElementById('file-input');
 
@@ -87,6 +89,9 @@ const navMyd = document.getElementById('nav-myd');
 const navLive = document.getElementById('nav-live');
 const navFriends = document.getElementById('nav-friends');
 const navMessages = document.getElementById('nav-messages');
+const navCalendar = document.getElementById('nav-calendar');
+const navCalendarBadge = document.getElementById('nav-calendar-badge');
+const navCalendarDot = document.getElementById('nav-calendar-dot');
 const chatSide = document.getElementById('chat-panel');
 const chatWidget = document.getElementById('chat-widget');
 const chatSearch = document.getElementById('chat-search');
@@ -226,7 +231,7 @@ const urlPreview = document.getElementById('url-preview');
 const urlError = document.getElementById('url-error');
 
 function showScreen(screen) {
-  [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen, friendsScreen, packScreen].forEach((s) => s.classList.add('hidden'));
+  [uploadScreen, quizScreen, resultsScreen, authScreen, liveScreen, friendsScreen, packScreen, calendarScreen].forEach((s) => s.classList.add('hidden'));
   screen.classList.remove('hidden');
   if (screen !== packScreen) resetHighlightMode();
 }
@@ -2531,7 +2536,6 @@ function startMessagePolling() {
 
 function wireFriends() {
   document.getElementById('nav-friends').addEventListener('click', openFriends);
-  const navMessages = document.getElementById('nav-messages');
   if (navMessages) navMessages.addEventListener('click', openMessages);
   document.getElementById('friend-search-btn').addEventListener('click', searchFriends);
   document.getElementById('save-username').addEventListener('click', saveMyUsername);
@@ -2651,6 +2655,7 @@ function wireFriends() {
 function startQuiz() {
   showScreen(quizScreen);
   endless = false;
+  lastPackQuizId = null;
   endlessToggle.classList.remove('active');
   attempted = [];
   renderHearts();
@@ -3174,6 +3179,7 @@ function startPackQuiz() {
   endless = false;
   lastModuleName = pack.name;
   startQuiz();
+  lastPackQuizId = pack.id;
 }
 
 function makeChoiceOptions(it, pack) {
@@ -3811,7 +3817,10 @@ function showResults() {
 
   if (percent >= 50) launchConfetti();
   recordStudy(correct, total);
-
+  if (lastPackQuizId && !roomMode) {
+    const pack = getPack(lastPackQuizId);
+    if (pack) { pack.mastery = Math.max(pack.mastery || 0, percent / 100); savePacks(); }
+  }
   const note = document.getElementById('results-save-note');
   note.classList.remove('hidden');
 
@@ -3912,6 +3921,7 @@ function initSupabase() {
           resetToUpload();
           startMessagePolling();
           renderMessagesBadge();
+          onAuthChangedCalendar();
         } else {
           hideHistory();
           showAuthGate();
@@ -3925,6 +3935,7 @@ function initSupabase() {
           resetToUpload();
           startMessagePolling();
           renderMessagesBadge();
+          onAuthChangedCalendar();
         } else {
           showAuthGate();
         }
@@ -5641,7 +5652,500 @@ function animateScore(el, target, duration = 900) {
 }
 
 function setActiveNav(view) {
-  [navNew, navSettings, navFriends, navMessages, navProgress, navMyd, navLive].forEach((btn) => {
+  [navNew, navSettings, navFriends, navMessages, navCalendar, navProgress, navMyd, navLive].forEach((btn) => {
     if (btn) btn.classList.toggle('active', btn.id === 'nav-' + view);
   });
 }
+
+/* ---------------- Calendar / study planner ---------------- */
+
+const EV_META = {
+  exam: { icon: '\u{1F393}', color: '#F97316', label: 'Exam' },
+  study: { icon: '\u{1F4D6}', color: '#6B4226', label: 'Study session' },
+  deadline: { icon: '\u23F0', color: '#E8D5C4', label: 'Deadline' },
+};
+
+let events = [];
+try { events = JSON.parse(localStorage.getItem('buckEvents') || '[]'); } catch (e) { events = []; }
+if (!Array.isArray(events)) events = [];
+
+let calView = 'month';
+let calCursor = new Date();
+let calSelectedDay = null;
+let editingEventId = null;
+let evType = 'exam';
+let calRemoteLoaded = false;
+
+function saveEventsLocal() { try { localStorage.setItem('buckEvents', JSON.stringify(events)); } catch (e) {} }
+function newEventId() { return 'ev' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function isUuid(s) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || '')); }
+function dkey(d) { const x = new Date(d); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); }
+function parseKey(k) { const p = String(k).split('-').map(Number); return new Date(p[0], p[1] - 1, p[2]); }
+function eventDateTime(ev) {
+  const d = parseKey(ev.date);
+  if (!ev.allDay && ev.time) { const t = ev.time.split(':').map(Number); d.setHours(t[0] || 0, t[1] || 0, 0, 0); }
+  else d.setHours(23, 59, 0, 0);
+  return d;
+}
+function daysUntil(ev) { const t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((parseKey(ev.date) - t) / 86400000); }
+function eventsOn(key) { return events.filter((e) => e.date === key).sort((a, b) => String(a.time || '').localeCompare(String(b.time || ''))); }
+function countdownLabel(d) { return d <= 0 ? 'Today' : d === 1 ? '1 day left' : d + ' days left'; }
+function formatDate(k) { return parseKey(k).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); }
+function agendaDayLabel(k) {
+  const d = parseKey(k); const t = new Date(); t.setHours(0, 0, 0, 0);
+  const diff = Math.round((d - t) / 86400000);
+  if (diff === 0) return 'TODAY \u2014 ' + d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (diff === 1) return 'TOMORROW \u2014 ' + d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase();
+}
+function packProgress(pack) {
+  if (!pack || !pack.items || !pack.items.length) return { done: 0, total: pack ? pack.items.length : 0, pct: 0 };
+  const total = pack.items.length;
+  const done = Math.max(0, Math.min(total, Math.round((pack.mastery || 0) * total)));
+  return { done, total, pct: total ? Math.round((done / total) * 100) : 0 };
+}
+function buckTip(days) {
+  if (days <= 0) return "You've got this! Quick review of the starred cards. \u{1F4AA}";
+  if (days <= 2) return 'Final stretch! Focus on the cards you got wrong. \u{1F525}';
+  if (days <= 6) return 'Getting close \u2014 try a 20-card session today.';
+  return "Plenty of time! Let's review 10 cards a day. \u{1F60C}";
+}
+function emptyCalendarState() {
+  return '<div class="cal-empty"><img src="/buck-svg/thinking.svg?v=3" alt="Buck" />' +
+    '<strong>Nothing on the calendar yet!</strong><span>Add your first exam and Buck will help you plan.</span></div>';
+}
+
+function openCalendar() {
+  if (!authEnabled || !currentUser) { if (!requireAuth()) return; }
+  setActiveNav('calendar');
+  showScreen(calendarScreen);
+  calCursor = new Date();
+  calSelectedDay = dkey(new Date());
+  if (window.matchMedia && window.matchMedia('(max-width: 900px)').matches) calView = 'agenda';
+  setCalView(calView, true);
+  renderCalendar();
+  loadRemoteEvents();
+  checkEventReminders();
+}
+
+function closeCalendar() { setActiveNav(null); }
+
+function setCalView(view, silent) {
+  calView = view;
+  document.querySelectorAll('.cal-view').forEach((b) => {
+    const on = b.dataset.view === view;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  if (!silent) renderCalendar();
+}
+
+function renderCalendar() {
+  const label = document.getElementById('cal-label');
+  if (calView === 'month') label.textContent = calCursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  else if (calView === 'week') {
+    const s = new Date(calCursor); s.setDate(s.getDate() - s.getDay());
+    const e = new Date(s); e.setDate(s.getDate() + 6);
+    label.textContent = s.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' \u2013 ' + e.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  } else label.textContent = 'Upcoming';
+
+  const body = document.getElementById('cal-main-body');
+  if (body) body.innerHTML = calView === 'month' ? renderMonth() : calView === 'week' ? renderWeek() : renderAgenda();
+  renderCalendarSidebar();
+  updateCalendarBadge();
+}
+
+function renderMonth() {
+  const y = calCursor.getFullYear(), m = calCursor.getMonth();
+  const startDow = new Date(y, m, 1).getDay();
+  const start = new Date(y, m, 1 - startDow);
+  const todayKey = dkey(new Date());
+  let html = '<div class="cal-month">';
+  ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach((d) => { html += '<div class="cal-dow">' + d + '</div>'; });
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const k = dkey(d); const out = d.getMonth() !== m;
+    const evs = eventsOn(k);
+    const hasExam = evs.some((e) => e.type === 'exam');
+    const cls = 'cal-day' + (out ? ' out' : '') + (hasExam ? ' has-exam' : '') + (k === todayKey ? ' today' : '') + (k === calSelectedDay ? ' selected' : '');
+    html += '<div class="' + cls + '" data-day="' + k + '"><span class="cal-day-num">' + d.getDate() + '</span><span class="cal-day-add">+</span>';
+    if (evs.length) {
+      html += '<div class="cal-dots">' + evs.slice(0, 3).map((e) => '<span class="cal-dot ' + (e.type === 'study' ? 'study' : e.type === 'deadline' ? 'deadline' : '') + '"></span>').join('') + '</div>';
+      html += evs.slice(0, 2).map((e) => '<span class="cal-chip ' + (e.type === 'study' ? 'study' : e.type === 'deadline' ? 'deadline' : '') + '" data-ev="' + e.id + '" title="' + escapeHtml(e.title) + '">' + escapeHtml(e.title) + '</span>').join('');
+      if (evs.length > 2) html += '<span class="cal-more">+' + (evs.length - 2) + ' more</span>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderWeek() {
+  const start = new Date(calCursor); start.setDate(start.getDate() - start.getDay());
+  const todayKey = dkey(new Date());
+  let html = '<div class="cal-week">';
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i); const k = dkey(d);
+    html += '<div class="cal-week-col' + (k === todayKey ? ' today' : '') + '" data-day="' + k + '">';
+    html += '<div class="cal-week-head">' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][i] + '<strong>' + d.getDate() + '</strong></div>';
+    eventsOn(k).forEach((e) => {
+      html += '<div class="cal-ev-block ' + (e.type === 'study' ? 'study' : e.type === 'deadline' ? 'deadline' : '') + '" data-ev="' + e.id + '">' + (!e.allDay && e.time ? escapeHtml(e.time) + ' ' : '') + escapeHtml(e.title) + '</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderAgenda() {
+  const upcoming = events.filter((e) => daysUntil(e) >= 0).sort((a, b) => parseKey(a.date) - parseKey(b.date) || String(a.time || '').localeCompare(String(b.time || '')));
+  const examCount = upcoming.filter((e) => e.type === 'exam').length;
+  let html = '<div class="cal-agenda">';
+  const tip = upcoming.length
+    ? 'You have ' + upcoming.length + ' upcoming event' + (upcoming.length === 1 ? '' : 's') + (examCount ? ' (' + examCount + ' exam' + (examCount === 1 ? '' : 's') + ')' : '') + ". Let's get studying! \u{1F986}"
+    : 'Nothing scheduled yet \u2014 add your first exam! \u{1F986}';
+  html += '<div class="cal-agenda-tip">' + tip + '</div>';
+  if (!upcoming.length) { html += emptyCalendarState() + '</div>'; return html; }
+  const byDate = {};
+  upcoming.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+  Object.keys(byDate).sort().forEach((k) => {
+    html += '<div class="cal-ag-group"><h4>' + agendaDayLabel(k) + '</h4>';
+    byDate[k].forEach((e) => { html += agendaItem(e); });
+    html += '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+function agendaItem(e) {
+  const meta = EV_META[e.type] || EV_META.exam;
+  const pack = e.studypackId ? getPack(e.studypackId) : null;
+  let html = '<div class="cal-ag-item" data-ev="' + e.id + '"><span class="cal-ag-icon">' + meta.icon + '</span><span style="flex:1;min-width:0">';
+  html += '<div class="cal-ag-title">' + escapeHtml(e.title) + (e.type === 'exam' && daysUntil(e) >= 0 ? ' \u00b7 <span class="cal-countdown">' + countdownLabel(daysUntil(e)) + '</span>' : '') + '</div>';
+  html += '<div class="cal-ag-meta">' + (!e.allDay && e.time ? escapeHtml(e.time) + ' \u00b7 ' : '') + escapeHtml(e.subject || meta.label) + (e.location ? ' \u00b7 ' + escapeHtml(e.location) : '') + '</div>';
+  if (pack) {
+    const pr = packProgress(pack);
+    html += '<div class="cal-ag-meta">\u{1F4DA} ' + escapeHtml(pack.name) + ' (' + pr.total + ' cards)</div>';
+    html += '<div class="cal-bar"><span style="width:' + pr.pct + '%"></span></div>';
+    html += '<div class="cal-ag-meta">' + pr.done + ' / ' + pr.total + ' mastered</div>';
+  }
+  html += '</span></div>';
+  return html;
+}
+
+function renderCalendarSidebar() {
+  const up = document.getElementById('cal-upcoming');
+  if (up) {
+    const list = events.filter((e) => e.type === 'exam' && daysUntil(e) >= 0).sort((a, b) => parseKey(a.date) - parseKey(b.date)).slice(0, 5);
+    if (!list.length) up.innerHTML = '<div class="cal-load-empty">No exams coming up \u2014 nice work! \u{1F986}</div>';
+    else up.innerHTML = list.map((e) => '<div class="cal-up-item" data-ev="' + e.id + '"><span>' + EV_META.exam.icon + '</span><span style="min-width:0"><div class="cal-ag-title" style="font-size:.86rem">' + escapeHtml(e.title) + '</div><div class="cal-ag-meta">' + formatDate(e.date) + '</div></span><span class="cal-countdown">' + countdownLabel(daysUntil(e)) + '</span></div>').join('');
+  }
+  const st = document.getElementById('cal-streak');
+  if (st) st.innerHTML = '<span style="font-size:1.3rem">\u{1F525}</span> <strong>' + (quizStreak > 0 ? quizStreak + '-day streak' : 'Start your streak today!') + '</strong>';
+  const load = document.getElementById('cal-load');
+  if (load) {
+    const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - start.getDay());
+    const end = new Date(start); end.setDate(start.getDate() + 7);
+    const inWeek = events.filter((e) => { const d = parseKey(e.date); return d >= start && d < end; });
+    if (!inWeek.length) load.innerHTML = '<div class="cal-load-empty">No events this week \u2014 a light one!</div>';
+    else {
+      load.innerHTML = ['exam', 'study', 'deadline'].map((t) => {
+        const n = inWeek.filter((e) => e.type === t).length;
+        return '<div class="cal-load-row"><span>' + EV_META[t].icon + ' ' + EV_META[t].label + '</span><span class="cal-bar"><span style="width:' + Math.min(100, n * 25) + '%"></span></span><strong>' + n + '</strong></div>';
+      }).join('');
+    }
+  }
+}
+
+function updateCalendarBadge() {
+  const soon = events.filter((e) => e.type === 'exam' && daysUntil(e) >= 0 && daysUntil(e) <= 7).length;
+  if (navCalendarBadge) {
+    navCalendarBadge.textContent = soon > 99 ? '99+' : String(soon);
+    navCalendarBadge.classList.toggle('hidden', soon === 0);
+  }
+  if (navCalendarDot) navCalendarDot.classList.toggle('hidden', soon === 0);
+}
+
+/* Event modal */
+function populatePackOptions(selectedId) {
+  const sel = document.getElementById('ev-pack');
+  if (!sel) return;
+  const opts = ['<option value="">No StudyPack linked</option>']
+    .concat(studyPacks.map((p) => '<option value="' + p.id + '"' + (p.id === selectedId ? ' selected' : '') + '>' + escapeHtml(p.name) + ' (' + p.items.length + ' cards)</option>'))
+    .concat(['<option value="__new">+ Generate a new StudyPack with Buck</option>']);
+  sel.innerHTML = opts.join('');
+  updatePackNote();
+}
+function updatePackNote() {
+  const sel = document.getElementById('ev-pack');
+  const note = document.getElementById('ev-pack-note');
+  if (!sel || !note) return;
+  const p = sel.value && sel.value !== '__new' ? getPack(sel.value) : null;
+  if (p) {
+    const pr = packProgress(p);
+    note.textContent = p.items.length + ' cards \u00b7 ' + pr.done + ' / ' + pr.total + ' mastered';
+  } else note.textContent = '';
+}
+
+function setEvType(t) {
+  evType = t;
+  document.querySelectorAll('.ev-type').forEach((b) => b.classList.toggle('active', b.dataset.t === t));
+  document.getElementById('ev-exam-fields').classList.toggle('hidden', t !== 'exam');
+  document.getElementById('ev-study-fields').classList.toggle('hidden', t !== 'study');
+}
+
+function openEventModal(ev, dateStr) {
+  editingEventId = ev ? ev.id : null;
+  document.getElementById('event-heading').textContent = ev ? 'Edit event' : 'Add event';
+  document.getElementById('event-save').textContent = ev ? 'Save changes' : 'Save event';
+  document.getElementById('event-delete').classList.toggle('hidden', !ev);
+  setEvType(ev ? ev.type : 'exam');
+  document.getElementById('ev-title').value = ev ? ev.title : '';
+  document.getElementById('ev-date').value = ev ? ev.date : (dateStr || dkey(new Date()));
+  const allDay = ev ? ev.allDay !== false : true;
+  document.getElementById('ev-allday').checked = allDay;
+  document.getElementById('ev-time').value = ev && ev.time ? ev.time : '';
+  document.getElementById('ev-time').disabled = allDay;
+  document.getElementById('ev-subject').value = ev ? (ev.subject || '') : '';
+  document.getElementById('ev-location').value = ev ? (ev.location || '') : '';
+  document.getElementById('ev-focus').value = ev ? (ev.focus || '') : '';
+  document.getElementById('ev-duration').value = ev && ev.duration ? String(ev.duration) : '60';
+  document.getElementById('ev-reminder').value = ev && ev.reminderOffsetMinutes ? String(ev.reminderOffsetMinutes) : '';
+  document.getElementById('ev-notes').value = ev ? (ev.notes || '') : '';
+  document.getElementById('ev-error').textContent = '';
+  populatePackOptions(ev ? ev.studypackId : '');
+  document.getElementById('event-modal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('ev-title').focus(), 60);
+}
+
+function closeEventModal() { document.getElementById('event-modal').classList.add('hidden'); }
+
+function collectEvent() {
+  const title = document.getElementById('ev-title').value.trim();
+  const date = document.getElementById('ev-date').value;
+  const allDay = document.getElementById('ev-allday').checked;
+  if (!title) return { error: 'Buck needs a title for this event.' };
+  if (!date) return { error: 'Pick a date for this event.' };
+  const sel = document.getElementById('ev-pack').value;
+  const ev = {
+    id: editingEventId || newEventId(),
+    type: evType,
+    title,
+    date,
+    allDay,
+    time: allDay ? '' : document.getElementById('ev-time').value,
+    subject: document.getElementById('ev-subject').value.trim(),
+    location: document.getElementById('ev-location').value.trim(),
+    focus: document.getElementById('ev-focus').value.trim(),
+    duration: evType === 'study' ? Number(document.getElementById('ev-duration').value) : null,
+    studypackId: sel && sel !== '__new' ? sel : null,
+    color: EV_META[evType].color,
+    reminderOffsetMinutes: document.getElementById('ev-reminder').value ? Number(document.getElementById('ev-reminder').value) : null,
+    notes: document.getElementById('ev-notes').value.trim(),
+  };
+  return { ev, wantsNewPack: sel === '__new' };
+}
+
+async function saveEventFromModal() {
+  const r = collectEvent();
+  if (r.error) { document.getElementById('ev-error').textContent = r.error; return; }
+  const exists = events.findIndex((e) => e.id === r.ev.id);
+  if (exists >= 0) events[exists] = r.ev; else events.push(r.ev);
+  saveEventsLocal();
+  renderCalendar();
+  closeEventModal();
+  const kind = r.ev.type === 'exam' ? 'Exam' : r.ev.type === 'study' ? 'Study session' : 'Deadline';
+  showToast(kind + ' added! Buck will remind you. \u{1F986}', 'correct');
+  pushEventRemote(r.ev);
+  if (r.wantsNewPack) { if (typeof openCreate === 'function') openCreate('pdf'); }
+}
+
+async function deleteEventById(id) {
+  const ev = events.find((e) => e.id === id);
+  if (!ev) return;
+  const ok = await confirmDialog({ title: 'Delete event?', message: 'This will remove "' + ev.title + '" from your calendar.', confirmText: 'Delete', cancelText: 'Cancel', danger: true });
+  if (!ok) return;
+  events = events.filter((e) => e.id !== id);
+  saveEventsLocal();
+  closeEventDrawer();
+  closeEventModal();
+  renderCalendar();
+  showToast('Event deleted.', '');
+  if (isUuid(id)) { try { await supabaseClient.from('events').delete().eq('id', id); } catch (e) {} }
+}
+
+async function pushEventRemote(ev) {
+  if (!supabaseClient || !currentUser) return;
+  try {
+    const row = { user_id: currentUser.id, type: ev.type, title: ev.title, description: ev.notes || null, event_date: ev.date, event_time: ev.time || null, all_day: ev.allDay, location: ev.location || null, subject: ev.subject || null, studypack_id: ev.studypackId || null, duration_minutes: ev.duration || null, focus: ev.focus || null, color: ev.color, reminder_offset_minutes: ev.reminderOffsetMinutes };
+    if (isUuid(ev.id)) {
+      await supabaseClient.from('events').update(row).eq('id', ev.id);
+    } else {
+      const { data } = await supabaseClient.from('events').insert(row).select().single();
+      if (data && data.id) { ev.id = data.id; saveEventsLocal(); renderCalendar(); }
+    }
+  } catch (e) {}
+}
+
+async function loadRemoteEvents() {
+  if (calRemoteLoaded || !supabaseClient || !currentUser) return;
+  calRemoteLoaded = true;
+  try {
+    const { data } = await supabaseClient.from('events').select('*').eq('user_id', currentUser.id).order('event_date', { ascending: true });
+    (data || []).forEach((r) => {
+      const mapped = { id: r.id, type: r.type, title: r.title, date: (r.event_date || '').slice(0, 10), time: (r.event_time || '').slice(0, 5), allDay: r.all_day !== false, subject: r.subject || '', location: r.location || '', studypackId: r.studypack_id || null, duration: r.duration_minutes || null, focus: r.focus || '', color: r.color || '#F97316', reminderOffsetMinutes: r.reminder_offset_minutes || null, notes: r.description || '' };
+      const i = events.findIndex((e) => e.id === mapped.id);
+      if (i >= 0) events[i] = mapped; else events.push(mapped);
+    });
+    saveEventsLocal();
+    renderCalendar();
+  } catch (e) {}
+}
+
+function onAuthChangedCalendar() {
+  calRemoteLoaded = false;
+  if (currentUser) { loadRemoteEvents(); updateCalendarBadge(); }
+}
+
+/* Event drawer */
+function openEventDrawer(id) {
+  const ev = events.find((e) => e.id === id);
+  if (!ev) return;
+  const meta = EV_META[ev.type] || EV_META.exam;
+  document.getElementById('ed-type').textContent = meta.icon + ' ' + meta.label;
+  document.getElementById('ed-title').textContent = ev.title;
+  const when = (!ev.allDay && ev.time ? ev.time + ' \u00b7 ' : '') + formatDate(ev.date);
+  document.getElementById('ed-meta').innerHTML = when + (ev.location ? ' \u00b7 ' + escapeHtml(ev.location) : '') + (ev.subject ? ' \u00b7 ' + escapeHtml(ev.subject) : '');
+  document.getElementById('ed-notes').textContent = ev.notes || '';
+  const days = daysUntil(ev);
+  document.getElementById('ed-countdown').textContent = days < 0 ? 'This event has passed.' : 'You have ' + (days === 0 ? 'today' : days + ' day' + (days === 1 ? '' : 's')) + ' left.';
+  document.getElementById('ed-tip').textContent = '\u{1F986} Buck: ' + buckTip(days);
+  const pack = ev.studypackId ? getPack(ev.studypackId) : null;
+  const packEl = document.getElementById('ed-pack');
+  if (pack) {
+    const pr = packProgress(pack);
+    packEl.classList.remove('hidden');
+    packEl.innerHTML = '<div class="cal-ag-title">\u{1F4DA} ' + escapeHtml(pack.name) + '</div><div class="cal-ag-meta">' + pr.total + ' cards</div><div class="cal-bar"><span style="width:' + pr.pct + '%"></span></div><div class="cal-ag-meta">' + pr.done + ' / ' + pr.total + ' mastered</div>';
+  } else packEl.classList.add('hidden');
+  document.getElementById('ed-study').classList.toggle('hidden', !pack);
+  document.getElementById('ed-addcards').classList.toggle('hidden', !pack);
+  document.getElementById('ed-study').onclick = () => { if (pack && requireHearts()) { currentPackId = pack.id; closeEventDrawer(); startPackQuiz(); } };
+  document.getElementById('ed-addcards').onclick = () => { closeEventDrawer(); openCreate('pdf'); };
+  document.getElementById('ed-edit').onclick = () => { closeEventDrawer(); openEventModal(ev); };
+  document.getElementById('ed-del').onclick = () => deleteEventById(id);
+  document.getElementById('event-drawer').classList.remove('hidden');
+}
+function closeEventDrawer() { document.getElementById('event-drawer').classList.add('hidden'); }
+
+/* Reminders + weekly summary */
+function checkEventReminders() {
+  let fired = [];
+  try { fired = JSON.parse(localStorage.getItem('buckRemindersFired') || '[]'); } catch (e) { fired = []; }
+  const now = Date.now();
+  events.forEach((e) => {
+    if (!e.reminderOffsetMinutes) return;
+    const dt = eventDateTime(e).getTime();
+    const at = dt - e.reminderOffsetMinutes * 60000;
+    const key = e.id + ':' + e.reminderOffsetMinutes;
+    if (now >= at && now < dt && !fired.includes(key)) {
+      fired.push(key);
+      const days = daysUntil(e);
+      showToastAction((EV_META[e.type] ? EV_META[e.type].icon : '') + ' ' + e.title + ' is ' + countdownLabel(days) + '. Want to study now?', 'Study now', () => { if (e.studypackId) { currentPackId = e.studypackId; if (requireHearts()) startPackQuiz(); } else openCalendar(); }, 7000);
+    }
+  });
+  try { localStorage.setItem('buckRemindersFired', JSON.stringify(fired.slice(-200))); } catch (e) {}
+}
+function maybeWeeklySummary() {
+  const now = new Date();
+  if (now.getDay() !== 0) return; // Sunday
+  const wk = now.getFullYear() + '-' + Math.ceil((now - new Date(now.getFullYear(), 0, 1)) / 604800000);
+  const key = 'buckWeeklySummary:' + wk;
+  if (localStorage.getItem(key)) return;
+  const start = new Date(now); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() + 1);
+  const end = new Date(start); end.setDate(start.getDate() + 7);
+  const next = events.filter((e) => { const d = parseKey(e.date); return d >= start && d < end; });
+  if (!next.length) return;
+  localStorage.setItem(key, '1');
+  showToast('Weekly plan: you have ' + next.length + ' event' + (next.length === 1 ? '' : 's') + ' next week. Buck has a plan! \u{1F986}', 'correct');
+}
+
+/* Day popover */
+function openDayPop(dayKey, anchorEl) {
+  const pop = document.getElementById('cal-day-pop');
+  const evs = eventsOn(dayKey);
+  pop.innerHTML = '<h4>' + parseKey(dayKey).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) + '</h4>' +
+    (evs.length ? evs.map((e) => '<div class="cal-ag-item" data-ev="' + e.id + '"><span class="cal-ag-icon">' + EV_META[e.type].icon + '</span><span><div class="cal-ag-title" style="font-size:.86rem">' + escapeHtml(e.title) + '</div><div class="cal-ag-meta">' + (!e.allDay && e.time ? escapeHtml(e.time) : 'All day') + '</div></span></div>').join('') : '<div class="cal-load-empty">No events this day.</div>') +
+    '<button type="button" class="btn btn-primary" id="cal-day-add" style="margin-top:8px">+ Add event</button>';
+  pop.classList.remove('hidden');
+  const r = anchorEl.getBoundingClientRect();
+  const left = Math.min(window.innerWidth - 300, Math.max(8, r.left));
+  pop.style.left = left + 'px';
+  pop.style.top = Math.min(window.innerHeight - 240, r.bottom + 6) + 'px';
+  pop.querySelector('#cal-day-add').addEventListener('click', () => { pop.classList.add('hidden'); openEventModal(null, dayKey); });
+}
+function closeDayPop() { const p = document.getElementById('cal-day-pop'); if (p) p.classList.add('hidden'); }
+
+function wireCalendar() {
+  if (!navCalendar) return;
+  navCalendar.addEventListener('click', openCalendar);
+  document.querySelectorAll('.cal-view').forEach((b) => b.addEventListener('click', () => setCalView(b.dataset.view)));
+  const prev = document.getElementById('cal-prev');
+  const next = document.getElementById('cal-next');
+  const today = document.getElementById('cal-today');
+  const add = document.getElementById('cal-add');
+  if (prev) prev.addEventListener('click', () => {
+    if (calView === 'week') calCursor.setDate(calCursor.getDate() - 7);
+    else calCursor.setMonth(calCursor.getMonth() - 1);
+    renderCalendar();
+  });
+  if (next) next.addEventListener('click', () => {
+    if (calView === 'week') calCursor.setDate(calCursor.getDate() + 7);
+    else calCursor.setMonth(calCursor.getMonth() + 1);
+    renderCalendar();
+  });
+  if (today) today.addEventListener('click', () => { calCursor = new Date(); calSelectedDay = dkey(new Date()); renderCalendar(); });
+  if (add) add.addEventListener('click', () => openEventModal(null, calSelectedDay || dkey(new Date())));
+
+  const body = document.getElementById('cal-main-body');
+  if (body) body.addEventListener('click', (e) => {
+    const evEl = e.target.closest('[data-ev]');
+    if (evEl) { closeDayPop(); openEventDrawer(evEl.dataset.ev); return; }
+    const dayEl = e.target.closest('[data-day]');
+    if (dayEl) { calSelectedDay = dayEl.dataset.day; openDayPop(calSelectedDay, dayEl); renderCalendar(); }
+  });
+
+  const up = document.getElementById('cal-upcoming');
+  if (up) up.addEventListener('click', (e) => { const el = e.target.closest('[data-ev]'); if (el) openEventDrawer(el.dataset.ev); });
+
+  const modal = document.getElementById('event-modal');
+  document.getElementById('event-close').addEventListener('click', closeEventModal);
+  document.getElementById('event-backdrop').addEventListener('click', closeEventModal);
+  document.getElementById('event-save').addEventListener('click', saveEventFromModal);
+  document.getElementById('event-delete').addEventListener('click', () => { if (editingEventId) deleteEventById(editingEventId); });
+  document.querySelectorAll('.ev-type').forEach((b) => b.addEventListener('click', () => setEvType(b.dataset.t)));
+  const allday = document.getElementById('ev-allday');
+  if (allday) allday.addEventListener('change', () => { document.getElementById('ev-time').disabled = allday.checked; });
+  const packSel = document.getElementById('ev-pack');
+  if (packSel) packSel.addEventListener('change', updatePackNote);
+
+  document.getElementById('ed-close').addEventListener('click', closeEventDrawer);
+  document.getElementById('ed-backdrop').addEventListener('click', closeEventDrawer);
+
+  document.addEventListener('click', (e) => {
+    const pop = document.getElementById('cal-day-pop');
+    if (pop && !pop.classList.contains('hidden') && !e.target.closest('#cal-day-pop') && !e.target.closest('[data-day]')) closeDayPop();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!document.getElementById('event-modal').classList.contains('hidden')) closeEventModal();
+    else if (!document.getElementById('event-drawer').classList.contains('hidden')) closeEventDrawer();
+    else closeDayPop();
+  });
+
+  setInterval(checkEventReminders, 60000);
+  checkEventReminders();
+  maybeWeeklySummary();
+  updateCalendarBadge();
+}
+
+wireCalendar();
