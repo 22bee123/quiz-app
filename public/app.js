@@ -1750,7 +1750,7 @@ window.__buckAvatarErr = function (img) {
   try {
     const span = document.createElement('span');
     span.className = 'buck-av-fallback';
-    span.innerHTML = '<svg viewBox="0 0 64 64" role="img" aria-label="Buck avatar"><use href="#buck-mark" /></svg>';
+    span.innerHTML = '<img src="/favicon.png" alt="Buck avatar" />';
     img.replaceWith(span);
   } catch (e) {}
 };
@@ -4105,7 +4105,7 @@ function renameClean(v) {
 
 function avatarMarkup(profile, initial) {
   if (profile && profile.avatar) return '<img src="' + profile.avatar + '" alt="" />';
-  return '<svg viewBox="0 0 64 64" role="img" aria-label="Buck avatar"><use href="#buck-mark" /></svg>';
+  return '<img src="/favicon.png" alt="Buck avatar" />';
 }
 
 function updateAuthUI() {
@@ -4586,7 +4586,7 @@ function renderSchoolList(query) {
 function updateAvatarPreview(btn, dataUrl) {
   if (!btn) return;
   if (dataUrl) btn.innerHTML = '<img src="' + dataUrl + '" alt="Profile photo" />';
-  else btn.innerHTML = '<svg viewBox="0 0 64 64" role="img" aria-label="Buck placeholder avatar"><use href="#buck-mark" /></svg>';
+  else btn.innerHTML = '<img src="/favicon.png" alt="Buck placeholder avatar" />';
 }
 
 // Resize to a square of `size` and re-encode as JPEG (keeps uploads small).

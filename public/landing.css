@@ -253,6 +253,8 @@ a {
   filter: drop-shadow(0 4px 8px rgba(107, 66, 38, 0.18));
 }
 
+img.brand-mark { object-fit: cover; border-radius: 12px; }
+
 .brand-name {
   font-weight: 900;
   font-size: 1.12rem;
