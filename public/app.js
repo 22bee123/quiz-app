@@ -6841,18 +6841,26 @@ function wireCalendar() {
     body.addEventListener('mousedown', onCalMouseDown);
   }
 
-  // Horizontal scroll: Shift + wheel, or trackpad horizontal swipe.
+  // Shift + wheel (or trackpad horizontal swipe):
+  //   - if the grid is wider than the view, scroll it sideways
+  //   - otherwise move the calendar period left/right (same as the arrow keys)
   const calScreenEl = document.getElementById('calendar-screen');
-  if (calScreenEl) calScreenEl.addEventListener('wheel', (e) => {
-    const sc = document.getElementById('cal-main-body');
-    if (!sc || sc.scrollWidth <= sc.clientWidth) return;
-    const horizontal = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
-    if (!horizontal) return;
-    const delta = e.shiftKey ? (e.deltaY || e.deltaX || 0) : e.deltaX;
-    if (!delta) return;
-    sc.scrollLeft += delta;
-    e.preventDefault();
-  }, { passive: false });
+  if (calScreenEl) {
+    let wheelNavAt = 0;
+    calScreenEl.addEventListener('wheel', (e) => {
+      const horizontal = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      if (!horizontal) return;
+      const delta = e.shiftKey ? (e.deltaY || e.deltaX || 0) : e.deltaX;
+      if (!delta) return;
+      e.preventDefault();
+      const sc = document.getElementById('cal-main-body');
+      if (sc && sc.scrollWidth > sc.clientWidth + 1) { sc.scrollLeft += delta; return; }
+      const now = Date.now();
+      if (now - wheelNavAt < 320) return;
+      wheelNavAt = now;
+      step(delta > 0 ? 1 : -1);
+    }, { passive: false });
+  }
 
   const panelEl = document.getElementById('cal-panel');
   if (panelEl) panelEl.addEventListener('click', (e) => {
