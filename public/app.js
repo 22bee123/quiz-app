@@ -6231,14 +6231,8 @@ function renderEventPanel(id) {
   }
   document.getElementById('ed-tip').textContent = '\u{1F986} Buck: ' + buckTip(days);
 
-  renderColorRow(document.getElementById('ed-color-row'), ev.color || meta.color, (c) => {
-    ev.color = c;
-    saveEventsLocal();
-    pushEventRemote(ev);
-    renderCalendar();
-    renderEventPanel(ev.id);
-    refreshCalendarLinks();
-  });
+  const dot = document.getElementById('ed-color-dot');
+  if (dot) dot.style.background = ev.color || meta.color;
 
   const pack = ev.studypackId ? getPack(ev.studypackId) : null;
   const packEl = document.getElementById('ed-pack');
@@ -6252,17 +6246,20 @@ function renderEventPanel(id) {
     packEl.querySelector('.ed-pack-link').onclick = () => { closePanel(); openPack(pack.id); };
   } else packEl.classList.add('hidden');
 
-  const notes = document.getElementById('ed-notes');
-  if (notes) notes.value = ev.notes || '';
-  const rem = document.getElementById('ed-reminder');
-  if (rem) rem.value = ev.reminderOffsetMinutes ? String(ev.reminderOffsetMinutes) : '';
+  const notesView = document.getElementById('ed-notes-view');
+  if (notesView) {
+    notesView.textContent = ev.notes || 'No notes yet.';
+    notesView.classList.toggle('muted', !ev.notes);
+  }
+  const remView = document.getElementById('ed-reminder-view');
+  if (remView) {
+    const labels = { 1440: '1 day before', 4320: '3 days before', 10080: '1 week before' };
+    remView.textContent = ev.reminderOffsetMinutes ? (labels[ev.reminderOffsetMinutes] || (ev.reminderOffsetMinutes + ' min before')) : 'None';
+  }
 
   const study = document.getElementById('ed-study');
-  const addcards = document.getElementById('ed-addcards');
   study.classList.toggle('hidden', !pack);
-  addcards.classList.toggle('hidden', !pack);
   study.onclick = () => { if (pack && requireHearts()) { currentPackId = pack.id; closePanel(); startPackQuiz(); } };
-  addcards.onclick = () => { closePanel(); openCreate('pdf'); };
   document.getElementById('ed-edit').onclick = () => openEventForm(ev);
   document.getElementById('ed-del').onclick = () => deleteEventById(id);
 }
@@ -6321,18 +6318,69 @@ function populatePackOptions(selectedId) {
     .concat(studyPacks.map((p) => '<option value="' + p.id + '"' + (p.id === selectedId ? ' selected' : '') + '>' + escapeHtml(p.name) + ' (' + p.items.length + ' cards)</option>'))
     .concat(['<option value="__new">+ Generate a new StudyPack with Buck</option>']);
   sel.innerHTML = opts.join('');
-  updatePackNote();
+  closePackMenu();
+  renderPackPicker();
 }
-function updatePackNote() {
+
+function packIcon() { return '\u{1F4DA}'; }
+
+function renderPackPicker() {
   const sel = document.getElementById('ev-pack');
-  const note = document.getElementById('ev-pack-note');
-  if (!sel || !note) return;
-  const p = sel.value && sel.value !== '__new' ? getPack(sel.value) : null;
-  if (p) {
+  const menu = document.getElementById('ev-pack-menu');
+  const current = document.getElementById('ev-pack-current');
+  if (!sel || !menu || !current) return;
+  const selectedId = sel.value;
+  const selected = selectedId && selectedId !== '__new' ? getPack(selectedId) : null;
+
+  if (selected) {
+    const pr = packProgress(selected);
+    current.innerHTML = '<span class="ppc-icon">' + packIcon() + '</span><span class="ppc-main"><span class="ppc-name">' + escapeHtml(selected.name) + '</span><span class="ppc-sub">' + selected.items.length + ' cards \u00b7 ' + pr.pct + '% mastered</span></span>';
+  } else if (selectedId === '__new') {
+    current.innerHTML = '<span class="ppc-icon">\u2728</span><span class="ppc-main"><span class="ppc-name">Generate a new StudyPack</span><span class="ppc-sub">Buck will build one from your material</span></span>';
+  } else {
+    current.innerHTML = '<span class="ppc-icon">\u{1F517}</span><span class="ppc-main"><span class="ppc-name">No StudyPack linked</span><span class="ppc-sub">Optional \u2014 link one to track progress</span></span>';
+  }
+
+  const items = studyPacks.map((p) => {
     const pr = packProgress(p);
-    note.textContent = p.items.length + ' cards \u00b7 ' + pr.done + ' / ' + pr.total + ' mastered';
-  } else note.textContent = '';
+    const active = p.id === selectedId;
+    return '<button type="button" class="pp-item' + (active ? ' active' : '') + '" data-id="' + p.id + '" role="option" aria-selected="' + active + '">' +
+      '<span class="pp-item-icon">' + packIcon() + '</span>' +
+      '<span class="pp-item-main"><span class="pp-item-name">' + escapeHtml(p.name) + '</span>' +
+      '<span class="pp-item-sub">' + p.items.length + ' cards \u00b7 ' + pr.done + ' / ' + pr.total + ' mastered</span>' +
+      '<span class="cal-bar"><span style="width:' + pr.pct + '%"></span></span></span>' +
+      '<span class="pp-item-check">' + (active ? '\u2713' : '') + '</span></button>';
+  }).join('');
+  menu.innerHTML =
+    '<button type="button" class="pp-item' + (!selectedId ? ' active' : '') + '" data-id="" role="option"><span class="pp-item-icon">\u{1F517}</span><span class="pp-item-main"><span class="pp-item-name">No StudyPack linked</span></span><span class="pp-item-check">' + (!selectedId ? '\u2713' : '') + '</span></button>' +
+    (items || '<div class="pp-empty">No StudyPacks yet \u2014 generate one first.</div>') +
+    '<button type="button" class="pp-item pp-new" data-id="__new" role="option"><span class="pp-item-icon">\u2728</span><span class="pp-item-main"><span class="pp-item-name">+ Generate a new StudyPack with Buck</span></span></button>';
 }
+
+function togglePackMenu() {
+  const menu = document.getElementById('ev-pack-menu');
+  const btn = document.getElementById('ev-pack-btn');
+  if (!menu) return;
+  const open = menu.classList.toggle('hidden') === false;
+  if (btn) btn.setAttribute('aria-expanded', String(open));
+}
+function closePackMenu() {
+  const menu = document.getElementById('ev-pack-menu');
+  const btn = document.getElementById('ev-pack-btn');
+  if (menu) menu.classList.add('hidden');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function onPackMenuClick(e) {
+  const item = e.target.closest('.pp-item');
+  if (!item) return;
+  const sel = document.getElementById('ev-pack');
+  if (!sel) return;
+  sel.value = item.dataset.id;
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+  closePackMenu();
+  renderPackPicker();
+}
+function updatePackNote() {}
 
 function openEventForm(ev, dateStr, range, forceAllDay) {
   if (!calDrag) clearDraft();
@@ -6826,22 +6874,18 @@ function wireCalendar() {
   if (allday) allday.addEventListener('change', updateTimeRow);
   ['ev-time', 'ev-endtime'].forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener('change', updateDurationNote); });
   const packSel = document.getElementById('ev-pack');
-  if (packSel) packSel.addEventListener('change', updatePackNote);
-
-  const notesEl = document.getElementById('ed-notes');
-  if (notesEl) notesEl.addEventListener('change', () => {
-    const ev = events.find((x) => x.id === selectedEventId);
-    if (ev) { ev.notes = notesEl.value.trim(); saveEventsLocal(); pushEventRemote(ev); }
-  });
-  const remEl = document.getElementById('ed-reminder');
-  if (remEl) remEl.addEventListener('change', () => {
-    const ev = events.find((x) => x.id === selectedEventId);
-    if (ev) { ev.reminderOffsetMinutes = remEl.value ? Number(remEl.value) : null; saveEventsLocal(); pushEventRemote(ev); }
-  });
+  if (packSel) packSel.addEventListener('change', () => { updatePackNote(); renderPackPicker(); });
+  const packBtn = document.getElementById('ev-pack-btn');
+  if (packBtn) packBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePackMenu(); });
+  const packMenu = document.getElementById('ev-pack-menu');
+  if (packMenu) packMenu.addEventListener('click', onPackMenuClick);
+  document.addEventListener('click', (e) => { if (!e.target.closest('#ev-pack-picker')) closePackMenu(); });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (escapeCancelsDrag()) return;
+      const menu = document.getElementById('ev-pack-menu');
+      if (menu && !menu.classList.contains('hidden')) { closePackMenu(); return; }
       if (!document.getElementById('cal-panel').classList.contains('open') && calPanelState === 'welcome') return;
       closePanel();
       return;

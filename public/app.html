@@ -874,28 +874,27 @@
                 <button type="button" class="btn btn-primary cal-panel-btn" id="cal-day-add">+ Add event</button>
               </div>
 
-              <!-- State C: event details -->
+              <!-- State C: event details (read-only view) -->
               <div id="cal-panel-event" class="cal-panel-state hidden">
-                <span class="ed-type" id="ed-type">&#127891; Exam</span>
+                <div class="ed-head">
+                  <span class="ed-type" id="ed-type">&#127891; Exam</span>
+                  <span class="ed-color-dot" id="ed-color-dot" aria-hidden="true"></span>
+                </div>
                 <h2 class="ed-title" id="ed-title">Event</h2>
                 <div class="ed-meta" id="ed-meta"></div>
-                <label class="field-label">Color</label>
-                <div class="color-row" id="ed-color-row" role="group" aria-label="Event color"></div>
                 <div id="ed-pack" class="ed-pack hidden"></div>
                 <div class="ed-countdown" id="ed-countdown"></div>
                 <div class="ed-tip" id="ed-tip"></div>
-                <label class="field-label" for="ed-notes">Notes</label>
-                <textarea id="ed-notes" class="signup-input" rows="3" placeholder="Add notes&hellip;"></textarea>
-                <label class="field-label" for="ed-reminder">Reminder</label>
-                <select id="ed-reminder" class="signup-input">
-                  <option value="">None</option>
-                  <option value="1440">1 day before</option>
-                  <option value="4320">3 days before</option>
-                  <option value="10080">1 week before</option>
-                </select>
+                <div class="ed-section">
+                  <span class="ed-section-label">Notes</span>
+                  <div class="ed-view-text" id="ed-notes-view">No notes yet.</div>
+                </div>
+                <div class="ed-section">
+                  <span class="ed-section-label">Reminder</span>
+                  <div class="ed-view-text" id="ed-reminder-view">None</div>
+                </div>
                 <div class="drawer-actions">
                   <button id="ed-study" class="btn btn-primary hidden">Study now</button>
-                  <button id="ed-addcards" class="btn btn-secondary hidden">Add more cards</button>
                   <button id="ed-edit" class="link-btn">&#9998;&#65039; Edit</button>
                   <button id="ed-del" class="link-btn danger">&#128465; Delete</button>
                 </div>
@@ -949,9 +948,15 @@
                     <input id="ev-subject" class="signup-input" placeholder="e.g. Nursing" />
                     <label class="field-label" for="ev-location">Location</label>
                     <input id="ev-location" class="signup-input" placeholder="e.g. Room 204" />
-                    <label class="field-label" for="ev-pack">Link a StudyPack</label>
-                    <select id="ev-pack" class="signup-input"></select>
-                    <div class="ev-pack-note" id="ev-pack-note"></div>
+                    <label class="field-label">Link a StudyPack</label>
+                    <div class="pack-picker" id="ev-pack-picker">
+                      <button type="button" class="pack-picker-btn" id="ev-pack-btn" aria-haspopup="listbox" aria-expanded="false">
+                        <span class="pack-picker-current" id="ev-pack-current">No StudyPack linked</span>
+                        <span class="pack-picker-chev">&#9662;</span>
+                      </button>
+                      <div class="pack-picker-menu hidden" id="ev-pack-menu" role="listbox"></div>
+                    </div>
+                    <select id="ev-pack" class="hidden"></select>
                     <label class="field-label" for="ev-reminder">Reminder</label>
                     <select id="ev-reminder" class="signup-input">
                       <option value="">None</option>
