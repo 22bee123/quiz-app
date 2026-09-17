@@ -2722,33 +2722,25 @@ function renderStudyPackList() {
     const item = document.createElement('div');
     item.className = 'hist-item studypack-item';
     item.dataset.packId = pack.id;
-    const linked = eventsForPack(pack.id).slice(0, 2);
-    const chips = linked.map((e) => {
-      const meta = EV_META[e.type] || EV_META.exam;
-      const color = e.color || meta.color;
-      return '<span class="pack-ev-chip" data-ev="' + e.id + '" title="Open in calendar" style="border-left-color:' + color + '">' +
-        '<span class="pec-icon">' + meta.icon + '</span>' +
-        '<span class="pec-title">' + escapeHtml(e.title) + '</span>' +
-        '<span class="pec-date">' + formatDate(e.date) + '</span>' +
-        '<span class="pec-chev">\u203a</span></span>';
-    }).join('');
+    const linked = eventsForPack(pack.id);
+    let tag = '';
+    if (linked.length) {
+      const e0 = linked[0];
+      const m0 = EV_META[e0.type] || EV_META.exam;
+      tag = '<span class="pack-ev-tag">' + m0.icon + ' ' + escapeHtml(e0.title) + ' \u00b7 ' + formatDate(e0.date) + (linked.length > 1 ? ' +' + (linked.length - 1) : '') + '</span>';
+    }
     item.innerHTML = `
       <span class="hi-dot" style="background:${deckColor(pack.name)}"></span>
       <button class="hi-main-btn">
         <span class="hi-name">${escapeHtml(pack.name)}</span>
-        <span class="hi-meta">${pack.items.length} cards</span>
-        ${chips}
+        <span class="hi-meta">${pack.items.length} cards ${tag}</span>
       </button>
       <button class="hi-del" title="Delete StudyPack" aria-label="Delete StudyPack ${escapeHtml(pack.name)}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
       </button>
       <button class="pin-btn" title="Open">&#8250;</button>
     `;
-    item.querySelector('.hi-main-btn').addEventListener('click', (e) => {
-      const chipEl = e.target.closest('.pack-ev-chip');
-      if (chipEl) { e.stopPropagation(); openCalendarEvent(chipEl.dataset.ev); return; }
-      openPack(pack.id);
-    });
+    item.querySelector('.hi-main-btn').addEventListener('click', () => openPack(pack.id));
     item.querySelector('.pin-btn').addEventListener('click', () => openPack(pack.id));
     item.querySelector('.hi-del').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -5718,7 +5710,8 @@ function openCalendarEvent(id) {
   const ev = events.find((e) => e.id === id);
   if (!ev) return;
   if (authEnabled && !currentUser && !requireAuth()) return;
-  calCursor = parseKey(ev.date);
+  const evDate = parseKey(ev.date);
+  calCursor = calView === 'week' ? startOfWeek(evDate) : evDate;
   calSelectedDay = ev.date;
   setActiveNav('calendar');
   showScreen(calendarScreen);
@@ -5773,6 +5766,7 @@ let selectedEventId = null;
 let calDrag = null;
 let calSuppressClick = false;
 let calDraft = null;
+let calTodayKey = '';
 
 function calWidth() {
   return (window.innerWidth || document.documentElement.clientWidth || 0);
@@ -5887,6 +5881,7 @@ function openCalendar() {
   calCursor = new Date();
   calSelectedDay = dkey(new Date());
   if (isMobileCal()) calView = 'day';
+  if (calView === 'week') calCursor = startOfWeek(calCursor);
   setCalView(calView, true);
   calLastBreakpoint = calBreakpoint();
   renderCalendar();
@@ -5898,6 +5893,7 @@ function openCalendar() {
 function closeCalendar() { setActiveNav(null); }
 
 function setCalView(view, silent) {
+  if (view === 'week' && calView !== 'week') calCursor = startOfWeek(calCursor);
   calView = view;
   document.querySelectorAll('.cal-view').forEach((b) => {
     const on = b.dataset.view === view;
@@ -5914,7 +5910,7 @@ function renderCalendar() {
     if (calView === 'month') label.textContent = calCursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
     else if (calView === 'day') label.textContent = calCursor.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
     else if (calView === 'week') {
-      const s = startOfWeek(calCursor); const e = addDays(s, 6);
+      const s = new Date(calCursor); const e = addDays(s, 6);
       label.textContent = s.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' \u2013 ' + e.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     } else label.textContent = 'Upcoming';
   }
@@ -5922,11 +5918,20 @@ function renderCalendar() {
   if (body) {
     if (calView === 'month') body.innerHTML = renderMonth();
     else if (calView === 'agenda') body.innerHTML = renderAgenda();
-    else body.innerHTML = renderTimeGrid(calView === 'day' ? 1 : 7, calView === 'day' ? new Date(calCursor) : startOfWeek(calCursor));
+    else body.innerHTML = renderTimeGrid(calView === 'day' ? 1 : 7, calView === 'day' ? new Date(calCursor) : new Date(calCursor));
   }
   updateCalendarBadge();
+  calTodayKey = dkey(new Date());
   if (calView === 'day' || calView === 'week') autoScrollTimeGrid();
   refreshPanel();
+}
+
+function updateNowLine() {
+  const line = document.querySelector('.tg-now[data-now]');
+  if (!line) return;
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  line.style.top = (nowMin / 60 * CAL_HOUR_H) + 'px';
 }
 
 function autoScrollTimeGrid() {
@@ -5992,11 +5997,10 @@ function renderTimeGrid(numDays, startDate) {
       const leftPct = it.col * width;
       html += timeGridBlock(it.e, false, 'top:' + top + 'px;height:' + height + 'px;left:calc(' + leftPct + '% + 3px);right:auto;width:calc(' + width + '% - 6px)');
     });
-    if (isToday) {
-      html += '<div class="tg-now" style="top:' + ((nowMin / 60) * CAL_HOUR_H) + 'px"><span class="tg-now-dot"></span></div>';
-    }
     html += '</div>';
   });
+  // Full-width current-time line (stays visible while scrolling horizontally)
+  html += '<div class="tg-now" data-now style="top:' + ((nowMin / 60) * CAL_HOUR_H) + 'px"><span class="tg-now-dot"></span></div>';
   html += '</div></div></div>';
   return html;
 }
@@ -6833,7 +6837,7 @@ function wireCalendar() {
   };
   if (prev) prev.addEventListener('click', () => step(-1));
   if (next) next.addEventListener('click', () => step(1));
-  if (today) today.addEventListener('click', () => { calCursor = new Date(); calSelectedDay = dkey(new Date()); renderCalendar(); });
+  if (today) today.addEventListener('click', () => { const t = new Date(); calCursor = calView === 'week' ? startOfWeek(t) : t; calSelectedDay = dkey(t); renderCalendar(); });
 
   const body = document.getElementById('cal-main-body');
   if (body) {
@@ -6856,9 +6860,11 @@ function wireCalendar() {
       const sc = document.getElementById('cal-main-body');
       if (sc && sc.scrollWidth > sc.clientWidth + 1) { sc.scrollLeft += delta; return; }
       const now = Date.now();
-      if (now - wheelNavAt < 320) return;
+      if (now - wheelNavAt < 140) return;
       wheelNavAt = now;
-      step(delta > 0 ? 1 : -1);
+      if (calView === 'day' || calView === 'week') calCursor = addDays(calCursor, delta > 0 ? 1 : -1);
+      else calCursor.setMonth(calCursor.getMonth() + (delta > 0 ? 1 : -1));
+      renderCalendar();
     }, { passive: false });
   }
 
@@ -6902,7 +6908,7 @@ function wireCalendar() {
     const tag = (e.target && e.target.tagName) || '';
     if (/INPUT|TEXTAREA|SELECT/.test(tag) || (e.target && e.target.isContentEditable)) return;
     const k = e.key.toLowerCase();
-    if (k === 't') { calCursor = new Date(); calSelectedDay = dkey(new Date()); renderCalendar(); }
+    if (k === 't') { const t = new Date(); calCursor = calView === 'week' ? startOfWeek(t) : t; calSelectedDay = dkey(t); renderCalendar(); }
     else if (k === 'd') setCalView('day');
     else if (k === 'w') setCalView('week');
     else if (k === 'm') setCalView('month');
@@ -6924,6 +6930,12 @@ function wireCalendar() {
   });
 
   setInterval(checkEventReminders, 60000);
+  setInterval(() => {
+    if (calendarScreen.classList.contains('hidden')) return;
+    if (calView !== 'day' && calView !== 'week') return;
+    if (dkey(new Date()) !== calTodayKey) { renderCalendar(); return; }
+    updateNowLine();
+  }, 30000);
   checkEventReminders();
   maybeWeeklySummary();
   renderWelcomePanel();

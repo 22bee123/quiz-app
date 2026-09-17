@@ -7166,8 +7166,8 @@ body.cal-open .tg-week { min-width: 720px; }
   position: absolute; top: -24px; left: 0; background: #6b4226; color: #fff8f0;
   font-size: 11px; font-weight: 800; padding: 3px 7px; border-radius: 6px; white-space: nowrap;
 }
-.tg-now { position: absolute; left: 0; right: 0; border-top: 2px solid #f97316; z-index: 4; pointer-events: none; }
-.tg-now-dot { position: absolute; left: -4px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: #f97316; }
+.tg-now { position: absolute; left: var(--tg-gutter, 48px); right: 0; border-top: 2px solid #f97316; z-index: 4; pointer-events: none; }
+.tg-now-dot { position: absolute; left: -5px; top: -5px; width: 9px; height: 9px; border-radius: 50%; background: #f97316; box-shadow: 0 0 0 2px #fff; }
 
 /* ---------- Month ---------- */
 .cal-month { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
@@ -7436,20 +7436,14 @@ html[data-theme='dark'] .color-swatch.active { border-color: #fff8f0; }
 .ed-pack-open { display: inline-flex; align-items: center; gap: 4px; margin-top: 8px; color: #ea580c; font-weight: 800; font-size: 0.74rem; }
 .ed-pack-open::after { content: '\203a'; font-weight: 900; }
 
-/* Linked-event pills on StudyPack cards (sidebar) */
-.pack-ev-chip {
-  display: flex; align-items: center; gap: 6px; width: 100%;
-  margin-top: 6px; padding: 5px 8px;
-  font-size: 0.68rem; font-weight: 800; color: #6b4226;
-  background: #fff7ef; border: 1px solid #f3c9a4; border-left: 4px solid #f97316;
-  border-radius: 10px; overflow: hidden; cursor: pointer;
-  transition: background 0.14s ease, transform 0.14s ease;
+/* Linked-event tag inline next to the card count (sidebar) */
+.pack-ev-tag {
+  display: inline-block; margin-left: 5px; padding: 1px 6px;
+  font-size: 0.62rem; font-weight: 800; color: #8b5e3c;
+  background: #fff7ef; border: 1px solid #f3c9a4; border-radius: 999px;
+  max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: middle; cursor: default;
 }
-.pack-ev-chip:hover { background: #ffe3cc; transform: translateX(2px); }
-.pack-ev-chip .pec-icon { flex: 0 0 auto; }
-.pack-ev-chip .pec-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.pack-ev-chip .pec-date { flex: 0 0 auto; color: #8b5e3c; font-weight: 700; }
-.pack-ev-chip .pec-chev { flex: 0 0 auto; color: #c98a52; font-weight: 900; }
 
 /* Linked-event banner on the StudyPack screen */
 .pack-linked { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; }
@@ -7517,8 +7511,7 @@ html[data-theme='dark'] .pp-item:hover, html[data-theme='dark'] .pp-item.active 
 html[data-theme='dark'] .pp-item-name { color: #fff8f0; }
 html[data-theme='dark'] .pp-item-sub { color: #cbb4a2; }
 
-html[data-theme='dark'] .pack-ev-chip { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); color: #ffe8d6; }
-html[data-theme='dark'] .pack-ev-chip .pec-date { color: #cbb4a2; }
+html[data-theme='dark'] .pack-ev-tag { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); color: #cbb4a2; }
 html[data-theme='dark'] .pack-link-card { background: #3a2a20; border-color: rgba(243, 231, 219, 0.12); }
 html[data-theme='dark'] .plc-title { color: #fff8f0; }
 html[data-theme='dark'] .plc-meta { color: #cbb4a2; }
