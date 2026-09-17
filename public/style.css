@@ -4954,6 +4954,13 @@ html[data-theme='dark'] .friend-card {
   animation: buckBob 5s ease-in-out infinite;
 }
 
+.auth-mascot img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 22px;
+}
+
 .auth-title {
   font-size: 1.5rem;
   margin: 12px 0 6px;
@@ -5391,6 +5398,7 @@ html[data-theme='dark'] .friend-card {
 
 .su-welcome { text-align: center; animation: popIn 0.35s ease both; }
 .su-welcome svg { width: 150px; margin: 0 auto 8px; animation: buckBob 5s ease-in-out infinite; }
+.su-welcome img { width: 150px; max-width: 60%; height: auto; margin: 0 auto 8px; display: block; border-radius: 20px; animation: buckBob 5s ease-in-out infinite; }
 
 .su-summary {
   list-style: none;
