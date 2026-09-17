@@ -2035,7 +2035,7 @@ function renderFriendList() {
   if (!myFriends.length) {
     el.innerHTML =
       '<div class="friend-empty">' +
-      '<svg viewBox="0 0 240 240" role="img" aria-label="Buck waiting for friends"><use href="#buck-thinking" /></svg>' +
+      '<img class="empty-buck" src="/buck-thinking.png" alt="Buck waiting for friends" />' +
       '<strong>No friends yet!</strong>' +
       '<span>Search above to find study buddies, or invite someone with your username.</span>' +
       '<button type="button" class="btn btn-primary" id="empty-invite">Invite a friend</button>' +
@@ -2342,7 +2342,7 @@ function renderChatThread() {
     const p = friendProfilesById[activeChatId] || {};
     el.innerHTML =
       '<div class="friend-empty">' +
-      '<svg viewBox="0 0 240 240" role="img" aria-label="Buck waving"><use href="#buck-celebrating" /></svg>' +
+      '<img class="empty-buck" src="/buck-celebrating.png" alt="Buck waving" />' +
       '<strong>Say hi to ' + escapeHtml(atName(p)) + '! \u{1F44B}</strong>' +
       '<span>Your messages are private between you two.</span>' +
       '</div>';
@@ -2385,7 +2385,7 @@ function renderConversations() {
   if (!convos.length) {
     el.innerHTML =
       '<div class="friend-empty">' +
-      '<svg viewBox="0 0 240 240" role="img" aria-label="Buck"><use href="#buck-thinking" /></svg>' +
+      '<img class="empty-buck" src="/buck-thinking.png" alt="Buck" />' +
       '<strong>' + (searchQuery ? 'No matches' : 'No messages yet') + '</strong>' +
       '<span>' + (searchQuery ? 'Try a different name.' : 'Start a chat from the Friends tab! \u{1F4AC}') + '</span>' +
       '</div>';
@@ -2893,7 +2893,7 @@ function renderPack() {
       return;
     }
     listEl.innerHTML = '<div class="pack-empty">' +
-      '<svg class="buck-svg empty-buck" viewBox="0 0 240 240" role="img" aria-label="Buck waiting to study"><use href="#buck-thinking" /></svg>' +
+      '<img class="buck-svg empty-buck" src="/buck-thinking.png" alt="Buck waiting to study" />' +
       'No cards yet. Add a question to get started.</div>';
     return;
   }

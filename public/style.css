@@ -4466,6 +4466,27 @@ body { transition: background-color 0.3s ease, color 0.3s ease; }
   user-select: none;
 }
 
+/* Buck mascot images (replace the old SVG illustrations) */
+img.buck-svg,
+.mascot img,
+.cl-core img,
+.pb-mascot img,
+.al-mascot img,
+.empty-buck,
+.pf-corner-buck,
+.friend-empty img {
+  object-fit: contain;
+  border-radius: 20px;
+}
+
+.mascot img { width: 150px; height: auto; margin: 0 auto; }
+.cl-core img { width: 68px; height: 68px; border-radius: 16px; }
+.pb-mascot img { width: 38px; height: 38px; border-radius: 12px; }
+.al-mascot img { width: 100%; height: auto; }
+.empty-buck { width: 116px; max-width: 52%; margin: 0 auto 10px; }
+.friend-empty img { width: 104px; height: auto; }
+.pf-corner-buck { object-fit: contain; }
+
 .mascot-buck {
   width: 168px;
   max-width: 58%;
