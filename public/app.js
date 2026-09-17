@@ -5666,8 +5666,8 @@ const EV_META = {
   deadline: { icon: '\u23F0', color: '#E8D5C4', label: 'Deadline', cls: 'deadline' },
 };
 
-const CAL_HOUR_H = 48;
-const CAL_GUTTER = 60;
+const CAL_HOUR_H = 44;
+const CAL_GUTTER = 48;
 const CAL_SNAP = 15;
 
 let events = [];
@@ -5685,6 +5685,7 @@ let calPanelState = 'welcome';
 let selectedEventId = null;
 let calDrag = null;
 let calSuppressClick = false;
+let calDraft = null;
 
 function calWidth() {
   return (window.innerWidth || document.documentElement.clientWidth || 0);
@@ -5725,6 +5726,12 @@ function fmtTime(hhmm) {
   return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 function fmtTimeMin(m) { return fmtTime(fromMin(m)); }
+function hourLabel(h) {
+  const ampm = h < 12 ? 'AM' : 'PM';
+  let hh = h % 12;
+  if (hh === 0) hh = 12;
+  return hh + ' ' + ampm;
+}
 function fmtRange(start, end) {
   const s = fmtTime(start);
   const e = end ? fmtTime(end) : '';
@@ -5814,6 +5821,7 @@ function setCalView(view, silent) {
 }
 
 function renderCalendar() {
+  calDraft = null;
   const label = document.getElementById('cal-label');
   if (label) {
     if (calView === 'month') label.textContent = calCursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
@@ -5878,7 +5886,7 @@ function renderTimeGrid(numDays, startDate) {
   html += '<div class="tg-scroll"><div class="tg-grid" style="height:' + totalH + 'px">';
   html += '<div class="tg-gutter">';
   for (let h = 0; h < 24; h++) {
-    html += '<div class="tg-hour-label" style="top:' + (h * CAL_HOUR_H) + 'px">' + fmtTimeMin(h * 60) + '</div>';
+    html += '<div class="tg-hour-label" style="top:' + (h * CAL_HOUR_H) + 'px">' + hourLabel(h) + '</div>';
   }
   html += '</div>';
 
@@ -6031,6 +6039,7 @@ function openPanelState(state) {
   }
 }
 function closePanel() {
+  clearDraft();
   const p = document.getElementById('cal-panel');
   if (p) p.classList.remove('open');
   const b = document.getElementById('cal-panel-backdrop');
@@ -6218,6 +6227,7 @@ function updatePackNote() {
 }
 
 function openEventForm(ev, dateStr, range, forceAllDay) {
+  if (!calDrag) clearDraft();
   editingEventId = ev ? ev.id : null;
   setEvType(ev ? ev.type : 'exam');
   updateEventHeading();
@@ -6454,6 +6464,7 @@ function calColMinutes(col, clientY) {
 
 function startCreate(e, col) {
   e.preventDefault();
+  clearDraft();
   const start = clampMin(snapMin(calColMinutes(col, e.clientY)));
   const colTop = col.getBoundingClientRect().top;
   const prev = document.createElement('div');
@@ -6536,12 +6547,22 @@ function onCalMouseMove(e) {
   }
 }
 
+function updatePreviewValues(el, start, end) {
+  if (!el) return;
+  el.style.top = (start / 60 * CAL_HOUR_H) + 'px';
+  el.style.height = Math.max(12, (end - start) / 60 * CAL_HOUR_H) + 'px';
+  const label = el.querySelector('.tg-preview-label');
+  if (label) label.textContent = fmtRange(fromMin(start), fromMin(end)) + ' \u00b7 ' + durLabel(end - start);
+}
+
 function updatePreview() {
   if (!calDrag || calDrag.mode !== 'create' || !calDrag.prev) return;
-  calDrag.prev.style.top = (calDrag.start / 60 * CAL_HOUR_H) + 'px';
-  calDrag.prev.style.height = Math.max(12, (calDrag.end - calDrag.start) / 60 * CAL_HOUR_H) + 'px';
-  const label = calDrag.prev.querySelector('.tg-preview-label');
-  if (label) label.textContent = fmtRange(fromMin(calDrag.start), fromMin(calDrag.end)) + ' \u00b7 ' + durLabel(calDrag.end - calDrag.start);
+  updatePreviewValues(calDrag.prev, calDrag.start, calDrag.end);
+}
+
+function clearDraft() {
+  if (calDraft && calDraft.el && calDraft.el.parentElement) calDraft.el.remove();
+  calDraft = null;
 }
 
 function onCalMouseUp() {
@@ -6553,9 +6574,14 @@ function onCalMouseUp() {
   calDrag = null;
 
   if (d.mode === 'create') {
-    if (d.prev) d.prev.remove();
     calSuppressClick = true;
-    if (!d.moved) { d.end = Math.min(1440, d.start + 60); syncFormRange(d.start, d.end); }
+    if (!d.moved) { d.end = Math.min(1440, d.start + 60); }
+    if (d.prev) {
+      d.prev.classList.add('draft');
+      updatePreviewValues(d.prev, d.start, d.end);
+      calDraft = { el: d.prev, day: d.day };
+    }
+    syncFormRange(d.start, d.end);
     setTimeout(() => { try { document.getElementById('ev-title').focus(); } catch (e) {} }, 30);
   } else if (d.mode === 'move') {
     d.evEl.classList.remove('dragging');

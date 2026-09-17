@@ -7351,6 +7351,70 @@ body.cal-open .cal-panel { height: 100%; max-height: none; }
   body.cal-open .cal-shell { padding: 12px 12px 10px; }
 }
 
+/* Compact, Notion-like density for the calendar */
+.tg-scroll, .cal-main-body { scrollbar-width: none; -ms-overflow-style: none; }
+.tg-scroll::-webkit-scrollbar, .cal-main-body::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+.cal-title { font-size: 1.1rem; }
+.cal-sub { font-size: 0.76rem; }
+.cal-views { gap: 3px; padding: 3px; }
+.cal-view { font-size: 0.72rem; padding: 5px 10px; }
+.cal-nav-btn { width: 30px; height: 30px; font-size: 1rem; }
+.cal-today { min-height: 30px; padding: 4px 12px; font-size: 0.75rem; }
+.cal-label { font-size: 0.88rem; }
+
+.tg-gutter-label { font-size: 9px; padding-top: 6px; }
+.tg-dow { font-size: 10px; }
+.tg-dom { min-width: 22px; height: 22px; font-size: 13px; margin-top: 0; }
+.tg-hour-label { font-size: 10px; }
+.tg-event { padding: 3px 6px; border-radius: 6px; }
+.tg-event-title { font-size: 11px; }
+.tg-event-time { font-size: 10px; }
+.tg-event-pack { font-size: 10px; margin-top: 1px; }
+.tg-preview-label { font-size: 10px; padding: 2px 6px; top: -20px; }
+.tg-preview.draft { background: rgba(249, 115, 22, 0.38); border-style: solid; }
+
+.cal-dow { font-size: 0.64rem; padding: 4px 0; }
+.cal-day { min-height: 64px; padding: 3px; }
+.cal-day-num { width: 20px; height: 20px; font-size: 0.7rem; }
+.cal-chip { font-size: 0.64rem; padding: 1px 5px; border-radius: 5px; }
+.cal-more { font-size: 0.6rem; }
+
+.cal-panel { padding: 12px; }
+.cal-welcome-buck { width: 44px; height: 44px; }
+.cal-welcome-title { font-size: 0.9rem; }
+.cal-welcome-sub { font-size: 0.72rem; }
+.cal-tips li { font-size: 0.74rem; padding: 6px 8px; border-radius: 8px; }
+.cal-card { padding: 10px; border-radius: 12px; margin-bottom: 8px; }
+.cal-card-title { font-size: 0.8rem; margin-bottom: 6px; }
+.cal-up-item { padding: 6px 8px; border-radius: 9px; gap: 8px; }
+.cal-ag-title { font-size: 0.78rem; }
+.cal-ag-meta { font-size: 0.7rem; }
+.cal-countdown { font-size: 0.6rem; padding: 2px 6px; }
+.cal-panel-title { font-size: 0.9rem; margin-bottom: 8px; }
+.cal-panel-btn { min-height: 32px; font-size: 0.76rem; }
+.ed-title { font-size: 1rem; margin: 6px 0 4px; }
+.ed-type { font-size: 0.64rem; padding: 3px 8px; }
+.ed-meta { font-size: 0.74rem; }
+.ed-tip { font-size: 0.74rem; padding: 8px; }
+.ed-countdown { font-size: 0.78rem; margin: 10px 0; }
+.ed-ring { width: 36px; height: 36px; }
+.ed-ring-num { font-size: 11px; }
+.ed-pack { padding: 8px; margin: 10px 0; }
+
+#cal-panel-form .signup-input { padding: 7px 10px; font-size: 0.8rem; border-radius: 8px; border-width: 1.5px; }
+#cal-panel-form .field-label { font-size: 0.68rem; margin-top: 8px; }
+#cal-panel-form .modal-head h3 { font-size: 0.95rem; }
+#cal-panel-form .modal-head { margin-bottom: 10px; }
+.ev-types { padding: 3px; margin-bottom: 10px; border-radius: 9px; gap: 3px; }
+.ev-type { font-size: 0.72rem; padding: 6px; border-radius: 7px; }
+.ev-row { gap: 8px; }
+.ev-check { font-size: 0.72rem; min-height: 28px; }
+.ev-pack-note, .ev-duration-note { font-size: 0.68rem; }
+#ev-notes { min-height: 60px; }
+#cal-panel-form .event-form-foot .btn { min-height: 34px; font-size: 0.78rem; }
+.drawer-actions .btn, .drawer-actions .link-btn { min-height: 34px; font-size: 0.76rem; }
+
 /* ---- Dark mode ---- */
 html[data-theme='dark'] .cal-shell { background: #33261e; border-color: rgba(243, 231, 219, 0.12); }
 html[data-theme='dark'] .cal-card,
