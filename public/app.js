@@ -2725,7 +2725,12 @@ function renderStudyPackList() {
     const linked = eventsForPack(pack.id).slice(0, 2);
     const chips = linked.map((e) => {
       const meta = EV_META[e.type] || EV_META.exam;
-      return '<span class="pack-ev-chip" data-ev="' + e.id + '" title="Open in calendar">' + meta.icon + ' ' + escapeHtml(e.title) + ' \u00b7 ' + formatDate(e.date) + '</span>';
+      const color = e.color || meta.color;
+      return '<span class="pack-ev-chip" data-ev="' + e.id + '" title="Open in calendar" style="border-left-color:' + color + '">' +
+        '<span class="pec-icon">' + meta.icon + '</span>' +
+        '<span class="pec-title">' + escapeHtml(e.title) + '</span>' +
+        '<span class="pec-date">' + formatDate(e.date) + '</span>' +
+        '<span class="pec-chev">\u203a</span></span>';
     }).join('');
     item.innerHTML = `
       <span class="hi-dot" style="background:${deckColor(pack.name)}"></span>
@@ -2889,6 +2894,7 @@ function openPack(id) {
     activeContent = pendingContent;
   }
   renderPackBanner();
+  if (typeof renderPackLinked === 'function') renderPackLinked(pack.id);
   renderPack();
 }
 
@@ -5720,6 +5726,32 @@ function openCalendarEvent(id) {
   openEventPanel(id);
 }
 
+function renderPackLinked(packId) {
+  const el = document.getElementById('pack-linked');
+  if (!el) return;
+  const linked = eventsForPack(packId);
+  if (!linked.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = linked.slice(0, 3).map((e) => {
+    const meta = EV_META[e.type] || EV_META.exam;
+    const color = e.color || meta.color;
+    const days = daysUntil(e);
+    const badge = e.type === 'exam' && days >= 0 ? countdownLabel(days) : meta.label;
+    return '<button type="button" class="pack-link-card" data-ev="' + e.id + '" style="border-left-color:' + color + '">' +
+      '<span class="plc-icon">' + meta.icon + '</span>' +
+      '<span class="plc-main"><span class="plc-title">' + escapeHtml(e.title) + '</span>' +
+      '<span class="plc-meta">' + meta.label + ' \u00b7 ' + formatDate(e.date) + (e.allDay || !e.time ? ' \u00b7 All day' : ' \u00b7 ' + fmtRange(e.time, e.endTime)) + '</span></span>' +
+      '<span class="plc-badge">' + badge + '</span>' +
+      '<span class="plc-chevron">\u203a</span></button>';
+  }).join('');
+  el.querySelectorAll('.pack-link-card').forEach((b) => b.addEventListener('click', () => openCalendarEvent(b.dataset.ev)));
+}
+
+function refreshCalendarLinks() {
+  if (typeof renderStudyPackList === 'function') renderStudyPackList();
+  if (currentPackId && typeof renderPackLinked === 'function') renderPackLinked(currentPackId);
+}
+
 const CAL_HOUR_H = 44;
 const CAL_GUTTER = 48;
 const CAL_SNAP = 15;
@@ -6205,7 +6237,7 @@ function renderEventPanel(id) {
     pushEventRemote(ev);
     renderCalendar();
     renderEventPanel(ev.id);
-    if (typeof renderStudyPackList === 'function') renderStudyPackList();
+    refreshCalendarLinks();
   });
 
   const pack = ev.studypackId ? getPack(ev.studypackId) : null;
@@ -6213,7 +6245,10 @@ function renderEventPanel(id) {
   if (pack) {
     const pr = packProgress(pack);
     packEl.classList.remove('hidden');
-    packEl.innerHTML = '<div class="ed-pack-link" title="Open StudyPack"><div class="cal-ag-title">\u{1F4DA} ' + escapeHtml(pack.name) + '</div><div class="cal-ag-meta">' + pr.total + ' cards</div><div class="cal-bar"><span style="width:' + pr.pct + '%"></span></div><div class="cal-ag-meta">' + pr.done + ' / ' + pr.total + ' mastered</div><div class="cal-ag-meta">Tap to open this StudyPack \u2192</div></div>';
+    packEl.innerHTML = '<div class="ed-pack-link" title="Open StudyPack">' +
+      '<div class="ed-pack-head"><span class="ed-pack-icon">\u{1F4DA}</span><span style="min-width:0;flex:1"><div class="ed-pack-name">' + escapeHtml(pack.name) + '</div><div class="cal-ag-meta">' + pr.total + ' cards \u00b7 ' + pr.done + ' / ' + pr.total + ' mastered</div></span></div>' +
+      '<div class="cal-bar"><span style="width:' + pr.pct + '%"></span></div>' +
+      '<div class="ed-pack-open">Open StudyPack</div></div>';
     packEl.querySelector('.ed-pack-link').onclick = () => { closePanel(); openPack(pack.id); };
   } else packEl.classList.add('hidden');
 
@@ -6405,7 +6440,7 @@ async function saveEventFromForm() {
   const idx = events.findIndex((e) => e.id === r.ev.id);
   if (idx >= 0) events[idx] = r.ev; else events.push(r.ev);
   saveEventsLocal();
-  if (typeof renderStudyPackList === 'function') renderStudyPackList();
+  refreshCalendarLinks();
   selectedEventId = r.ev.id;
   renderCalendar();
   popEventBlock(r.ev.id);
@@ -6424,7 +6459,7 @@ async function deleteEventById(id) {
   if (!ok) return;
   events = events.filter((e) => e.id !== id);
   saveEventsLocal();
-  if (typeof renderStudyPackList === 'function') renderStudyPackList();
+  refreshCalendarLinks();
   selectedEventId = null;
   renderCalendar();
   closePanel();
@@ -6469,7 +6504,7 @@ async function loadRemoteEvents() {
       if (i >= 0) events[i] = mapped; else events.push(mapped);
     });
     saveEventsLocal();
-    if (typeof renderStudyPackList === 'function') renderStudyPackList();
+    refreshCalendarLinks();
     renderCalendar();
   } catch (e) {}
 }
@@ -6756,13 +6791,20 @@ function wireCalendar() {
   if (body) {
     body.addEventListener('click', onCalBodyClick);
     body.addEventListener('mousedown', onCalMouseDown);
-    body.addEventListener('wheel', (e) => {
-      if (!e.shiftKey) return;
-      if (body.scrollWidth <= body.clientWidth) return;
-      body.scrollLeft += (e.deltaY || e.deltaX);
-      e.preventDefault();
-    }, { passive: false });
   }
+
+  // Horizontal scroll: Shift + wheel, or trackpad horizontal swipe.
+  const calScreenEl = document.getElementById('calendar-screen');
+  if (calScreenEl) calScreenEl.addEventListener('wheel', (e) => {
+    const sc = document.getElementById('cal-main-body');
+    if (!sc || sc.scrollWidth <= sc.clientWidth) return;
+    const horizontal = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
+    if (!horizontal) return;
+    const delta = e.shiftKey ? (e.deltaY || e.deltaX || 0) : e.deltaX;
+    if (!delta) return;
+    sc.scrollLeft += delta;
+    e.preventDefault();
+  }, { passive: false });
 
   const panelEl = document.getElementById('cal-panel');
   if (panelEl) panelEl.addEventListener('click', (e) => {
@@ -6837,4 +6879,4 @@ function wireCalendar() {
 }
 
 wireCalendar();
-if (typeof renderStudyPackList === 'function') renderStudyPackList();
+refreshCalendarLinks();

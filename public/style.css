@@ -7135,6 +7135,12 @@ html[data-theme='dark'] .head-icon-btn { background: #2f211a; border-color: rgba
 .tg-line { position: absolute; left: 0; right: 0; border-top: 1px solid rgba(232, 213, 196, 0.7); pointer-events: none; }
 .tg-line.half { border-top-style: dotted; opacity: 0.6; }
 
+/* Week columns keep a comfortable minimum width so the grid can scroll horizontally when narrow */
+.tg-week .tg-head,
+.tg-week .tg-allday,
+.tg-week .tg-grid { grid-template-columns: var(--tg-gutter, 48px) repeat(7, minmax(96px, 1fr)); }
+body.cal-open .tg-week { min-width: 720px; }
+
 .tg-event {
   position: absolute; left: 3px; right: 3px; border-radius: 8px; padding: 5px 8px;
   overflow: hidden; cursor: pointer; box-shadow: 0 2px 8px rgba(107, 66, 38, 0.12);
@@ -7422,11 +7428,53 @@ body.cal-open .cal-panel { height: 100%; max-height: none; }
 .color-swatch:hover { transform: scale(1.1); }
 .color-swatch.active { border-color: #3e2723; box-shadow: inset 0 0 0 2px #fff, 0 0 0 1px rgba(62, 39, 35, 0.25); }
 html[data-theme='dark'] .color-swatch.active { border-color: #fff8f0; }
-.ed-pack-link { cursor: pointer; }
-.ed-pack-link:hover .cal-ag-title { color: #ea580c; }
-.pack-ev-chip { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 0.64rem; font-weight: 800; color: #6b4226; background: #fff1e6; border: 1px solid #f3c9a4; border-radius: 999px; padding: 1px 7px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pack-ev-chip:hover { background: #ffe3cc; }
+.ed-pack-link { cursor: pointer; display: block; }
+.ed-pack-link:hover { filter: brightness(0.98); }
+.ed-pack-head { display: flex; align-items: center; gap: 10px; }
+.ed-pack-icon { width: 34px; height: 34px; flex: 0 0 auto; border-radius: 10px; background: #fff1e6; border: 1px solid #f3c9a4; display: grid; place-items: center; font-size: 1rem; }
+.ed-pack-name { font-weight: 800; color: #3e2723; font-size: 0.84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-pack-open { display: inline-flex; align-items: center; gap: 4px; margin-top: 8px; color: #ea580c; font-weight: 800; font-size: 0.74rem; }
+.ed-pack-open::after { content: '\203a'; font-weight: 900; }
+
+/* Linked-event pills on StudyPack cards (sidebar) */
+.pack-ev-chip {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  margin-top: 6px; padding: 5px 8px;
+  font-size: 0.68rem; font-weight: 800; color: #6b4226;
+  background: #fff7ef; border: 1px solid #f3c9a4; border-left: 4px solid #f97316;
+  border-radius: 10px; overflow: hidden; cursor: pointer;
+  transition: background 0.14s ease, transform 0.14s ease;
+}
+.pack-ev-chip:hover { background: #ffe3cc; transform: translateX(2px); }
+.pack-ev-chip .pec-icon { flex: 0 0 auto; }
+.pack-ev-chip .pec-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.pack-ev-chip .pec-date { flex: 0 0 auto; color: #8b5e3c; font-weight: 700; }
+.pack-ev-chip .pec-chev { flex: 0 0 auto; color: #c98a52; font-weight: 900; }
+
+/* Linked-event banner on the StudyPack screen */
+.pack-linked { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; }
+.pack-link-card {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  font-family: inherit; cursor: pointer;
+  background: #fffdfb; border: 1px solid #f0e4d8; border-left: 5px solid #f97316;
+  border-radius: 14px; padding: 10px 12px;
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+.pack-link-card:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(107, 66, 38, 0.12); }
+.plc-icon { font-size: 1.1rem; flex: 0 0 auto; }
+.plc-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.plc-title { font-weight: 800; color: #3e2723; font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plc-meta { font-size: 0.72rem; color: #8b5e3c; }
+.plc-badge { background: #f97316; color: #fff; font-size: 0.62rem; font-weight: 900; padding: 3px 8px; border-radius: 999px; white-space: nowrap; flex: 0 0 auto; }
+.plc-chevron { color: #c98a52; font-weight: 900; font-size: 1.1rem; flex: 0 0 auto; }
+
 html[data-theme='dark'] .pack-ev-chip { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); color: #ffe8d6; }
+html[data-theme='dark'] .pack-ev-chip .pec-date { color: #cbb4a2; }
+html[data-theme='dark'] .pack-link-card { background: #3a2a20; border-color: rgba(243, 231, 219, 0.12); }
+html[data-theme='dark'] .plc-title { color: #fff8f0; }
+html[data-theme='dark'] .plc-meta { color: #cbb4a2; }
+html[data-theme='dark'] .ed-pack-icon { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); }
+html[data-theme='dark'] .ed-pack-name { color: #fff8f0; }
 
 /* ---- Dark mode ---- */
 html[data-theme='dark'] .cal-shell { background: #33261e; border-color: rgba(243, 231, 219, 0.12); }
