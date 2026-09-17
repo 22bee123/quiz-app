@@ -6038,7 +6038,10 @@ function timeGridBlock(e, allDay, style) {
   let html = '<div class="tg-event ' + meta.cls + (allDay ? ' allday' : '') + '" data-ev="' + e.id + '" style="' + inline + '">';
   html += '<div class="tg-event-title">' + escapeHtml(e.title) + '</div>';
   if (!allDay) html += '<div class="tg-event-time">' + fmtRange(e.time, e.endTime) + '</div>';
+  const metaLine = [e.subject, e.location].filter(Boolean).join(' \u00b7 ');
+  if (metaLine) html += '<div class="tg-event-sub">' + escapeHtml(metaLine) + '</div>';
   if (pack) html += '<div class="tg-event-pack">\u{1F4DA} ' + escapeHtml(pack.name) + '</div>';
+  if (e.notes) html += '<div class="tg-event-notes">' + escapeHtml(e.notes) + '</div>';
   if (!allDay) html += '<span class="tg-resize" data-resize="' + e.id + '"></span>';
   html += '</div>';
   return html;
