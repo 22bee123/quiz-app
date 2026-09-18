@@ -7129,6 +7129,7 @@ html[data-theme='dark'] .head-icon-btn { background: #2f211a; border-color: rgba
 .tg-grid { display: grid; grid-template-columns: var(--tg-gutter, 60px) repeat(var(--tg-days, 7), minmax(0, 1fr)); position: relative; }
 .tg-gutter { position: relative; border-right: 1px solid #f4e9dd; }
 .tg-hour-label { position: absolute; right: 6px; transform: translateY(-50%); font-size: 11px; color: #b99c86; font-weight: 700; white-space: nowrap; }
+.tg-hour-label.first { transform: none; }
 .tg-col { position: relative; border-left: 1px solid #f4e9dd; min-width: 0; }
 .tg-col.today { background: rgba(249, 115, 22, 0.06); box-shadow: inset 3px 0 0 rgba(249, 115, 22, 0.5), inset -3px 0 0 rgba(249, 115, 22, 0.5); }
 .tg-col.drop { background: rgba(249, 115, 22, 0.1); }

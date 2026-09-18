@@ -5768,6 +5768,7 @@ let calDrag = null;
 let calSuppressClick = false;
 let calDraft = null;
 let calTodayKey = '';
+let calScrollTop = null;
 
 function calWidth() {
   return (window.innerWidth || document.documentElement.clientWidth || 0);
@@ -5883,6 +5884,7 @@ function openCalendar() {
   calSelectedDay = dkey(new Date());
   if (isMobileCal()) calView = 'day';
   if (calView === 'week') calCursor = startOfWeek(calCursor);
+  calScrollTop = null;
   setCalView(calView, true);
   calLastBreakpoint = calBreakpoint();
   renderCalendar();
@@ -5895,6 +5897,7 @@ function closeCalendar() { setActiveNav(null); }
 
 function setCalView(view, silent) {
   if (view === 'week' && calView !== 'week') calCursor = startOfWeek(calCursor);
+  if (view !== calView) calScrollTop = null;
   calView = view;
   document.querySelectorAll('.cal-view').forEach((b) => {
     const on = b.dataset.view === view;
@@ -5923,7 +5926,18 @@ function renderCalendar() {
   }
   updateCalendarBadge();
   calTodayKey = dkey(new Date());
-  if (calView === 'day' || calView === 'week') autoScrollTimeGrid();
+  const scroller = document.querySelector('.tg-scroll');
+  if (scroller) {
+    scroller.addEventListener('scroll', () => { calScrollTop = scroller.scrollTop; }, { passive: true });
+    if (calScrollTop == null) {
+      const now = new Date();
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      scroller.scrollTop = Math.max(0, (nowMin / 60) * CAL_HOUR_H - CAL_HOUR_H * 2);
+      calScrollTop = scroller.scrollTop;
+    } else {
+      scroller.scrollTop = calScrollTop;
+    }
+  }
   refreshPanel();
 }
 
@@ -5933,14 +5947,6 @@ function updateNowLine() {
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   line.style.top = (nowMin / 60 * CAL_HOUR_H) + 'px';
-}
-
-function autoScrollTimeGrid() {
-  const scroll = document.querySelector('.tg-scroll');
-  if (!scroll) return;
-  const now = new Date();
-  const nowMin = now.getHours() * 60 + now.getMinutes();
-  scroll.scrollTop = Math.max(0, (nowMin / 60) * CAL_HOUR_H - CAL_HOUR_H * 2);
 }
 
 /* Time grid for Day / Week */
@@ -5979,7 +5985,8 @@ function renderTimeGrid(numDays, startDate) {
   html += '<div class="tg-scroll"><div class="tg-grid" style="height:' + totalH + 'px">';
   html += '<div class="tg-gutter">';
   for (let h = 0; h < 24; h++) {
-    html += '<div class="tg-hour-label" style="top:' + (h * CAL_HOUR_H) + 'px">' + hourLabel(h) + '</div>';
+    if (h === 0) html += '<div class="tg-hour-label first" style="top:2px">' + hourLabel(h) + '</div>';
+    else html += '<div class="tg-hour-label" style="top:' + (h * CAL_HOUR_H) + 'px">' + hourLabel(h) + '</div>';
   }
   html += '</div>';
 
@@ -6847,6 +6854,10 @@ function wireCalendar() {
   if (body) {
     body.addEventListener('click', onCalBodyClick);
     body.addEventListener('mousedown', onCalMouseDown);
+    body.addEventListener('scroll', (e) => {
+      const t = e.target;
+      if (t && t.classList && t.classList.contains('tg-scroll')) calScrollTop = t.scrollTop;
+    }, true);
   }
 
   // Shift + wheel (or trackpad horizontal swipe):
@@ -6864,7 +6875,7 @@ function wireCalendar() {
       const sc = document.getElementById('cal-main-body');
       if (sc && sc.scrollWidth > sc.clientWidth + 1) { sc.scrollLeft += delta; return; }
       const now = Date.now();
-      if (now - wheelNavAt < 140) return;
+      if (now - wheelNavAt < 90) return;
       wheelNavAt = now;
       if (calView === 'day' || calView === 'week') calCursor = addDays(calCursor, delta > 0 ? 1 : -1);
       else calCursor.setMonth(calCursor.getMonth() + (delta > 0 ? 1 : -1));
