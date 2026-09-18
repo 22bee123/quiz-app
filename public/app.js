@@ -5749,6 +5749,47 @@ function refreshCalendarLinks() {
 const CAL_HOUR_H = 44;
 const CAL_GUTTER = 48;
 const CAL_SNAP = 15;
+const CAL_SMOOTH = 0.18;
+const _calSmooth = new WeakMap();
+
+function calReducedMotion() {
+  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+function calSmoothDelta(e, axis) {
+  let d = axis === 'y' ? e.deltaY : (e.deltaX || e.deltaY);
+  if (e.deltaMode === 1) d *= 16;
+  else if (e.deltaMode === 2) d *= (axis === 'y' ? window.innerHeight : window.innerWidth);
+  return d;
+}
+function calSmoothScroll(el, axis, delta) {
+  if (!el) return;
+  const max = axis === 'y' ? el.scrollHeight - el.clientHeight : el.scrollWidth - el.clientWidth;
+  if (max <= 0) return;
+  if (calReducedMotion()) { if (axis === 'y') el.scrollTop += delta; else el.scrollLeft += delta; return; }
+  let s = _calSmooth.get(el);
+  if (!s) { s = { target: axis === 'y' ? el.scrollTop : el.scrollLeft, raf: 0, axis }; _calSmooth.set(el, s); }
+  s.axis = axis;
+  const cur = axis === 'y' ? el.scrollTop : el.scrollLeft;
+  s.target = Math.max(0, Math.min(max, s.target + delta));
+  if (!s.raf) s.raf = requestAnimationFrame(() => calSmoothStep(el));
+}
+function calSmoothStep(el) {
+  const s = _calSmooth.get(el);
+  if (!s) return;
+  const axis = s.axis;
+  const cur = axis === 'y' ? el.scrollTop : el.scrollLeft;
+  const max = axis === 'y' ? el.scrollHeight - el.clientHeight : el.scrollWidth - el.clientWidth;
+  const target = Math.max(0, Math.min(max, s.target));
+  if (Math.abs(target - cur) < 0.6) {
+    if (axis === 'y') el.scrollTop = target; else el.scrollLeft = target;
+    s.target = target;
+    s.raf = 0;
+    return;
+  }
+  const next = cur + (target - cur) * CAL_SMOOTH;
+  if (axis === 'y') el.scrollTop = next; else el.scrollLeft = next;
+  s.raf = requestAnimationFrame(() => calSmoothStep(el));
+}
 
 let events = [];
 try { events = JSON.parse(localStorage.getItem('buckEvents') || '[]'); } catch (e) { events = []; }
@@ -5769,6 +5810,7 @@ let calSuppressClick = false;
 let calDraft = null;
 let calTodayKey = '';
 let calScrollTop = null;
+let calNavDir = 0;
 
 function calWidth() {
   return (window.innerWidth || document.documentElement.clientWidth || 0);
@@ -5923,12 +5965,25 @@ function renderCalendar() {
     if (calView === 'month') body.innerHTML = renderMonth();
     else if (calView === 'agenda') body.innerHTML = renderAgenda();
     else body.innerHTML = renderTimeGrid(calView === 'day' ? 1 : 7, calView === 'day' ? new Date(calCursor) : new Date(calCursor));
+    const tgEl = body.querySelector('.tg');
+    if (tgEl && calNavDir && !calReducedMotion()) {
+      const cls = calNavDir > 0 ? 'slide-left' : 'slide-right';
+      tgEl.classList.add(cls);
+      setTimeout(() => tgEl.classList.remove(cls), 260);
+    }
   }
+  calNavDir = 0;
   updateCalendarBadge();
   calTodayKey = dkey(new Date());
   const scroller = document.querySelector('.tg-scroll');
   if (scroller) {
     scroller.addEventListener('scroll', () => { calScrollTop = scroller.scrollTop; }, { passive: true });
+    scroller.addEventListener('wheel', (e) => {
+      if (e.defaultPrevented || e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      if (scroller.scrollHeight <= scroller.clientHeight) return;
+      e.preventDefault();
+      calSmoothScroll(scroller, 'y', calSmoothDelta(e, 'y'));
+    }, { passive: false });
     if (calScrollTop == null) {
       const now = new Date();
       const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -6867,18 +6922,20 @@ function wireCalendar() {
   if (calScreenEl) {
     let wheelNavAt = 0;
     calScreenEl.addEventListener('wheel', (e) => {
+      if (e.defaultPrevented) return;
       const horizontal = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
       if (!horizontal) return;
       const delta = e.shiftKey ? (e.deltaY || e.deltaX || 0) : e.deltaX;
       if (!delta) return;
       e.preventDefault();
       const sc = document.getElementById('cal-main-body');
-      if (sc && sc.scrollWidth > sc.clientWidth + 1) { sc.scrollLeft += delta; return; }
+      if (sc && sc.scrollWidth > sc.clientWidth + 1) { calSmoothScroll(sc, 'x', delta); return; }
       const now = Date.now();
       if (now - wheelNavAt < 90) return;
       wheelNavAt = now;
       if (calView === 'day' || calView === 'week') calCursor = addDays(calCursor, delta > 0 ? 1 : -1);
       else calCursor.setMonth(calCursor.getMonth() + (delta > 0 ? 1 : -1));
+      calNavDir = delta > 0 ? 1 : -1;
       renderCalendar();
     }, { passive: false });
   }

@@ -7105,6 +7105,10 @@ html[data-theme='dark'] .head-icon-btn { background: #2f211a; border-color: rgba
 
 /* ---------- Time grid (Day / Week) ---------- */
 .tg { background: #fffdfb; border: 1px solid #f0e4d8; border-radius: 16px; overflow: hidden; }
+.tg.slide-left { animation: tgSlideLeft 0.22s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.tg.slide-right { animation: tgSlideRight 0.22s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes tgSlideLeft { from { opacity: 0.35; transform: translateX(26px); } to { opacity: 1; transform: none; } }
+@keyframes tgSlideRight { from { opacity: 0.35; transform: translateX(-26px); } to { opacity: 1; transform: none; } }
 .tg-head {
   display: grid; grid-template-columns: var(--tg-gutter, 60px) repeat(var(--tg-days, 7), minmax(0, 1fr));
   background: #fffdfb; border-bottom: 1px solid #f0e4d8;
