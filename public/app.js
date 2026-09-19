@@ -255,6 +255,7 @@ fileInput.addEventListener('change', (e) => {
 });
 
 function openCreate(source) {
+  if (!requireAuth()) return;
   if (!requireHearts()) return;
   createMode = hostingRoom ? 'choice' : 'flashcard';
   createModal.classList.remove('hidden');
@@ -1369,6 +1370,7 @@ function renderWeek(el) {
 }
 
 function openProgress() {
+  if (!requireAuth()) return;
   renderProgressModal();
   document.getElementById('progress-modal').classList.remove('hidden');
 }
@@ -1448,6 +1450,7 @@ function genRoomCode() {
 }
 
 function openLive() {
+  if (!requireAuth()) return;
   stopRoomPoll();
   roomPlayers = [];
   document.getElementById('live-lobby').classList.remove('hidden');
@@ -2887,6 +2890,7 @@ function toggleWordHighlight(item, field, wi) {
 }
 
 function openPack(id) {
+  if (!requireAuth()) return;
   const pack = getPack(id);
   if (!pack) return;
   currentPackId = id;
@@ -3113,6 +3117,7 @@ function setAddQType(type) {
 }
 
 function openAddQ() {
+  if (!requireAuth()) return;
   if (!currentPackId) return;
   addqEditIndex = -1;
   document.getElementById('addq-title').textContent = 'Add a question';
@@ -3938,6 +3943,7 @@ function initSupabase() {
   fetch('/api/config')
     .then((res) => res.json())
     .then((cfg) => {
+      cleanupExpiredDemo();
       const canAuth = !!(cfg.authEnabled && window.supabase);
       if (canAuth) {
         authEnabled = true;
@@ -4129,6 +4135,26 @@ function requireAuth() {
   showAuthGate();
   return false;
 }
+function isAuthed() { return isDemo() || !authEnabled || !!currentUser; }
+
+// Hard gate: when accounts are enabled and nobody is signed in, block every
+// interaction outside the auth / signup / demo UI so the app can't be used.
+function installAuthGuard() {
+  const allowed = (t) => t && t.closest && (
+    t.closest('#auth-screen') || t.closest('#signup-modal') ||
+    t.closest('#demo-modal') || t.closest('#toast') || t.closest('#gate-loading')
+  );
+  const handler = (e) => {
+    if (isAuthed()) return;
+    if (allowed(e.target)) return;
+    if (e.cancelable) e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'click' || e.type === 'mousedown' || e.type === 'pointerdown') showAuthGate();
+  };
+  ['click', 'mousedown', 'pointerdown', 'drop', 'dragover'].forEach((type) =>
+    document.addEventListener(type, handler, true)
+  );
+}
 
 /* ---------------- Demo mode ---------------- */
 const DEMO_MS = 60 * 60 * 1000;        // 1 hour
@@ -4144,7 +4170,15 @@ function demoPersist() {
   try { if (demo) localStorage.setItem('buckDemo', JSON.stringify(demo)); else localStorage.removeItem('buckDemo'); } catch (e) {}
 }
 function isDemo() { return !!(demo && demo.active && Date.now() < demo.expiresAt); }
-function demoExpired() { return !!(demo && demo.active && Date.now() >= demo.expiresAt); }
+function demoExpired() { return !!(demo && Date.now() >= demo.expiresAt); }
+function hasResumableDemo() { return !!(demo && demo.expiresAt && Date.now() < demo.expiresAt); }
+function cleanupExpiredDemo() {
+  if (demo && demo.expiresAt && Date.now() >= demo.expiresAt) {
+    clearDemoData();
+    demo = null;
+    demoPersist();
+  }
+}
 function demoRemainingMs() { return isDemo() ? Math.max(0, demo.expiresAt - Date.now()) : 0; }
 function demoPackUsed() {
   if (!isDemo()) return false;
@@ -4167,6 +4201,13 @@ function demoTimeLeft() {
 }
 
 function startDemo() {
+  if (hasResumableDemo()) {
+    demo.active = true;
+    demoPersist();
+    enterDemo();
+    showToast('Welcome back to the demo \u2014 ' + demoTimeLeft() + '.', 'correct');
+    return;
+  }
   try { localStorage.removeItem('buckDemoPackCreated'); } catch (e) {}
   demo = { active: true, startedAt: Date.now(), expiresAt: Date.now() + DEMO_MS, packs: 0 };
   demoPersist();
@@ -4203,9 +4244,16 @@ function resumeDemo() {
 function endDemo(reason) {
   stopDemoTimer();
   const expired = reason === 'expired';
-  if (expired) clearDemoData();
-  demo = null;
-  demoPersist();
+  if (expired) {
+    clearDemoData();
+    demo = null;
+    demoPersist();
+  } else if (demo) {
+    // Exiting without expiry keeps the record so re-entering resumes the same
+    // session (same time left + same pack already used).
+    demo.active = false;
+    demoPersist();
+  }
   currentUser = null;
   updateAuthUI();
   renderDemoPill();
@@ -5446,6 +5494,7 @@ function closeMobileSidebar() {
 }
 
 function openSettings() {
+  if (!requireAuth()) return;
   settingsOptions.querySelectorAll('.settings-option').forEach((btn) => {
     btn.classList.toggle('active', parseInt(btn.dataset.count, 10) === quizLength);
   });
@@ -5665,6 +5714,7 @@ function escapeHtml(str) {
 }
 
 initSupabase();
+installAuthGuard();
 wireSidebar();
 wireDeck();
 wireHome();
