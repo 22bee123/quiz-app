@@ -689,7 +689,7 @@ async function startGeneration(count) {
     showGenerationError({ code: 'NO_HEARTS' });
     return;
   }
-  if (isDemo() && (demo.packs || 0) >= DEMO_MAX_PACKS) {
+  if (isDemo() && demoPackUsed()) {
     closeCreate();
     stopCreateLoading();
     demoUpsellFeature('packs');
@@ -709,7 +709,7 @@ async function startGeneration(count) {
     sourceText: activeContent.text || '',
     sourceName: activeContent.name || 'StudyPack',
   });
-  if (isDemo()) { demo.packs = (demo.packs || 0) + 1; demoPersist(); renderDemoPill(); }
+  if (!pack) { closeCreate(); stopCreateLoading(); return; }
   genState = { packId: pack.id, target, cancelled: false, controller: null, seen: new Set(), error: null, running: true };
   closeCreate();
   stopCreateLoading();
@@ -1448,7 +1448,6 @@ function genRoomCode() {
 }
 
 function openLive() {
-  if (isDemo()) { demoUpsellFeature('live'); return; }
   stopRoomPoll();
   roomPlayers = [];
   document.getElementById('live-lobby').classList.remove('hidden');
@@ -1717,7 +1716,6 @@ let outgoingIds = new Set();
 let friendProfilesById = {};
 
 function openFriends() {
-  if (isDemo()) { demoUpsellFeature('friends'); return; }
   if (!currentUser) {
     showAuthGate();
     return;
@@ -2234,7 +2232,6 @@ function widgetIsOpen() {
 
 // Messages sidebar (conversation list drawer)
 function openMessages() {
-  if (isDemo()) { demoUpsellFeature('messages'); return; }
   if (!currentUser) { showAuthGate(); return; }
   setActiveNav('messages');
   chatSide.classList.remove('hidden', 'closing');
@@ -2693,6 +2690,7 @@ function newPackId() {
 }
 
 function addPack(name, items, meta) {
+  if (!demoClaimPack()) { demoUpsellFeature('packs'); return null; }
   const pack = {
     id: newPackId(),
     name: name || 'StudyPack',
@@ -4130,6 +4128,19 @@ function demoPersist() {
 function isDemo() { return !!(demo && demo.active && Date.now() < demo.expiresAt); }
 function demoExpired() { return !!(demo && demo.active && Date.now() >= demo.expiresAt); }
 function demoRemainingMs() { return isDemo() ? Math.max(0, demo.expiresAt - Date.now()) : 0; }
+function demoPackUsed() {
+  if (!isDemo()) return false;
+  try { return !!localStorage.getItem('buckDemoPackCreated'); } catch (e) { return (demo.packs || 0) >= DEMO_MAX_PACKS; }
+}
+function demoClaimPack() {
+  if (!isDemo()) return true;
+  if (demoPackUsed()) return false;
+  try { localStorage.setItem('buckDemoPackCreated', String(Date.now())); } catch (e) {}
+  demo.packs = 1;
+  demoPersist();
+  renderDemoPill();
+  return true;
+}
 function demoTimeLeft() {
   const s = Math.floor(demoRemainingMs() / 1000);
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -4138,6 +4149,7 @@ function demoTimeLeft() {
 }
 
 function startDemo() {
+  try { localStorage.removeItem('buckDemoPackCreated'); } catch (e) {}
   demo = { active: true, startedAt: Date.now(), expiresAt: Date.now() + DEMO_MS, packs: 0 };
   demoPersist();
   enterDemo();
@@ -4178,6 +4190,7 @@ function clearDemoData() {
   try { if (typeof events !== 'undefined') { events = []; saveEventsLocal(); renderCalendar(); } } catch (e) {}
   try { localStorage.removeItem('buckDemoHistory'); } catch (e) {}
   try { localStorage.removeItem('buckRemindersFired'); } catch (e) {}
+  try { localStorage.removeItem('buckDemoPackCreated'); } catch (e) {}
   historyEntries = [];
 }
 
@@ -4199,7 +4212,7 @@ function renderDemoPill() {
   if (!pill) return;
   if (!isDemo()) { pill.classList.add('hidden'); return; }
   pill.classList.remove('hidden');
-  const packsLeft = Math.max(0, DEMO_MAX_PACKS - (demo.packs || 0));
+  const packsLeft = demoPackUsed() ? 0 : DEMO_MAX_PACKS;
   if (text) text.textContent = demoTimeLeft() + ' \u00b7 ' + packsLeft + ' pack' + (packsLeft === 1 ? '' : 's') + ' left';
 }
 
