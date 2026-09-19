@@ -7661,6 +7661,8 @@ html[data-theme='dark'] .gen-error-msg { color: #cbb4a2; }
 .demo-pill-text { white-space: nowrap; }
 .demo-pill-cta { border: none; background: #6b4226; color: #fff8f0; font-family: inherit; font-weight: 800; font-size: 0.74rem; padding: 7px 12px; border-radius: 999px; cursor: pointer; }
 .demo-pill-cta:hover { background: #7d5131; }
+.demo-pill-exit { border: none; background: transparent; color: #b99c86; font-size: 1.15rem; line-height: 1; cursor: pointer; padding: 4px 9px; border-radius: 999px; }
+.demo-pill-exit:hover { background: #fff1e6; color: #b91c1c; }
 
 .demo-card { max-width: 380px; text-align: center; }
 .demo-buck { width: 64px; height: 64px; border-radius: 16px; margin: 4px auto 10px; display: block; }
@@ -7672,3 +7674,5 @@ html[data-theme='dark'] .gen-error-msg { color: #cbb4a2; }
 
 html[data-theme='dark'] .demo-pill { background: #3a2a20; border-color: rgba(243, 231, 219, 0.16); color: #ffe8d6; }
 html[data-theme='dark'] .demo-pill-cta { background: #f97316; color: #fff; }
+html[data-theme='dark'] .demo-pill-exit { color: #cbb4a2; }
+html[data-theme='dark'] .demo-pill-exit:hover { background: #2f211a; color: #fca5a5; }

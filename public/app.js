@@ -102,7 +102,6 @@ const navAvatar = document.getElementById('nav-avatar');
 const navAccountName = document.getElementById('nav-account-name');
 const navAccountEmail = document.getElementById('nav-account-email');
 const navSignout = document.getElementById('nav-signout');
-const navLogout = document.getElementById('nav-logout');
 const pinnedWrap = document.getElementById('pinned-wrap');
 const pinnedList = document.getElementById('pinned-list');
 const recentWrap = document.getElementById('recent-wrap');
@@ -4025,7 +4024,9 @@ function wireAuthUI() {
     await supabaseClient.auth.signOut();
   };
   navSignout.addEventListener('click', doSignOut);
-  if (navLogout) navLogout.addEventListener('click', doSignOut);
+
+  const demoExit = document.getElementById('demo-pill-exit');
+  if (demoExit) demoExit.addEventListener('click', () => endDemo('left'));
 
   gatePassToggle.addEventListener('click', () => {
     const show = gatePassword.type === 'password';
@@ -4326,13 +4327,11 @@ function updateAuthUI() {
       ? '<img src="' + p.avatar + '" alt="" />'
       : escapeHtml((p.name || p.username || p.email || '?')[0].toUpperCase());
     navSignout.classList.remove('hidden');
-    if (navLogout) navLogout.classList.remove('hidden');
   } else {
     navAccountName.textContent = 'Sign in';
     navAccountEmail.textContent = '';
     navAvatar.innerHTML = '';
     navSignout.classList.add('hidden');
-    if (navLogout) navLogout.classList.add('hidden');
   }
 }
 
