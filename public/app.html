@@ -179,6 +179,11 @@
               </button>
             </div>
 
+            <button type="button" class="btn btn-ghost demo-btn" id="gate-demo">
+              <span class="btn-label">&#127891; Try the demo &mdash; no signup</span>
+            </button>
+            <p class="auth-hint demo-note">1 free StudyPack &bull; expires in 1 hour</p>
+
             <p class="auth-switch">Don't have an account? <button type="button" class="link-btn" id="gate-signup-link">Sign up</button></p>
             <p id="gate-hint" class="auth-hint"></p>
           </div>
@@ -1172,5 +1177,29 @@
 
   <canvas id="confetti" aria-hidden="true"></canvas>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- Demo mode pill -->
+  <div id="demo-pill" class="demo-pill hidden" role="status">
+    <span class="demo-badge">DEMO</span>
+    <span class="demo-pill-text" id="demo-pill-text">1 hour left</span>
+    <button type="button" class="demo-pill-cta" id="demo-pill-cta">Create account</button>
+  </div>
+
+  <!-- Demo upsell modal -->
+  <div id="demo-modal" class="modal hidden">
+    <div class="modal-backdrop" id="demo-backdrop"></div>
+    <div class="modal-card demo-card">
+      <div class="modal-head">
+        <h3 id="demo-title">Unlock with a free account</h3>
+        <button id="demo-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <img class="demo-buck" src="/buck-svg/thinking.svg?v=3" alt="Buck the Duck" />
+      <p class="demo-message" id="demo-message"></p>
+      <div class="modal-actions">
+        <button id="demo-cancel" class="btn btn-secondary" type="button">Keep exploring</button>
+        <button id="demo-signup" class="btn btn-primary" type="button">Create free account</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

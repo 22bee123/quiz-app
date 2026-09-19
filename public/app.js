@@ -691,8 +691,15 @@ async function startGeneration(count) {
     showGenerationError({ code: 'NO_HEARTS' });
     return;
   }
+  if (isDemo() && (demo.packs || 0) >= DEMO_MAX_PACKS) {
+    closeCreate();
+    stopCreateLoading();
+    demoUpsellFeature('packs');
+    return;
+  }
 
-  const target = Math.min(count, activeContent.images ? 40 : 200);
+  let target = Math.min(count, activeContent.images ? 40 : 200);
+  if (isDemo()) target = Math.min(target, DEMO_MAX_CARDS);
   lastGenerationCount = target;
   lastVisionPages = (activeContent.images && activeContent.images.length) || 0;
   lastGenError = null;
@@ -704,6 +711,7 @@ async function startGeneration(count) {
     sourceText: activeContent.text || '',
     sourceName: activeContent.name || 'StudyPack',
   });
+  if (isDemo()) { demo.packs = (demo.packs || 0) + 1; demoPersist(); renderDemoPill(); }
   genState = { packId: pack.id, target, cancelled: false, controller: null, seen: new Set(), error: null, running: true };
   closeCreate();
   stopCreateLoading();
@@ -1442,6 +1450,7 @@ function genRoomCode() {
 }
 
 function openLive() {
+  if (isDemo()) { demoUpsellFeature('live'); return; }
   stopRoomPoll();
   roomPlayers = [];
   document.getElementById('live-lobby').classList.remove('hidden');
@@ -1710,6 +1719,7 @@ let outgoingIds = new Set();
 let friendProfilesById = {};
 
 function openFriends() {
+  if (isDemo()) { demoUpsellFeature('friends'); return; }
   if (!currentUser) {
     showAuthGate();
     return;
@@ -2226,6 +2236,7 @@ function widgetIsOpen() {
 
 // Messages sidebar (conversation list drawer)
 function openMessages() {
+  if (isDemo()) { demoUpsellFeature('messages'); return; }
   if (!currentUser) { showAuthGate(); return; }
   setActiveNav('messages');
   chatSide.classList.remove('hidden', 'closing');
@@ -2531,6 +2542,7 @@ async function refreshMessages(force) {
 }
 
 function startMessagePolling() {
+  if (isDemo()) return;
   if (msgPollTimer) return;
   refreshMessages(true);
   msgPollTimer = setInterval(() => refreshMessages(false), 4000); // polling fallback (no websockets needed)
@@ -3916,40 +3928,47 @@ function initSupabase() {
   fetch('/api/config')
     .then((res) => res.json())
     .then((cfg) => {
-      if (!cfg.authEnabled || !window.supabase) {
-        resetToUpload();
-        return;
+      const canAuth = !!(cfg.authEnabled && window.supabase);
+      if (canAuth) {
+        authEnabled = true;
+        supabaseClient = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
       }
-      authEnabled = true;
-      supabaseClient = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
       wireAuthUI();
-      supabaseClient.auth.onAuthStateChange((event, session) => {
-        currentUser = session && session.user ? session.user : null;
-        updateAuthUI();
-        if (currentUser) {
-          loadHistory();
-          resetToUpload();
-          startMessagePolling();
-          renderMessagesBadge();
-          onAuthChangedCalendar();
-        } else {
-          hideHistory();
-          showAuthGate();
-        }
-      });
-      supabaseClient.auth.getUser().then(({ data }) => {
-        currentUser = data.user || null;
-        updateAuthUI();
-        if (currentUser) {
-          loadHistory();
-          resetToUpload();
-          startMessagePolling();
-          renderMessagesBadge();
-          onAuthChangedCalendar();
-        } else {
-          showAuthGate();
-        }
-      });
+
+      const onSignedIn = () => {
+        if (isDemo()) { stopDemoTimer(); demo = null; demoPersist(); renderDemoPill(); }
+        loadHistory();
+        resetToUpload();
+        startMessagePolling();
+        renderMessagesBadge();
+        onAuthChangedCalendar();
+      };
+      const onSignedOut = () => {
+        hideHistory();
+        if (isDemo()) { resumeDemo(); resetToUpload(); return; }
+        if (demoExpired()) { demo = null; demoPersist(); }
+        showAuthGate();
+      };
+
+      if (canAuth) {
+        supabaseClient.auth.onAuthStateChange((event, session) => {
+          const u = session && session.user ? session.user : null;
+          if (u) { currentUser = u; updateAuthUI(); onSignedIn(); }
+          else if (!isDemo()) { currentUser = null; updateAuthUI(); onSignedOut(); }
+        });
+        supabaseClient.auth.getUser().then(({ data }) => {
+          const u = data.user || null;
+          if (u) { currentUser = u; updateAuthUI(); onSignedIn(); }
+          else if (isDemo()) { resumeDemo(); resetToUpload(); }
+          else { currentUser = null; updateAuthUI(); onSignedOut(); }
+        });
+      } else if (isDemo()) {
+        resumeDemo();
+        resetToUpload();
+      } else {
+        if (demoExpired()) { demo = null; demoPersist(); }
+        resetToUpload();
+      }
     })
     .catch(() => {});
 }
@@ -3991,6 +4010,7 @@ function wireAuthUI() {
     else showAuthGate();
   });
   navSignout.addEventListener('click', async () => {
+    if (isDemo()) { endDemo('left'); return; }
     await supabaseClient.auth.signOut();
   });
 
@@ -4005,6 +4025,18 @@ function wireAuthUI() {
   gateForgot.addEventListener('click', () => forgotPassword());
   gateSignupLink.addEventListener('click', openSignup);
   gateForm.addEventListener('submit', handleGateSubmit);
+
+  const demoBtn = document.getElementById('gate-demo');
+  if (demoBtn) demoBtn.addEventListener('click', startDemo);
+
+  const pillCta = document.getElementById('demo-pill-cta');
+  if (pillCta) pillCta.addEventListener('click', () => { openSignup(); });
+
+  const demoSignup = document.getElementById('demo-signup');
+  if (demoSignup) demoSignup.addEventListener('click', () => { hideDemoUpsell(); openSignup(); });
+  ['demo-close', 'demo-cancel'].forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener('click', hideDemoUpsell); });
+  const demoBackdrop = document.getElementById('demo-backdrop');
+  if (demoBackdrop) demoBackdrop.addEventListener('click', hideDemoUpsell);
 
   wireSignup();
   wireProfile();
@@ -4080,10 +4112,129 @@ async function handleGateSubmit(e) {
 }
 
 function requireAuth() {
+  if (isDemo()) return true;
   if (!authEnabled || currentUser) return true;
   showAuthGate();
   return false;
 }
+
+/* ---------------- Demo mode ---------------- */
+const DEMO_MS = 60 * 60 * 1000;        // 1 hour
+const DEMO_MAX_PACKS = 1;
+const DEMO_MAX_CARDS = 15;
+const DEMO_USER = { id: 'demo-user', email: 'demo@bucktheduck.app', user_metadata: { full_name: 'Demo Duck', username: 'demo', role: 'student' } };
+
+let demo = null;
+let demoTimer = null;
+try { demo = JSON.parse(localStorage.getItem('buckDemo') || 'null'); } catch (e) { demo = null; }
+
+function demoPersist() {
+  try { if (demo) localStorage.setItem('buckDemo', JSON.stringify(demo)); else localStorage.removeItem('buckDemo'); } catch (e) {}
+}
+function isDemo() { return !!(demo && demo.active && Date.now() < demo.expiresAt); }
+function demoExpired() { return !!(demo && demo.active && Date.now() >= demo.expiresAt); }
+function demoRemainingMs() { return isDemo() ? Math.max(0, demo.expiresAt - Date.now()) : 0; }
+function demoTimeLeft() {
+  const s = Math.floor(demoRemainingMs() / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (h > 0) return h + 'h ' + String(m).padStart(2, '0') + 'm left';
+  return m + ':' + String(sec).padStart(2, '0') + ' left';
+}
+
+function startDemo() {
+  demo = { active: true, startedAt: Date.now(), expiresAt: Date.now() + DEMO_MS, packs: 0 };
+  demoPersist();
+  enterDemo();
+  showToast('Demo started \u2014 ' + DEMO_MAX_PACKS + ' StudyPack for 1 hour. Enjoy! \u{1F986}', 'correct');
+}
+
+function enterDemo() {
+  currentUser = Object.assign({}, DEMO_USER);
+  updateAuthUI();
+  renderDemoPill();
+  ensureDemoTimer();
+  resetToUpload();
+}
+
+function resumeDemo() {
+  currentUser = Object.assign({}, DEMO_USER);
+  updateAuthUI();
+  renderDemoPill();
+  ensureDemoTimer();
+}
+
+function endDemo(reason) {
+  stopDemoTimer();
+  const expired = reason === 'expired';
+  if (expired) clearDemoData();
+  demo = null;
+  demoPersist();
+  currentUser = null;
+  updateAuthUI();
+  renderDemoPill();
+  showAuthGate();
+  if (expired) gateHint.textContent = 'Your demo has ended. Create a free account to keep your progress.';
+  else if (reason === 'convert') { openSignup(); }
+}
+
+function clearDemoData() {
+  try { studyPacks = []; savePacks(); renderStudyPackList(); } catch (e) {}
+  try { if (typeof events !== 'undefined') { events = []; saveEventsLocal(); renderCalendar(); } } catch (e) {}
+  try { localStorage.removeItem('buckDemoHistory'); } catch (e) {}
+  try { localStorage.removeItem('buckRemindersFired'); } catch (e) {}
+  historyEntries = [];
+}
+
+function ensureDemoTimer() {
+  if (demoTimer) return;
+  demoTimer = setInterval(() => {
+    if (!demo) { stopDemoTimer(); return; }
+    if (Date.now() >= demo.expiresAt) { endDemo('expired'); return; }
+    renderDemoPill();
+  }, 1000);
+}
+function stopDemoTimer() {
+  if (demoTimer) { clearInterval(demoTimer); demoTimer = null; }
+}
+
+function renderDemoPill() {
+  const pill = document.getElementById('demo-pill');
+  const text = document.getElementById('demo-pill-text');
+  if (!pill) return;
+  if (!isDemo()) { pill.classList.add('hidden'); return; }
+  pill.classList.remove('hidden');
+  const packsLeft = Math.max(0, DEMO_MAX_PACKS - (demo.packs || 0));
+  if (text) text.textContent = demoTimeLeft() + ' \u00b7 ' + packsLeft + ' pack' + (packsLeft === 1 ? '' : 's') + ' left';
+}
+
+function showDemoUpsell(title, message) {
+  const t = document.getElementById('demo-title');
+  const m = document.getElementById('demo-message');
+  if (t) t.textContent = title;
+  if (m) m.textContent = message;
+  const modal = document.getElementById('demo-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+function hideDemoUpsell() { const m = document.getElementById('demo-modal'); if (m) m.classList.add('hidden'); }
+
+function demoUpsellFeature(feature) {
+  const msgs = {
+    live: 'Create a free account to host or join Live quiz rooms with your classmates.',
+    friends: 'Create a free account to add friends, compare streaks and study together.',
+    messages: 'Create a free account to message your friends and share StudyPacks.',
+    packs: 'You\u2019ve used your 1 demo StudyPack. Create a free account to generate as many as you like.',
+    generic: 'Create a free account to unlock the full Buck experience.',
+  };
+  const titles = {
+    live: 'Live rooms are for members',
+    friends: 'Friends are for members',
+    messages: 'Messages are for members',
+    packs: 'That\u2019s the demo limit',
+    generic: 'Unlock with a free account',
+  };
+  showDemoUpsell(titles[feature] || titles.generic, msgs[feature] || msgs.generic);
+}
+
 
 /* ---------------- Profile data helpers ---------------- */
 
@@ -4170,6 +4321,7 @@ const SCHOOL_CACHE_TTL = 24 * 60 * 60 * 1000;
 const HIPOLABS_URL = 'https://universities.hipolabs.com/search?name=';
 
 let suStep = 1;
+let suAwaitingConfirm = false;
 let suSchool = null; // { name, country, domain, logo, manual }
 let suSchoolTimer = null;
 let suSchoolSeq = 0;
@@ -4749,19 +4901,22 @@ async function createAccount() {
 }
 
 function renderWelcome(confirmEmail) {
+  suAwaitingConfirm = !!confirmEmail;
   const p = {
     name: document.getElementById('su-name').value.trim() || 'friend',
     username: renameClean(document.getElementById('su-username').value),
     role: suRole,
     school: document.getElementById('su-school-input').value.trim(),
   };
-  document.getElementById('su-welcome-title').textContent = 'Welcome aboard, ' + p.name + '! 🎉';
+  document.getElementById('su-welcome-title').textContent = confirmEmail ? 'Almost there, ' + p.name + '!' : 'Welcome aboard, ' + p.name + '! 🎉';
+  const startBtn = document.getElementById('su-start');
+  if (startBtn) startBtn.textContent = confirmEmail ? 'Back to log in' : 'Start studying';
   const summary = document.getElementById('su-summary');
   summary.innerHTML =
     '<li><span>Role</span><span>' + escapeHtml(lookProfileRoleLabel(p.role)) + '</span></li>' +
     '<li><span>Username</span><span>@' + escapeHtml(p.username) + '</span></li>' +
     (p.school ? '<li><span>School</span><span>' + escapeHtml(p.school) + '</span></li>' : '') +
-    (confirmEmail ? '<li><span>Next</span><span>Confirm your email</span></li>' : '');
+    (confirmEmail ? '<li><span>Next</span><span>Confirm your email, then log in</span></li>' : '');
 }
 
 function wireSignup() {
@@ -4792,6 +4947,11 @@ function wireSignup() {
 
   document.getElementById('su-start').addEventListener('click', () => {
     closeSignup();
+    if (suAwaitingConfirm) {
+      showAuthGate();
+      gateHint.textContent = 'Confirm your email, then log in to start studying.';
+      return;
+    }
     resetToUpload();
   });
 
@@ -5303,6 +5463,27 @@ function resetToUpload() {
 }
 
 async function saveHistory(entry) {
+  if (isDemo()) {
+    const rec = {
+      id: 'demo-' + Date.now(),
+      module_name: entry.moduleName,
+      total_questions: entry.total,
+      correct: entry.correct,
+      partial: entry.partial,
+      wrong: entry.wrong,
+      ungraded: entry.ungraded || 0,
+      score_percent: entry.percent,
+      details: entry.details,
+      created_at: new Date().toISOString(),
+    };
+    try {
+      const arr = JSON.parse(localStorage.getItem('buckDemoHistory') || '[]');
+      arr.unshift(rec);
+      localStorage.setItem('buckDemoHistory', JSON.stringify(arr.slice(0, 50)));
+    } catch (e) {}
+    historyEntries = [rec].concat(historyEntries);
+    return true;
+  }
   if (!supabaseClient || !currentUser) return false;
   try {
     const { error } = await supabaseClient.from('quiz_history').insert({
@@ -5328,6 +5509,12 @@ async function saveHistory(entry) {
 }
 
 async function loadHistory() {
+  if (isDemo()) {
+    try { historyEntries = JSON.parse(localStorage.getItem('buckDemoHistory') || '[]'); } catch (e) { historyEntries = []; }
+    renderSidebarHistory();
+    renderJumpBack();
+    return;
+  }
   if (!supabaseClient || !currentUser) return;
   try {
     const { data, error } = await supabaseClient
@@ -6588,6 +6775,7 @@ async function deleteEventById(id) {
 /* ---------------- Remote + reminders ---------------- */
 
 async function pushEventRemote(ev) {
+  if (isDemo()) return;
   if (!supabaseClient || !currentUser) return;
   try {
     const row = {
@@ -6606,6 +6794,7 @@ async function pushEventRemote(ev) {
 }
 
 async function loadRemoteEvents() {
+  if (isDemo()) return;
   if (calRemoteLoaded || !supabaseClient || !currentUser) return;
   calRemoteLoaded = true;
   try {
@@ -6628,6 +6817,7 @@ async function loadRemoteEvents() {
 }
 
 function onAuthChangedCalendar() {
+  if (isDemo()) return;
   calRemoteLoaded = false;
   if (currentUser) { loadRemoteEvents(); updateCalendarBadge(); }
 }
