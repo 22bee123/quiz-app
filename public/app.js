@@ -102,6 +102,7 @@ const navAvatar = document.getElementById('nav-avatar');
 const navAccountName = document.getElementById('nav-account-name');
 const navAccountEmail = document.getElementById('nav-account-email');
 const navSignout = document.getElementById('nav-signout');
+const navLogout = document.getElementById('nav-logout');
 const pinnedWrap = document.getElementById('pinned-wrap');
 const pinnedList = document.getElementById('pinned-list');
 const recentWrap = document.getElementById('recent-wrap');
@@ -1849,6 +1850,10 @@ async function searchFriends() {
     resultsEl.innerHTML = '';
     return;
   }
+  if (isDemo()) {
+    resultsEl.innerHTML = '<p class="friend-empty">Search is available on a full account.</p>';
+    return;
+  }
   if (!supabaseClient || !currentUser) {
     resultsEl.innerHTML = '<p class="friend-empty">Sign in to search for study buddies.</p>';
     return;
@@ -1919,6 +1924,11 @@ function buildSearchResult(profile) {
 /* ---------------- Requests + friends list ---------------- */
 
 async function loadFriends() {
+  if (isDemo()) {
+    incomingReqs = []; outgoingReqs = []; outgoingIds = new Set(); myFriends = []; friendProfilesById = {};
+    renderRequests(); renderFriendList();
+    return;
+  }
   if (!supabaseClient || !currentUser) return;
   const requestsEl = document.getElementById('friend-requests');
   const friendsEl = document.getElementById('friend-list');
@@ -2479,6 +2489,11 @@ function showTyping(name) {
 
 async function refreshMessages(force) {
   renderMessagesBadge();
+  if (isDemo()) {
+    chatLoading = false;
+    if (!activeChatId) renderConversations();
+    return;
+  }
   if (!supabaseClient || !currentUser) {
     chatLoading = false;
     if (!activeChatId) renderConversations();
@@ -4005,10 +4020,12 @@ function wireAuthUI() {
     if (currentUser) openProfile();
     else showAuthGate();
   });
-  navSignout.addEventListener('click', async () => {
+  const doSignOut = async () => {
     if (isDemo()) { endDemo('left'); return; }
     await supabaseClient.auth.signOut();
-  });
+  };
+  navSignout.addEventListener('click', doSignOut);
+  if (navLogout) navLogout.addEventListener('click', doSignOut);
 
   gatePassToggle.addEventListener('click', () => {
     const show = gatePassword.type === 'password';
@@ -4156,8 +4173,18 @@ function startDemo() {
   showToast('Demo started \u2014 ' + DEMO_MAX_PACKS + ' StudyPack for 1 hour. Enjoy! \u{1F986}', 'correct');
 }
 
+function resetSocialStateForDemo() {
+  try { localStorage.removeItem('buckMessages'); } catch (e) {}
+  myFriends = [];
+  friendProfilesById = {};
+  activeChatId = null;
+  chatLoading = false;
+  try { renderMessagesBadge(); renderConversations(); } catch (e) {}
+}
+
 function enterDemo() {
   currentUser = Object.assign({}, DEMO_USER);
+  resetSocialStateForDemo();
   updateAuthUI();
   renderDemoPill();
   ensureDemoTimer();
@@ -4166,6 +4193,7 @@ function enterDemo() {
 
 function resumeDemo() {
   currentUser = Object.assign({}, DEMO_USER);
+  resetSocialStateForDemo();
   updateAuthUI();
   renderDemoPill();
   ensureDemoTimer();
@@ -4298,11 +4326,13 @@ function updateAuthUI() {
       ? '<img src="' + p.avatar + '" alt="" />'
       : escapeHtml((p.name || p.username || p.email || '?')[0].toUpperCase());
     navSignout.classList.remove('hidden');
+    if (navLogout) navLogout.classList.remove('hidden');
   } else {
     navAccountName.textContent = 'Sign in';
     navAccountEmail.textContent = '';
     navAvatar.innerHTML = '';
     navSignout.classList.add('hidden');
+    if (navLogout) navLogout.classList.add('hidden');
   }
 }
 
