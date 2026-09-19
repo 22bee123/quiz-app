@@ -68,8 +68,6 @@ const gateSubmit = document.getElementById('gate-submit');
 const gateHint = document.getElementById('gate-hint');
 const gateForgot = document.getElementById('gate-forgot');
 const gateSignupLink = document.getElementById('gate-signup-link');
-const gateGoogle = document.getElementById('gate-google');
-const gateApple = document.getElementById('gate-apple');
 const gatePassToggle = document.getElementById('gate-pass-toggle');
 const gateEmailErr = document.getElementById('gate-email-err');
 const gatePassErr = document.getElementById('gate-pass-err');
@@ -4020,8 +4018,6 @@ function wireAuthUI() {
     gatePassToggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
   });
 
-  gateGoogle.addEventListener('click', () => oauthLogin('google'));
-  gateApple.addEventListener('click', () => oauthLogin('apple'));
   gateForgot.addEventListener('click', () => forgotPassword());
   gateSignupLink.addEventListener('click', openSignup);
   gateForm.addEventListener('submit', handleGateSubmit);
@@ -4450,7 +4446,7 @@ function setSuStep(n) {
 function openSignup() {
   const draft = loadSignupDraft();
   suStep = 1;
-  suEmailMode = draft && draft.emailMode ? draft.emailMode : '';
+  suEmailMode = 'manual';
   suRole = draft && draft.role ? draft.role : '';
   suSchool = draft && draft.schoolData ? draft.schoolData : null;
   suUserOk = false;
@@ -4474,14 +4470,11 @@ function openSignup() {
   document.getElementById('su-pw-fill').style.width = '0';
   document.getElementById('su-pw-label').textContent = '';
 
-  document.querySelectorAll('#signup-modal .choice-card[data-email-mode]').forEach((c) =>
-    c.classList.toggle('selected', c.dataset.emailMode === suEmailMode)
-  );
   document.querySelectorAll('#signup-modal .role-card').forEach((c) =>
     c.classList.toggle('selected', c.dataset.role === suRole)
   );
-  document.getElementById('su-manual-email').classList.toggle('hidden', suEmailMode !== 'manual');
-  document.getElementById('su-provider-email').classList.toggle('hidden', suEmailMode !== 'choose');
+  const manualPanel = document.getElementById('su-manual-email');
+  if (manualPanel) manualPanel.classList.remove('hidden');
   document.getElementById('su-school-list').innerHTML = '';
   document.getElementById('su-school-manual-form').classList.add('hidden');
   const schoolInput = document.getElementById('su-school-input');
@@ -4953,27 +4946,6 @@ function wireSignup() {
       return;
     }
     resetToUpload();
-  });
-
-  document.querySelectorAll('#signup-modal .choice-card[data-email-mode]').forEach((card) => {
-    card.addEventListener('click', () => {
-      suEmailMode = card.dataset.emailMode;
-      document.querySelectorAll('#signup-modal .choice-card[data-email-mode]').forEach((c) =>
-        c.classList.toggle('selected', c === card)
-      );
-      document.getElementById('su-manual-email').classList.toggle('hidden', suEmailMode !== 'manual');
-      document.getElementById('su-provider-email').classList.toggle('hidden', suEmailMode !== 'choose');
-      document.getElementById('su-error').textContent = '';
-      saveSignupDraft();
-      if (suEmailMode === 'manual') document.getElementById('su-email').focus();
-    });
-  });
-
-  document.querySelectorAll('#signup-modal [data-oauth]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      closeSignup();
-      oauthLogin(btn.dataset.oauth);
-    });
   });
 
   document.querySelectorAll('#signup-modal .role-card').forEach((card) => {
