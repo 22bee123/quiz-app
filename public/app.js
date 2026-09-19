@@ -698,7 +698,6 @@ async function startGeneration(count) {
   }
 
   let target = Math.min(count, activeContent.images ? 40 : 200);
-  if (isDemo()) target = Math.min(target, DEMO_MAX_CARDS);
   lastGenerationCount = target;
   lastVisionPages = (activeContent.images && activeContent.images.length) || 0;
   lastGenError = null;
@@ -4159,7 +4158,6 @@ function installAuthGuard() {
 /* ---------------- Demo mode ---------------- */
 const DEMO_MS = 60 * 60 * 1000;        // 1 hour
 const DEMO_MAX_PACKS = 1;
-const DEMO_MAX_CARDS = 15;
 const DEMO_USER = { id: 'demo-user', email: 'demo@bucktheduck.app', user_metadata: { full_name: 'Demo Duck', username: 'demo', role: 'student' } };
 
 let demo = null;
