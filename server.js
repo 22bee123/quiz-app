@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
+const dns = require('dns').promises;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,12 +29,14 @@ const GEN_CACHE_TTL = 24 * 60 * 60 * 1000;
 const GEN_CACHE_MAX = 300;
 const genCache = new Map();
 
-function genCacheKey(text, images, count, existing) {
+function genCacheKey(text, images, count, existing, questionType) {
   const h = crypto.createHash('sha1');
   if (images && images.length) h.update('img:' + images.length + ':' + String(images[0]).slice(0, 64));
   else h.update(String(text || '').slice(0, 20000));
   h.update('|' + count);
   h.update('|x' + ((existing && existing.length) || 0));
+  // Cards of different shapes must never share a cache entry.
+  h.update('|qt:' + normalizeQuestionType(questionType));
   return h.digest('hex');
 }
 function genCacheGet(key) {
@@ -95,7 +98,7 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
     let response;
     try {
       const payload = {
-        model: ACTIVE_MODEL,
+        model: opts.model || ACTIVE_MODEL,
         messages,
         max_tokens: maxTokens,
         temperature,
@@ -197,6 +200,345 @@ const SYSTEM_PROMPT = {
     'You are Buck, a friendly study assistant. You MUST respond with valid JSON only. No markdown, no explanations, no preamble. Output a single JSON object: { "questions": [ { "type": "flashcard", "question": string, "answer": string }, { "type": "choice", "question": string, "options": [string, string, string, string], "answer": string } ] }.',
 };
 
+// The question shapes a user can ask Buck for. Most of them generate questions from text;
+// "diagram" is a separate flow (an image goes in, labels come out via /api/diagram/detect).
+const QUESTION_TYPES = ['multiple_choice', 'enumeration', 'diagram'];
+const DEFAULT_QUESTION_TYPE = 'multiple_choice';
+// Diagram cards cannot be produced by the text question generator.
+const TEXT_GENERATION_TYPES = ['multiple_choice', 'enumeration'];
+
+// Card types the database + client understand.
+const CARD_TYPE_FOR_QUESTION_TYPE = {
+  multiple_choice: 'choice',
+  enumeration: 'enumeration',
+  diagram: 'diagram',
+};
+
+function normalizeQuestionType(value) {
+  return QUESTION_TYPES.includes(value) ? value : DEFAULT_QUESTION_TYPE;
+}
+
+const JSON_ONLY_RULE =
+  'Respond with valid JSON only. No markdown fences, no commentary, no preamble, and nothing before or after the JSON object.';
+
+const MULTIPLE_CHOICE_SYSTEM_PROMPT =
+  'You are Buck, a study assistant. Generate {N} multiple-choice questions from the text below.\n\n' +
+  'Each question MUST have exactly 4 options with one correct answer.\n\n' +
+  'Return valid JSON only:\n' +
+  '{\n' +
+  '  "questions": [\n' +
+  '    {\n' +
+  '      "type": "multiple_choice",\n' +
+  '      "question": "string",\n' +
+  '      "options": ["string", "string", "string", "string"],\n' +
+  '      "answer": "string (must match one of the options exactly)",\n' +
+  '      "explanation": "string"\n' +
+  '    }\n' +
+  '  ]\n' +
+  '}\n\n' +
+  'Rules: the "answer" must be copied character-for-character from one of the "options". ' +
+  'Every question must stand on its own. ' +
+  JSON_ONLY_RULE;
+
+const ENUMERATION_SYSTEM_PROMPT =
+  'You are Buck, a study assistant. Generate {N} enumeration questions from the text below.\n\n' +
+  'Each question asks the user to list the correct items. The answer is an array of expected items. ' +
+  'The user will type their answer and Buck will compare it against the expected list.\n\n' +
+  'Return valid JSON only:\n' +
+  '{\n' +
+  '  "questions": [\n' +
+  '    {\n' +
+  '      "type": "enumeration",\n' +
+  '      "question": "List the ... ",\n' +
+  '      "answer": ["item 1", "item 2", "item 3"],\n' +
+  '      "explanation": "string"\n' +
+  '    }\n' +
+  '  ]\n' +
+  '}\n\n' +
+  'Rules: every "answer" MUST be a JSON array of 2 to 6 short expected items (a few words each, never a full ' +
+  'sentence). Write the question so the expected number of items is unmistakable ("List the three ..."). ' +
+  'Items must be distinct from one another. ' +
+  JSON_ONLY_RULE;
+
+const SYSTEM_PROMPTS = {
+  multiple_choice: { role: 'system', content: MULTIPLE_CHOICE_SYSTEM_PROMPT },
+  enumeration: { role: 'system', content: ENUMERATION_SYSTEM_PROMPT },
+};
+
+function systemPromptFor(questionType) {
+  const t = normalizeQuestionType(questionType);
+  // Diagram labeling has its own image-based endpoint, not a text question prompt.
+  return SYSTEM_PROMPTS[t] || SYSTEM_PROMPTS[DEFAULT_QUESTION_TYPE];
+}
+
+/* ---------------- Diagram label detection (vision) ---------------- */
+
+const DIAGRAM_MAX_LABELS = 40;      // more than this and the user should be reviewing, not Buck
+const DIAGRAM_MIN_LABELS = 2;       // below this we tell the client to offer manual marking
+const DIAGRAM_MAX_IMAGE_CHARS = 9 * 1024 * 1024; // ~6.7MB of base64 image data
+
+const DIAGRAM_LABEL_SCHEMA =
+  '{\n' +
+  '  "title": "short name of the diagram",\n' +
+  '  "labels": [\n' +
+  '    {\n' +
+  '      "text": "printed label text",\n' +
+  '      "marker": { "x": 32, "y": 10 },\n' +
+  '      "labelPos": { "x": 5, "y": 12 },\n' +
+  '      "labelBox": { "x": 5, "y": 10, "w": 18, "h": 4 }\n' +
+  '    }\n' +
+  '  ]\n' +
+  '}';
+
+const DIAGRAM_COORD_RULES =
+  'COORDINATES: x and y are numbers from 0 to 100, as PERCENTAGES of the image — x measured from the ' +
+  'left edge, y from the top edge. Never use pixel values.\n' +
+  '- "marker" = the exact point being labeled (the pin, dot, tip of an arrow, or the part itself).\n' +
+  '- "labelPos" = the printed text itself: the x,y of the text\'s centre, as percentages.\n' +
+  '- "labelBox" = the box the printed text occupies, as { x, y (top-left), w, h (size) }, all as ' +
+  'PERCENTAGES of the image. This is used to hide the answer, so measure it tightly around the text ' +
+  'and include ALL of it — every word of a multi-word label, with a little margin.\n' +
+  'Read the coordinates carefully off the actual image: do not cluster everything in the middle and do not ' +
+  'reuse the same point twice.';
+
+const DIAGRAM_DETECT_PROMPT =
+  'You are Buck, a study assistant. The image below is a LABELED diagram (for example an anatomy chart, ' +
+  'circuit, map, or chemistry structure). Find every printed text label and the point it names.\n\n' +
+  'Return valid JSON only, in exactly this shape:\n' + DIAGRAM_LABEL_SCHEMA + '\n\n' +
+  'RULES:\n' +
+  '- Only report text that is actually printed in the image. Never invent, translate, or guess at labels, and ' +
+  'never describe the artwork.\n' +
+  '- One entry per distinct printed label; copy the text exactly as written (keep its original language).\n' +
+  '- Ignore the title, figure captions, legends, scale bars, page numbers, watermarks, and any other ' +
+  'sentence-length text that is not pointing at a part of the diagram.\n' +
+  '- If a label is a short phrase, keep it short. Strip trailing colons and arrow characters.\n' +
+  '- If the image contains no printed labels at all, return { "title": "", "labels": [] }.\n' +
+  '- Up to ' + DIAGRAM_MAX_LABELS + ' labels. Most important labels first.\n\n' +
+  DIAGRAM_COORD_RULES + '\n\n' +
+  JSON_ONLY_RULE;
+
+const DIAGRAM_DETECT_RETRY_PROMPT =
+  'Your previous answer could not be read as JSON. Do it again, and this time output ONLY the JSON object — ' +
+  'no markdown fence, no commentary, no trailing text.\n\n' +
+  'Exact shape:\n' + DIAGRAM_LABEL_SCHEMA + '\n\n' +
+  'Every label needs its "labelBox" measuring the printed text tightly and completely. ' +
+  'Only report text actually printed in the image, one entry per distinct label, at most ' +
+  DIAGRAM_MAX_LABELS + '.\n\n' + DIAGRAM_COORD_RULES + '\n\n' + JSON_ONLY_RULE;
+
+// Clamp whatever the model returned into the shape the client renders.
+function toPercent(value, fallback) {
+  const n = typeof value === 'number' ? value : parseFloat(String(value == null ? '' : value).replace(/[^0-9.\-]/g, ''));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function normalizeDiagramLabel(raw, index) {
+  if (!raw || typeof raw !== 'object') return null;
+  const text = String(raw.text == null ? '' : raw.text)
+    .replace(/[\s\u00A0]+/g, ' ')
+    .replace(/^[\s:•\-–—>]+/, '')
+    .replace(/[\s:>]+$/, '')
+    .trim();
+  if (!text) return null;
+  const marker = raw.marker && typeof raw.marker === 'object' ? raw.marker : raw;
+  const labelPos = raw.labelPos && typeof raw.labelPos === 'object' ? raw.labelPos : {};
+
+  // The text's bounding box is what lets the client hide the printed answer, so accept it in
+  // any of the shapes a model might use and keep only sane values.
+  const rawBox = raw.labelBox || raw.bbox || raw.box || null;
+  let box = null;
+  if (rawBox && typeof rawBox === 'object') {
+    const w = toPercent(rawBox.w != null ? rawBox.w : rawBox.width, 0);
+    const h = toPercent(rawBox.h != null ? rawBox.h : rawBox.height, 0);
+    if (w >= 2 && h >= 2) {
+      // x/y may be the top-left or the centre; convert a centre to a top-left.
+      const bx = toPercent(rawBox.x != null ? rawBox.x : labelPos.x, 0);
+      const by = toPercent(rawBox.y != null ? rawBox.y : labelPos.y, 0);
+      const centred = rawBox.centred === true || rawBox.centered === true;
+      const left = centred ? bx - w / 2 : bx;
+      const top = centred ? by - h / 2 : by;
+      box = {
+        x: Math.max(0, Math.min(100 - Math.min(w, 100), Math.round(left * 10) / 10)),
+        y: Math.max(0, Math.min(100 - Math.min(h, 100), Math.round(top * 10) / 10)),
+        w: Math.round(Math.min(w, 100) * 10) / 10,
+        h: Math.round(Math.min(h, 60) * 10) / 10,
+      };
+      // labelPos and labelBox should agree; the box wins when both are present.
+      labelPos.x = box.x + box.w / 2;
+      labelPos.y = box.y + box.h / 2;
+    }
+  }
+
+  const label = {
+    id: 'l' + (index + 1),
+    text: text.slice(0, 80),
+    marker: { x: toPercent(marker.x, 50), y: toPercent(marker.y, 50) },
+    labelPos: { x: toPercent(labelPos.x, 5), y: toPercent(labelPos.y, 5) },
+  };
+  if (box) label.labelBox = box;
+  return label;
+}
+
+// Some vision answers come back in image pixels rather than percentages, which would clamp to
+// 0/100 and land every cover in a corner. If that happened, rescale once we have the dimensions.
+function looksLikePixels(labels, imageW, imageH) {
+  if (!Array.isArray(labels) || !labels.length || !imageW || !imageH) return false;
+  let beyond = 0;
+  labels.forEach((l) => {
+    const vals = [l.marker && l.marker.x, l.marker && l.marker.y, l.labelPos && l.labelPos.x, l.labelPos && l.labelPos.y];
+    if (l.labelBox) vals.push(l.labelBox.x, l.labelBox.y, l.labelBox.x + l.labelBox.w, l.labelBox.y + l.labelBox.h);
+    if (vals.some((v) => Number(v) > 100)) beyond++;
+  });
+  return beyond > labels.length / 2;
+}
+
+// The parser clamps every coordinate into 0-100, which is right for a percentage answer but
+// destroys a pixel-space one (640 becomes 100 and the original value is gone). So the raw
+// entry is checked here, before normalization, to decide whether a rescue is needed.
+function rawEntryLooksLikePixels(entry, imageW, imageH) {
+  if (!entry || typeof entry !== 'object' || !imageW || !imageH) return false;
+  const box = entry.labelBox || entry.bbox || entry.box;
+  const vals = [
+    entry.marker && entry.marker.x, entry.marker && entry.marker.y,
+    entry.labelPos && entry.labelPos.x, entry.labelPos && entry.labelPos.y,
+    entry.x, entry.y,
+  ];
+  if (box && typeof box === 'object') {
+    vals.push(box.x, box.y, box.w, box.h, box.width, box.height);
+  }
+  return vals.some((v) => {
+    const n = typeof v === 'number' ? v : parseFloat(String(v == null ? '' : v));
+    return Number.isFinite(n) && n > 100;
+  });
+}
+
+function rescaleLabelsToPercent(labels, imageW, imageH) {
+  const sx = 100 / imageW;
+  const sy = 100 / imageH;
+  const round = (v) => Math.round(v * 10) / 10;
+  return labels.map((l) => {
+    const out = {
+      id: l.id,
+      text: l.text,
+      marker: { x: Math.max(0, Math.min(100, round(l.marker.x * sx))), y: Math.max(0, Math.min(100, round(l.marker.y * sy))) },
+      labelPos: { x: Math.max(0, Math.min(100, round(l.labelPos.x * sx))), y: Math.max(0, Math.min(100, round(l.labelPos.y * sy))) },
+    };
+    if (l.labelBox) {
+      out.labelBox = {
+        x: Math.max(0, Math.min(100, round(l.labelBox.x * sx))),
+        y: Math.max(0, Math.min(100, round(l.labelBox.y * sy))),
+        w: Math.max(1, Math.min(100, round(l.labelBox.w * sx))),
+        h: Math.max(1, Math.min(100, round(l.labelBox.h * sy))),
+      };
+    }
+    return out;
+  });
+}
+
+// Accepts the several shapes a vision model might plausibly return, including when it wraps
+// the JSON in prose or a markdown fence (which happens regularly with reasoning-style output).
+function parseDiagramResponse(raw, ctx) {
+  const text = String(raw || '').replace(/```(?:json)?/gi, ' ').trim();
+  const imageW = ctx && Number(ctx.imageW) || 0;
+  const imageH = ctx && Number(ctx.imageH) || 0;
+  const candidates = [];
+  const direct = safeJsonParse(text);
+  if (direct) candidates.push(direct);
+  // Any balanced JSON value embedded in surrounding text.
+  try {
+    extractBalancedValues(text).forEach((v) => { if (v && typeof v === 'object') candidates.push(v); });
+  } catch (e) { /* keep whatever we have */ }
+
+  for (const parsed of candidates) {
+    const container = Array.isArray(parsed) ? { labels: parsed } : parsed;
+    let list = container.labels || container.items || container.diagram;
+    if (!list && Array.isArray(container.parts)) list = container.parts;
+    if (!Array.isArray(list)) continue;
+
+    // Rescue a pixel-space answer BEFORE normalization clamps it into a corner.
+    const pixelSpace = imageW && imageH &&
+      list.filter((e) => rawEntryLooksLikePixels(e, imageW, imageH)).length > list.length / 2;
+    const source = pixelSpace ? rescaleLabelsToPercent(list, imageW, imageH) : list;
+
+    const labels = [];
+    const seen = new Set();
+    source.forEach((entry) => {
+      const label = normalizeDiagramLabel(entry, labels.length);
+      if (!label) return;
+      const key = label.text.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      labels.push(label);
+    });
+    if (!labels.length) continue;
+    return {
+      title: typeof container.title === 'string' ? container.title.trim().slice(0, 80) : '',
+      labels,
+      rescaled: pixelSpace,
+    };
+  }
+  return null;
+}
+
+async function detectDiagramLabels(imageUrl, hint, stricter, model, dims) {
+  const promptText = stricter
+    ? DIAGRAM_DETECT_RETRY_PROMPT + (hint ? '\n\nContext from the user: ' + hint : '')
+    : DIAGRAM_DETECT_PROMPT + (hint ? '\n\nContext from the user: ' + hint : '');
+  const content = [
+    { type: 'text', text: promptText },
+    { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
+  ];
+  const opts = model ? { jsonMode: true, model } : { jsonMode: true };
+  // Vision answers spend most of their budget on reasoning tokens before the JSON, so a tight
+  // cap yields an empty response (finish_reason: length). Keep generous headroom.
+  const raw = await callDeepSeek([{ role: 'user', content }], 8000, 0.2, 45000, opts);
+  return { raw, parsed: parseDiagramResponse(raw, dims), model: opts.model || ACTIVE_MODEL };
+}
+
+// One bounded detection call. callDeepSeek already retries transient failures internally, so
+// this deliberately does NOT retry again — nesting retries is what made a single scan take 40s
+// (several multi-attempt calls running at once). If the primary model answers in prose rather
+// than JSON, the vision model gets one try before we give up.
+async function detectDiagramWithRetry(imageUrl, hint, dims) {
+  const started = Date.now();
+  let lastErr = null;
+  const tryModel = async (model) => {
+    const result = await detectDiagramLabels(imageUrl, hint, false, model, dims);
+    if (result.parsed) return result;
+    console.warn(`[diagram] ${result.model} answered without usable JSON; trying the strict prompt.`);
+    logMalformedResponse(result.raw, { reason: 'shape' });
+    try {
+      const strict = await detectDiagramLabels(imageUrl, hint, true, model, dims);
+      if (strict.parsed) return strict;
+    } catch (e) {
+      lastErr = e;   // keep the real cause (429 / auth) instead of a generic message
+      throw e;
+    }
+    return null;
+  };
+
+  try {
+    let result = await tryModel(null);
+    if (!result && ACTIVE_MODEL !== DEEPSEEK_FALLBACK_MODEL) {
+      console.warn(`[diagram] retrying detection with ${DEEPSEEK_FALLBACK_MODEL}.`);
+      result = await tryModel(DEEPSEEK_FALLBACK_MODEL);
+    }
+    if (result) return { ...result, attempts: 1 };
+    const err = new Error("Buck couldn't read the labels on this diagram.");
+    err.code = 'DETECT_FAILED';
+    err.reason = 'unreadable_response';
+    throw err;
+  } catch (err) {
+    // Preserve a meaningful cause so the client can show the right advice.
+    if (err && err.code && err.code !== 'DETECT_FAILED') {
+      console.warn(`[diagram] detection failed after ${Date.now() - started}ms with ${err.code}: ${err.message}`);
+      throw err;
+    }
+    console.warn(`[diagram] detection failed after ${Date.now() - started}ms: ${err.message}`);
+    throw err;
+  }
+}
+
 // Map an upstream/parse error to a stable code the UI can act on.
 function classifyError(err) {
   if (err && err.code) return err.code;
@@ -227,6 +569,10 @@ function statusForCode(code) {
     case 'VISION_429': return 429;
     case 'TOO_LARGE': return 413;
     case 'TIMEOUT': return 504;
+    case 'INVALID_TYPE': return 422;
+    case 'INVALID_IMAGE': return 422;
+    case 'IMAGE_TOO_LARGE': return 413;
+    case 'DETECT_FAILED': return 422;
     default: return 500;
   }
 }
@@ -370,7 +716,9 @@ function logMalformedResponse(raw, err) {
   console.error('full:', s.slice(0, 2000));
 }
 
-async function generateOnce(text, images, count, existing) {
+async function generateOnce(text, images, count, existing, questionType) {
+  const mode = normalizeQuestionType(questionType);
+  const systemPrompt = systemPromptFor(mode);
   const maxTokens = Math.min(8000, Math.max(3000, count * 300));
   const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
   const isImages = !!(images && images.length);
@@ -378,15 +726,15 @@ async function generateOnce(text, images, count, existing) {
   let raw;
   if (isImages) {
     const content = [
-      { type: 'text', text: buildQuizPrompt(count, null, images, keywords, existing) },
+      { type: 'text', text: buildQuizPrompt(count, null, images, keywords, existing, mode) },
       ...images.map((url) => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
     ];
-    raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4, { jsonMode: true });
+    raw = await callDeepSeek([systemPrompt, { role: 'user', content }], maxTokens, 0.4, { jsonMode: true });
   } else {
-    const prompt = buildQuizPrompt(count, text, null, keywords, existing);
-    raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content: [{ type: 'text', text: prompt }] }], maxTokens, 0.4, { jsonMode: true });
+    const prompt = buildQuizPrompt(count, text, null, keywords, existing, mode);
+    raw = await callDeepSeek([systemPrompt, { role: 'user', content: [{ type: 'text', text: prompt }] }], maxTokens, 0.4, { jsonMode: true });
   }
-  if (debug) console.log(`[generate] maxTokens=${maxTokens} keywords=${keywords.length} existing=${(existing || []).length}`);
+  if (debug) console.log(`[generate] maxTokens=${maxTokens} keywords=${keywords.length} existing=${(existing || []).length} questionType=${mode}`);
   try {
     return extractJson(raw);
   } catch (err) {
@@ -412,7 +760,8 @@ async function generateOnce(text, images, count, existing) {
 }
 
 async function generateTextChunk(ask, chunk, extraInstruction) {
-  const prompt = buildQuizPrompt(ask, chunk, null) + (extraInstruction || '');
+  // Legacy /api/analyze path: keeps the original mixed flashcard + choice behavior.
+  const prompt = buildQuizPrompt(ask, chunk, null, undefined, undefined, DEFAULT_QUESTION_TYPE) + (extraInstruction || '');
   const content = [{ type: 'text', text: prompt }];
   const maxTokens = Math.min(8000, Math.max(3000, ask * 300));
   const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4, { jsonMode: true });
@@ -429,7 +778,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Lightweight API access log so you can see what the server is actually receiving.
 app.use((req, res, next) => {
-  if (req.method === 'POST' && ['/api/generate', '/api/analyze', '/api/estimate', '/api/scrape', '/api/grade'].includes(req.path)) {
+  if (req.method === 'POST' && ['/api/generate', '/api/analyze', '/api/estimate', '/api/scrape', '/api/grade', '/api/diagram/detect'].includes(req.path)) {
     const kb = Math.round((Number(req.headers['content-length']) || 0) / 1024);
     console.log(`[api] ${req.method} ${req.path} (~${kb}KB)`);
   }
@@ -459,7 +808,7 @@ app.post('/api/analyze', async (req, res) => {
       // Image-based import: single call, ask for as many as the images support.
       // Capped lower than text mode so one reply can't get truncated mid-JSON.
       const ask = Math.min(20, Math.max(5, images.length * 8));
-      const promptText = buildQuizPrompt(ask, null, images);
+      const promptText = buildQuizPrompt(ask, null, images, undefined, undefined, DEFAULT_QUESTION_TYPE);
       const content = [
         { type: 'text', text: promptText },
         ...images.map((url) => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
@@ -530,12 +879,12 @@ app.post('/api/analyze', async (req, res) => {
   } catch (err) {
     const code = classifyError(err);
     console.error('Analyze error:', code, err.reason || '', err.message);
+    // The upstream body and raw model output are logged above, not returned: they can carry
+    // provider quota/billing text and, for rawSample, the user's own document content.
     res.status(statusForCode(code)).json({
-      error: code === 'RATE' ? RATE_LIMIT_FRIENDLY : `Failed to generate flashcards: ${err.message}`,
+      error: code === 'RATE' ? RATE_LIMIT_FRIENDLY : 'Failed to generate flashcards. Please try again.',
       code,
       reason: err.reason || null,
-      detail: err.message,
-      rawSample: err.rawSample || null,
     });
   }
 });
@@ -556,6 +905,34 @@ app.post('/api/generate', async (req, res) => {
     const existing = Array.isArray(req.body.existing)
       ? req.body.existing.filter((s) => typeof s === 'string').slice(0, 60)
       : [];
+
+    // Question shape: the client sends "multiple_choice" | "enumeration" (older clients omit it).
+    const questionType = req.body.questionType === undefined || req.body.questionType === null || req.body.questionType === ''
+      ? DEFAULT_QUESTION_TYPE
+      : req.body.questionType;
+    if (!QUESTION_TYPES.includes(questionType)) {
+      console.error('[generate] 422: invalid questionType', { questionType, pdfTextLength: text.length, questionCount: rawCount });
+      return res.status(422).json({
+        error: 'Invalid questionType',
+        code: 'INVALID_TYPE',
+        reason: 'invalid_question_type',
+        detail: 'questionType=' + String(questionType),
+        allowed: QUESTION_TYPES,
+        debug: { questionType: String(questionType), pdfTextLength: text.length, questionCount: rawCount, existing: existing.length },
+      });
+    }
+
+    // Diagram cards come from an image via /api/diagram/detect, never from text generation.
+    if (!TEXT_GENERATION_TYPES.includes(questionType)) {
+      console.error('[generate] 422: questionType is not text-generatable', { questionType });
+      return res.status(422).json({
+        error: 'Diagram Labeling cards are created from an image.',
+        code: 'INVALID_TYPE',
+        reason: 'non_text_question_type',
+        detail: 'questionType=' + String(questionType),
+        allowed: TEXT_GENERATION_TYPES,
+      });
+    }
 
     if (!text && images.length === 0) {
       console.error('[generate] 422: text/pdf input is empty', { pdfTextLength: text.length, questionCount: rawCount, existing: existing.length });
@@ -604,26 +981,26 @@ app.post('/api/generate', async (req, res) => {
 
     const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
     if (existing.length) console.log(`[Resume] count=${count} existing=${existing.length} chars=${text.length}`);
-    if (debug) console.log(`[generate] ${images.length ? 'images=' + images.length : 'chars=' + text.length} count=${count} model=${ACTIVE_MODEL} jsonMode=${JSON_MODE_SUPPORTED}`);
+    if (debug) console.log(`[generate] ${images.length ? 'images=' + images.length : 'chars=' + text.length} count=${count} questionType=${questionType} model=${ACTIVE_MODEL} jsonMode=${JSON_MODE_SUPPORTED}`);
 
-    const cacheKey = genCacheKey(text, images, count, existing);
+    const cacheKey = genCacheKey(text, images, count, existing, questionType);
     const cachedCards = genCacheGet(cacheKey);
     if (cachedCards) {
       if (debug) console.log('[generate] cache hit');
-      return res.json({ flashcards: cachedCards, cached: true });
+      return res.json({ flashcards: cachedCards, cached: true, questionType });
     }
 
     const startedAt = Date.now();
     let cards;
     try {
-      cards = await generateOnce(text, images, count, existing);
+      cards = await generateOnce(text, images, count, existing, questionType);
     } catch (err) {
       // Any parse/shape/truncation problem → retry once with a smaller batch.
       const retryable = ['PARSE', 'EMPTY'].includes(classifyError(err));
       const smaller = Math.max(5, Math.floor(count / 2));
       if (retryable && smaller < count) {
         console.warn(`[generate] ${err.reason || 'parse'} failure; retrying with ${smaller} questions.`);
-        cards = await generateOnce(text, images, smaller, existing);
+        cards = await generateOnce(text, images, smaller, existing, questionType);
       } else {
         throw err;
       }
@@ -642,9 +1019,19 @@ app.post('/api/generate', async (req, res) => {
     const dropped = parsedCount - deduped.length;
     console.log(`[generate] requested=${count} parsed=${parsedCount} valid=${valid.length} deduped=${deduped.length} final=${deduped.length} dropped=${dropped} ms=${Date.now() - startedAt}`);
 
-    const result = deduped.slice(0, count);
+    // Safety net: the caller asked for one specific shape, so never leak a card of the
+    // other shape into the batch. If filtering would throw everything away, keep the
+    // cards as returned — something readable beats an empty StudyPack.
+    const wanted = CARD_TYPE_FOR_QUESTION_TYPE[questionType];
+    const typed = deduped.filter((c) => c.type === wanted);
+    const shaped = typed.length ? typed : deduped;
+    if (typed.length !== deduped.length) {
+      console.warn(`[generate] questionType=${questionType}: dropped ${deduped.length - typed.length} card(s) of the wrong shape.`);
+    }
+
+    const result = shaped.slice(0, count);
     genCacheSet(cacheKey, result);
-    res.json({ flashcards: result, cached: false, requested: count, generated: result.length });
+    res.json({ flashcards: result, cached: false, questionType, requested: count, generated: result.length });
   } catch (err) {
     let code = classifyError(err);
     const visionPath = imageCount > 0;
@@ -664,22 +1051,132 @@ app.post('/api/generate', async (req, res) => {
       console.error('[generate] 422 fired:', { reason: err.reason || null, pdfTextLength: (req.body && typeof req.body.text === 'string') ? req.body.text.length : 0, questionCount: req.body && req.body.count, existing: Array.isArray(req.body && req.body.existing) ? req.body.existing.length : 0 });
     }
     res.status(status).json({
-      error: friendly || `${err.message}`,
+      error: friendly || 'Buck could not finish that request. Please try again.',
       code,
       reason: err.reason || null,
       model: ACTIVE_MODEL,
       path: visionPath ? 'vision' : 'text',
       pages: visionPath ? imageCount : null,
-      detail: err.message,
-      rawSample: err.rawSample || null,
       debug: { pdfTextLength: (req.body && typeof req.body.text === 'string') ? req.body.text.length : 0, questionCount: req.body && req.body.count, existing: Array.isArray(req.body && req.body.existing) ? req.body.existing.length : 0 },
     });
   }
 });
 
+/* ---------------- Diagram label detection ---------------- */
+
+// Detect the labels printed on a labeled diagram so they can become fill-in-the-blank fields.
+// The client sends either a Supabase Storage URL or an inline data URL (when storage is
+// unavailable), so this accepts both.
+app.post('/api/diagram/detect', async (req, res) => {
+  const startedAt = Date.now();
+  try {
+    const imageUrl = typeof req.body.imageUrl === 'string' ? req.body.imageUrl.trim() : '';
+    const hint = typeof req.body.hint === 'string' ? req.body.hint.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+    // Optional: lets us detect and correct a pixel-space answer.
+    const imageW = Number(req.body.imageWidth) || 0;
+    const imageH = Number(req.body.imageHeight) || 0;
+
+    if (!imageUrl) {
+      return res.status(422).json({
+        error: 'No diagram image received.',
+        code: 'INVALID_IMAGE',
+        reason: 'image_missing',
+        detail: 'imageUrl is empty',
+      });
+    }
+    const isData = /^data:image\/(png|jpe?g|webp|gif);base64,/i.test(imageUrl);
+    const isHttp = /^https?:\/\//i.test(imageUrl);
+    if (!isData && !isHttp) {
+      return res.status(422).json({
+        error: 'That image could not be read. Try PNG, JPG, or WebP.',
+        code: 'INVALID_IMAGE',
+        reason: 'unsupported_image',
+        detail: 'imageUrl is neither a data URL nor an http(s) URL',
+      });
+    }
+    if (isData && imageUrl.length > DIAGRAM_MAX_IMAGE_CHARS) {
+      const mb = (imageUrl.length / 1024 / 1024).toFixed(1);
+      return res.status(413).json({
+        error: 'That image is a bit large for Buck to read. Try a smaller one.',
+        code: 'IMAGE_TOO_LARGE',
+        reason: 'image_too_large',
+        detail: 'image payload ' + mb + 'MB (limit ' + Math.round(DIAGRAM_MAX_IMAGE_CHARS / 1024 / 1024) + 'MB)',
+      });
+    }
+    if (!VISION_ENABLED) {
+      return res.status(422).json({
+        error: 'Buck needs image reading turned on for diagram labeling.',
+        code: 'VISION_FAILED',
+        reason: 'vision_disabled',
+        detail: 'VISION_ENABLED=false',
+      });
+    }
+
+    if (process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1') {
+      console.log(`[diagram] detect: ${isData ? 'data URL ' + Math.round(imageUrl.length / 1024) + 'KB' : imageUrl.slice(0, 80)} hint="${hint}"`);
+    }
+
+    let detected;
+    try {
+      detected = await detectDiagramWithRetry(imageUrl, hint);
+    } catch (err) {
+      if (err && err.rawSample) logMalformedResponse(err.rawSample, err);
+      throw err;
+    }
+    const parsed = detected.parsed;
+    if (!parsed) {
+      const err = new Error("Buck couldn't read the labels on this diagram.");
+      err.code = 'DETECT_FAILED';
+      err.reason = 'unreadable_response';
+      throw err;
+    }
+
+    const warnings = [];
+    let labels = parsed.labels;
+    // Guard against a pixel-space answer, which would otherwise cover the wrong area entirely.
+    if (looksLikePixels(labels, imageW, imageH)) {
+      console.warn('[diagram] model returned pixel coordinates; rescaling to percentages.');
+      labels = rescaleLabelsToPercent(labels, imageW, imageH);
+      warnings.push('rescaled');
+    }
+    if (labels.length > DIAGRAM_MAX_LABELS) {
+      warnings.push('capped');
+      labels = labels.slice(0, DIAGRAM_MAX_LABELS);
+    }
+    if (!labels.length) warnings.push('none');
+    else if (labels.length < DIAGRAM_MIN_LABELS) warnings.push('few');
+
+    console.log(`[diagram] detected=${labels.length} warnings=${warnings.join(',') || 'none'} ms=${Date.now() - startedAt}`);
+    res.json({
+      title: parsed.title,
+      labels,
+      count: labels.length,
+      warnings,
+      mode: isData ? 'inline' : 'url',
+    });
+  } catch (err) {
+    const code = classifyError(err);
+    const visionCode = code === 'AUTH' ? 'VISION_401'
+      : code === 'RATE' ? 'VISION_429'
+      : code === 'TOO_LARGE' ? 'IMAGE_TOO_LARGE'
+      : ['PARSE', 'EMPTY', 'UNKNOWN', 'DETECT_FAILED'].includes(code) ? 'DETECT_FAILED'
+      : code;
+    if (visionCode !== 'VISION_429') console.error('Diagram detect error:', visionCode, err.reason || '', err.message);
+    res.status(statusForCode(visionCode)).json({
+      // err.message can embed the provider's response body, so only a generic fallback is
+      // returned; the specific cause is logged server-side.
+      error: visionCode === 'VISION_401' ? 'AI key invalid — check your DeepSeek settings.'
+        : visionCode === 'VISION_429' ? 'Buck is getting a lot of requests. Try again in a moment.'
+        : visionCode === 'DETECT_FAILED' ? "Buck couldn't read the labels on this diagram. Try again, or mark them yourself."
+        : 'Buck could not read that diagram. Please try again.',
+      code: visionCode,
+      reason: err.reason || null,
+    });
+  }
+});
+
 // Estimate how many questions the material can support (token-budget aware: ~200 chars/question).
-app.post('/api/estimate', (req, res) => {
-  const text = typeof req.body.text === 'string' ? req.body.text.replace(/\s+/g, ' ').trim() : '';
+app.post('/api/estimate', (req, res) => {  const text = typeof req.body.text === 'string' ? req.body.text.replace(/\s+/g, ' ').trim() : '';
   const imageCount = Array.isArray(req.body.images)
     ? req.body.images.filter((s) => typeof s === 'string' && s.startsWith('data:image/')).length
     : 0;
@@ -691,21 +1188,33 @@ app.post('/api/estimate', (req, res) => {
 
 // Static instruction block FIRST (identical every call → DeepSeek context-cache friendly),
 // then the material, then the dynamic "make N questions" line LAST.
-function buildQuizPrompt(ask, chunk, images, keywords, existing) {
-  const staticInstructions = `You are an expert quiz creator. Based ONLY on the module material provided, create quiz questions that test understanding.
+// `mode` is the question shape the user picked in the create modal.
+function buildQuizPrompt(ask, chunk, images, keywords, existing, mode) {
+  const questionType = normalizeQuestionType(mode);
 
-Mix the question types — aim for about half "flashcard" (fill-in-the-blank) and half "choice" (multiple choice):
-- "flashcard": a fill-in-the-blank question. The question must be a sentence/statement from the module with a blank marked "____" where the key term(s) go (e.g. "The two main stages of photosynthesis are ____ and ____."). The "answer" must be a SHORT, specific value (single term/few words), NEVER a full sentence.
-- "choice": a multiple-choice question with exactly 4 options and one correct "answer" (which must be one of the options).
+  const staticInstructions = questionType === 'enumeration'
+    ? `You are an expert quiz creator. Based ONLY on the module material provided, create ENUMERATION questions that test recall of lists, steps, stages, parts, and sets of items.
+
+- "enumeration": the question asks the student to list the expected items from memory. The question MUST be answerable by an explicit, finite list taken from the material, it MUST state how many items are expected, and it MUST NOT contain any blanks.
+- "answer": a JSON array of the expected items — between 2 and 6 entries, each a SHORT term or phrase (a few words), never a full sentence. The items must be distinct.
 
 Requirements:
 - Vary difficulty across the questions.
-- Focus on key concepts, definitions, and important facts.
-- Keep flashcard answers short and specific.
+- Focus on key concepts, definitions, categories, processes, and important facts that genuinely have a countable list.
+- Never invent items that are not supported by the material.
 
 Respond with ONLY a valid JSON object in this exact format (no markdown, no extra text):
 { "questions": [
-  { "type": "flashcard", "question": "... ____ ...", "answer": "short answer" },
+  { "type": "enumeration", "question": "List the ... ", "answer": ["item 1", "item 2", "item 3"] }
+] }`
+    : `You are an expert quiz creator. Based ONLY on the module material provided, create MULTIPLE-CHOICE questions that test understanding.
+
+- "choice": a multiple-choice question with exactly 4 options and exactly one correct "answer".
+- "options": exactly 4 short, clearly distinct answer strings.
+- "answer": copied EXACTLY from one of the options (same wording, case, and spacing). Never use "all of the above" style filler.
+
+Respond with ONLY a valid JSON object in this exact format (no markdown, no extra text):
+{ "questions": [
   { "type": "choice", "question": "...", "options": ["a", "b", "c", "d"], "answer": "a" }
 ] }`;
 
@@ -719,7 +1228,10 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no extr
     ? '\n\nIMPORTANT: Do NOT duplicate or rephrase any of these already-used questions:\n' +
       existing.slice(0, 60).map((q, i) => (i + 1) + '. ' + String(q).slice(0, 160)).join('\n')
     : '';
-  const finalAsk = `\n\nNow create exactly ${ask} NEW quiz questions from the material above. Respond with ONLY the JSON object described above.`;
+  const askLine = questionType === 'enumeration'
+    ? `Now create exactly ${ask} NEW enumeration questions from the material above.`
+    : `Now create exactly ${ask} NEW multiple-choice questions from the material above.`;
+  const finalAsk = `\n\n${askLine} Respond with ONLY the JSON object described above.`;
 
   return staticInstructions + '\n\n' + keyLine + material + existingLine + finalAsk;
 }
@@ -764,7 +1276,8 @@ function normalizeFlashcards(list) {
   const out = [];
   for (const f of list) {
     if (!f || typeof f !== 'object') continue;
-    const type = f.type;
+    // Models sometimes echo the request's question-type name instead of the card type.
+    const type = f.type === 'multiple_choice' ? 'choice' : f.type;
     const question = typeof f.question === 'string' ? f.question.trim() : '';
     if (!question) continue;
 
@@ -786,7 +1299,29 @@ function normalizeFlashcards(list) {
       // slightly different spelling never makes us silently drop the whole card.
       const canonical = uniq.find((o) => o.toLowerCase() === rawAnswer.toLowerCase());
       if (!canonical) continue;
-      out.push({ type, question, options: uniq, answer: canonical });
+      const card = { type, question, options: uniq, answer: canonical };
+      if (typeof f.explanation === 'string' && f.explanation.trim()) card.explanation = f.explanation.trim();
+      out.push(card);
+      continue;
+    }
+
+    if (type === 'enumeration') {
+      // The expected items may arrive as an array (the schema we asked for) or as a
+      // delimited string if the model drifted — accept both.
+      const rawItems = Array.isArray(f.answer) ? f.answer
+        : Array.isArray(f.answer_items) ? f.answer_items
+        : typeof f.answer === 'string' ? f.answer.split(/\r?\n|;|,(?![^(]*\))/)
+        : [];
+      const items = [...new Set(rawItems.map((s) => String(s == null ? '' : s).replace(/^\s*(?:\d+[.)]|[-•*])\s*/, '').trim()).filter(Boolean))].slice(0, 8);
+      if (!items.length) continue;
+      const card = {
+        type: 'enumeration',
+        question,
+        answer: items.join(' / '),
+        answer_items: items,
+      };
+      if (typeof f.explanation === 'string' && f.explanation.trim()) card.explanation = f.explanation.trim();
+      out.push(card);
     }
   }
   return out;
@@ -872,9 +1407,89 @@ function extractTitle(html) {
   return m ? m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) : null;
 }
 
-app.post('/api/scrape', async (req, res) => {
+/* ---------------- Scrape safety ---------------- */
+
+// /api/scrape fetches a URL the user typed, so it must never be able to reach the host's own
+// network. Every resolved address is checked against the non-public ranges.
+function isPublicIp(ip) {
+  const addr = String(ip || '').trim();
+  if (!addr) return false;
+  if (addr.includes(':')) {
+    // IPv6
+    const low = addr.toLowerCase();
+    if (low === '::' || low === '::1') return false;
+    if (/^fe[89ab]/.test(low)) return false;          // fe80::/10 link-local
+    if (/^f[cd]/.test(low)) return false;             // fc00::/7 unique-local
+    const mapped = low.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) return isPublicIp(mapped[1]);         // IPv4-mapped
+    return true;
+  }
+  const p = addr.split('.').map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = p;
+  if (a === 0 || a === 10 || a === 127) return false;
+  if (a === 169 && b === 254) return false;             // link-local incl. cloud metadata
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && b === 168) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false;   // CGNAT
+  if (a >= 224) return false;                           // multicast + reserved
+  if (a === 198 && (b === 18 || b === 19)) return false; // benchmarking
+  return true;
+}
+
+const SCRAPE_MAX_BYTES = 2 * 1024 * 1024;
+
+// Resolves the host and refuses anything that is not publicly routable.
+async function assertPublicUrl(url) {
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw Object.assign(new Error('Only http and https links are supported.'), { userFacing: true });
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  // A literal IP can be checked directly; a hostname must resolve first.
+  const isIp = /^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(':');
+  if (isIp) {
+    if (!isPublicIp(host)) {
+      throw Object.assign(new Error('That link points to a private address.'), { userFacing: true });
+    }
+    return;
+  }
+  if (/^(localhost|.*\.local|.*\.internal|.*\.localhost)$/i.test(host)) {
+    throw Object.assign(new Error('That link points to a private address.'), { userFacing: true });
+  }
+  let addrs;
   try {
-    const rawUrl = (req.body.url || '').trim();
+    addrs = await dns.lookup(host, { all: true });
+  } catch (e) {
+    throw Object.assign(new Error('Could not resolve that link.'), { userFacing: true });
+  }
+  if (!addrs.length || addrs.some((a) => !isPublicIp(a.address))) {
+    throw Object.assign(new Error('That link points to a private address.'), { userFacing: true });
+  }
+}
+
+// Reads a response but stops at the cap, so a hostile endpoint cannot exhaust memory.
+async function readCapped(response, cap) {
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    const text = await response.text();
+    return text.length > cap ? text.slice(0, cap) : text;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (total < cap) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.length;
+  }
+  try { await reader.cancel(); } catch (e) { /* already closed */ }
+  return Buffer.concat(chunks).subarray(0, cap).toString('utf8');
+}
+
+app.post('/api/scrape', async (req, res) => {
+  const body = req.body || {};
+  try {
+    const rawUrl = String(body.url || '').trim();
     if (!/^https?:\/\//i.test(rawUrl)) {
       return res.status(400).json({ error: 'Enter a valid http(s) URL.' });
     }
@@ -885,15 +1500,35 @@ app.post('/api/scrape', async (req, res) => {
       return res.status(400).json({ error: 'Invalid URL.' });
     }
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; QuizApp/1.0; +https://quizapp)',
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'en',
-      },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(20000),
-    });
+    // Follow redirects by hand so every hop is re-validated: a public URL must not be able to
+    // bounce the server to an internal one.
+    let response = null;
+    for (let hop = 0; hop < 4; hop++) {
+      await assertPublicUrl(url);
+      response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; QuizApp/1.0; +https://quizapp)',
+          Accept: 'text/html,application/xhtml+xml,text/plain',
+          'Accept-Language': 'en',
+        },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(20000),
+      });
+      if (response.status >= 300 && response.status < 400) {
+        const loc = response.headers.get('location');
+        if (!loc) break;
+        url = new URL(loc, url);
+        continue;
+      }
+      break;
+    }
+
+    if (!response) {
+      return res.status(400).json({ error: 'Could not fetch that page.' });
+    }
+    if (response.status >= 300 && response.status < 400) {
+      return res.status(400).json({ error: 'That link redirects too many times.' });
+    }
 
     if (!response.ok) {
       return res.status(400).json({ error: `Could not fetch that page (status ${response.status}).` });
@@ -903,13 +1538,16 @@ app.post('/api/scrape', async (req, res) => {
       return res.status(400).json({ error: 'That link is not a readable web page.' });
     }
 
-    const htmlText = await response.text();
+    const htmlText = await readCapped(response, SCRAPE_MAX_BYTES);
     const text = htmlToText(htmlText);
     if (!text || text.length < 100) {
       return res.status(400).json({ error: 'No readable text found on that page. It may be a video or image-only page.' });
     }
     res.json({ text, title: extractTitle(htmlText) || url.hostname });
   } catch (err) {
+    if (err && err.userFacing) {
+      return res.status(400).json({ error: err.message });
+    }
     console.error('Scrape error:', err.message);
     return res.status(500).json({ error: 'Failed to scrape that page. Please try another link.' });
   }
@@ -970,16 +1608,27 @@ app.get('/api/config', (req, res) => {
 });
 
 // Health/version probe — lets you curl the deployed backend to confirm which routes exist.
+// Health probe. Deliberately public and minimal: model names, the fallback id and the
+// json-mode flag used to be listed here, which handily fingerprint which code path a server
+// is on. The detailed view requires HEALTH_TOKEN, so operators keep the diagnostics.
 app.get('/api/health', (req, res) => {
+  const token = process.env.HEALTH_TOKEN;
+  const wantsDetail = token && req.query.token === token;
+  if (!wantsDetail) {
+    return res.json({ ok: true, build: 'buck-gen-4', questionTypes: QUESTION_TYPES, visionEnabled: VISION_ENABLED });
+  }
   res.json({
     ok: true,
-    build: 'buck-gen-3',
+    build: 'buck-gen-4',
     model: DEEPSEEK_MODEL,
     activeModel: ACTIVE_MODEL,
     fallbackModel: DEEPSEEK_FALLBACK_MODEL,
     visionEnabled: VISION_ENABLED,
     jsonMode: JSON_MODE_SUPPORTED,
     genCacheEntries: genCache.size,
+    questionTypes: QUESTION_TYPES,
+    defaultQuestionType: DEFAULT_QUESTION_TYPE,
+    diagram: { maxLabels: DIAGRAM_MAX_LABELS, minLabels: DIAGRAM_MIN_LABELS, maxImageMB: Math.round(DIAGRAM_MAX_IMAGE_CHARS / 1024 / 1024) },
     routes: [
       'GET /api/config',
       'GET /api/health',
@@ -988,6 +1637,7 @@ app.get('/api/health', (req, res) => {
       'POST /api/estimate',
       'POST /api/scrape',
       'POST /api/grade',
+      'POST /api/diagram/detect',
     ],
     time: new Date().toISOString(),
   });
@@ -1001,8 +1651,15 @@ app.all('/api/*', (req, res) =>
 app.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-app.listen(PORT, () => {
-  console.log(`Buck the Duck running at http://localhost:${PORT}`);
-  console.log(`Model: ${DEEPSEEK_MODEL} (fallback: ${DEEPSEEK_FALLBACK_MODEL}) | vision: ${VISION_ENABLED ? 'on' : 'off'}`);
-  console.log('API routes: GET /api/config · GET /api/health · POST /api/analyze · POST /api/generate · POST /api/estimate · POST /api/scrape · POST /api/grade');
-});
+// Only bind a port when this file is run directly (`node server.js`). On Vercel the module is
+// imported by the serverless runtime, which manages the socket itself — listening on a fixed
+// port there would be wrong. The export below is what lets Vercel serve this Express app.
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Buck the Duck running at http://localhost:${PORT}`);
+    console.log(`Model: ${DEEPSEEK_MODEL} (fallback: ${DEEPSEEK_FALLBACK_MODEL}) | vision: ${VISION_ENABLED ? 'on' : 'off'}`);
+    console.log('API routes: GET /api/config · GET /api/health · POST /api/analyze · POST /api/generate · POST /api/estimate · POST /api/scrape · POST /api/grade · POST /api/diagram/detect');
+  });
+}
+
+module.exports = app;

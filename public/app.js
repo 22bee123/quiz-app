@@ -18,7 +18,105 @@ let hostingRoom = false;
 let supabaseClient = null;
 let currentUser = null;
 let historyEntries = [];
-let pinnedIds = new Set(JSON.parse(localStorage.getItem('pinnedIds') || '[]'));
+/* ---------------- Storage safety ----------------
+   Every read/write goes through here. localStorage can throw on the read itself (Safari
+   private mode, storage-blocked contexts) and on write (quota exceeded), and an uncaught
+   throw at top level would abort the whole script — a blank page with no way back. */
+let storageBlocked = false;
+let storageWarned = false;
+
+function safeGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    storageBlocked = true;
+    return null;
+  }
+}
+
+function safeSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    const quota = e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014);
+    if (quota) {
+      onStorageFull();
+    } else {
+      storageBlocked = true;
+    }
+    return false;
+  }
+}
+
+function safeRemove(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (e) {
+    storageBlocked = true;
+  }
+}
+
+// Parse stored JSON without ever throwing; a corrupt value should not brick the app.
+function safeParse(raw, fallback) {
+  if (raw == null || raw === '') return fallback;
+  try {
+    const v = JSON.parse(raw);
+    return v == null ? fallback : v;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+// A number from storage, clamped and finite — parseInt of garbage yields NaN, which used to
+// silently disable the wings system and lock the app behind the "no wings" modal forever.
+function safeInt(raw, fallback, min, max) {
+  const n = parseInt(raw == null ? '' : String(raw), 10);
+  let v = Number.isFinite(n) ? n : fallback;
+  if (typeof min === 'number') v = Math.max(min, v);
+  if (typeof max === 'number') v = Math.min(max, v);
+  return v;
+}
+
+// The device has no room left. Tell the user once, then let callers decide what to drop.
+function onStorageFull() {
+  if (storageWarned) return;
+  storageWarned = true;
+  try {
+    if (typeof showToast === 'function') {
+      showToast('This device is out of storage. Delete a StudyPack or re-scan a diagram to free space.', 'wrong', 6000);
+    }
+  } catch (e) { /* toast is best-effort */ }
+  try {
+    console.warn('[storage] quota exceeded; some data could not be saved');
+  } catch (e) { /* ignore */ }
+}
+
+// An estimate of how many bytes this origin may store, so caches can keep their own budget.
+function storageBudgetBytes() {
+  if (storageBlocked) return 0;
+  try {
+    const probeKey = '__buckProbe';
+    let lo = 0;
+    let hi = 6 * 1024 * 1024;
+    // Binary-search the largest blob that fits, bounded to a few probes.
+    for (let i = 0; i < 6; i++) {
+      const mid = Math.floor((lo + hi) / 2);
+      try {
+        localStorage.setItem(probeKey, 'x'.repeat(mid));
+        lo = mid;
+      } catch (e) {
+        hi = mid;
+      }
+    }
+    localStorage.removeItem(probeKey);
+    return lo;
+  } catch (e) {
+    return 0;
+  }
+}
+
+let pinnedIds = new Set(safeParse(safeGet('pinnedIds'), []));
 let authEnabled = false;
 
 const MAX_BACKS = 3;
@@ -112,7 +210,7 @@ const settingsBackdrop = document.getElementById('settings-backdrop');
 const settingsClose = document.getElementById('settings-close');
 const settingsOptions = document.getElementById('settings-options');
 
-let quizLength = parseInt(localStorage.getItem('quizLength') || '10', 10);
+let quizLength = safeInt(safeGet('quizLength'), 10, 1, 100);
 let createSource = null;
 let createMode = null;
 let createFile = null;
@@ -198,6 +296,86 @@ const estimateGenerate = document.getElementById('estimate-generate');
 const estimateAll = document.getElementById('estimate-all');
 const estimateStatus = document.getElementById('estimate-status');
 const estimateNote = document.getElementById('estimate-note');
+const qtypePanel = document.getElementById('qtype-panel');
+const qtypeHint = document.getElementById('qtype-hint');
+const qtypeCountN = document.getElementById('qtype-count-n');
+const qtypeCountWord = document.getElementById('qtype-count-word');
+const qtypeFooterCount = document.querySelector('.qtype-count');
+const qtypeCards = Array.from(document.querySelectorAll('.qcard'));
+const diagramSource = document.getElementById('diagram-source');
+const diagramDrop = document.getElementById('diagram-drop');
+const diagramChip = document.getElementById('diagram-chip');
+const diagramChipThumb = document.getElementById('diagram-chip-thumb');
+const diagramName = document.getElementById('diagram-name');
+const diagramSize = document.getElementById('diagram-size');
+const diagramRemove = document.getElementById('diagram-remove');
+const diagramTip = document.getElementById('diagram-tip');
+
+/* Diagram editor modal.
+   The editor is opened from several places and can outlive a page reload, so its nodes are
+   resolved lazily: a stale cached node would silently break the scan animation. */
+const diagramElCache = {};
+function dEl(id) {
+  const cached = diagramElCache[id];
+  if (cached && cached.isConnected) return cached;
+  const found = document.getElementById(id);
+  if (found) diagramElCache[id] = found;
+  return found;
+}
+
+const diagramModal = { get el() { return dEl('diagram-modal'); }, get classList() { return dEl('diagram-modal').classList; } };
+const diagramBackdrop = { addEventListener: (...a) => dEl('diagram-backdrop').addEventListener(...a) };
+const diagramClose = { addEventListener: (...a) => dEl('diagram-close').addEventListener(...a) };
+const diagramHeading = { set textContent(v) { dEl('diagram-heading').textContent = v; } };
+const diagramSub = { set textContent(v) { dEl('diagram-sub').textContent = v; } };
+const diagramPick = { get classList() { return dEl('diagram-pick').classList; } };
+const diagramModalDrop = { addEventListener: (...a) => dEl('diagram-modal-drop').addEventListener(...a) };
+const diagramNote = { get classList() { return dEl('diagram-note').classList; }, set textContent(v) { dEl('diagram-note').textContent = v; } };
+const diagramScan = { get classList() { return dEl('diagram-scan').classList; } };
+const scanImg = { set src(v) { dEl('scan-img').src = v; } };
+const scanShade = { get style() { return dEl('scan-shade').style; } };
+const scanLine = { get classList() { return dEl('scan-line').classList; } };
+const scanDots = { set innerHTML(v) { dEl('scan-dots').innerHTML = v; }, appendChild: (n) => dEl('scan-dots').appendChild(n) };
+const scanCopy = { set textContent(v) { dEl('scan-copy').textContent = v; } };
+const scanCancel = { addEventListener: (...a) => dEl('scan-cancel').addEventListener(...a), set textContent(v) { dEl('scan-cancel').textContent = v; } };
+const diagramReview = { get classList() { return dEl('diagram-review').classList; } };
+const reviewFrame = {
+  get classList() { return dEl('review-frame').classList; },
+  addEventListener: (...a) => dEl('review-frame').addEventListener(...a),
+  getBoundingClientRect: () => dEl('review-frame').getBoundingClientRect(),
+  setPointerCapture: (id) => dEl('review-frame').setPointerCapture(id),
+  releasePointerCapture: (id) => dEl('review-frame').releasePointerCapture(id),
+};
+const reviewImg = { set src(v) { dEl('review-img').src = v; } };
+const reviewMarkers = { set innerHTML(v) { dEl('review-markers').innerHTML = v; }, querySelector: (s) => dEl('review-markers').querySelector(s) };
+const reviewTip = { set textContent(v) { dEl('review-tip').textContent = v; } };
+const reviewCount = { set textContent(v) { dEl('review-count').textContent = v; } };
+const reviewList = {
+  set innerHTML(v) { dEl('review-list').innerHTML = v; },
+  appendChild: (n) => dEl('review-list').appendChild(n),
+  addEventListener: (...a) => dEl('review-list').addEventListener(...a),
+  querySelector: (s) => dEl('review-list').querySelector(s),
+};
+const reviewAdd = { addEventListener: (...a) => dEl('review-add').addEventListener(...a) };
+const reviewRescan = { addEventListener: (...a) => dEl('review-rescan').addEventListener(...a) };
+const reviewRemeasure = { get classList() { return dEl('review-remeasure').classList; }, addEventListener: (...a) => dEl('review-remeasure').addEventListener(...a) };
+const diagramTitleInput = { set value(v) { dEl('diagram-title-input').value = v; } };
+const diagramError = { get classList() { return dEl('diagram-error').classList; }, set textContent(v) { dEl('diagram-error').textContent = v; } };
+const diagramCancel = { addEventListener: (...a) => dEl('diagram-cancel').addEventListener(...a) };
+const diagramSave = {
+  get classList() { return dEl('diagram-save').classList; },
+  get textContent() { return dEl('diagram-save').textContent; },
+  set textContent(v) { dEl('diagram-save').textContent = v; },
+  set disabled(v) { dEl('diagram-save').disabled = v; },
+  addEventListener: (...a) => dEl('diagram-save').addEventListener(...a),
+};
+const diagramFileInput = {
+  get files() { return dEl('diagram-file-input').files; },
+  set value(v) { dEl('diagram-file-input').value = v; },
+  addEventListener: (...a) => dEl('diagram-file-input').addEventListener(...a),
+  click: () => dEl('diagram-file-input').click(),
+};
+const scanWrap = { get classList() { return dEl('scan-wrap').classList; } };
 const clCancel = document.getElementById('cl-cancel');
 const genError = document.getElementById('gen-error');
 const genErrorTitle = document.getElementById('gen-error-title');
@@ -248,6 +426,1437 @@ let textEstimateTimer = null;
 let pendingContent = null;
 let activeContent = null;
 
+/* ---------------- Question shape (multiple choice vs enumeration) ----------------
+   Default is Multiple Choice; the choice becomes part of the generated pack so a
+   resumed generation keeps writing the same kind of question. */
+const QTYPES = {
+  multiple_choice: {
+    card: 'choice',
+    label: 'Multiple Choice',
+    hint: 'Great for quick reviews and exam prep.',
+    desc: 'Four options, one right answer.',
+    studyBadge: 'MULTIPLE CHOICE',
+  },
+  enumeration: {
+    card: 'enumeration',
+    label: 'Enumeration',
+    hint: 'Perfect for definitions, steps, and lists.',
+    desc: 'You list the items, Buck marks them.',
+    studyBadge: 'ENUMERATION',
+  },
+  diagram: {
+    card: 'diagram',
+    label: 'Diagram Labeling',
+    hint: 'Best for anatomy charts, circuits, maps, and structures.',
+    desc: 'Buck reads the labels, you fill them in.',
+    studyBadge: 'DIAGRAM',
+    // Diagram Labeling is image-driven, so it takes over the source area entirely.
+    imageOnly: true,
+  },
+};
+let selectedQType = 'multiple_choice';
+
+function isQType(v) { return Object.prototype.hasOwnProperty.call(QTYPES, v); }
+
+// Live rooms play multiple choice only (the room payload stores the cards, and a
+// list-builder question cannot be answered inside the shared timer).
+function qtypeLocked() { return typeof hostingRoom !== 'undefined' && !!hostingRoom; }
+
+function currentQType() { return isQType(selectedQType) ? selectedQType : 'multiple_choice'; }
+
+// Diagram Labeling is image-driven: no source tabs, no estimate, no count slider.
+function isImageOnlyQType(qtype) {
+  const info = QTYPES[qtype || currentQType()];
+  return !!(info && info.imageOnly);
+}
+
+function cardTypeForQType(qtype) {
+  return (QTYPES[qtype] || QTYPES.multiple_choice).card;
+}
+
+function selectQType(qtype, opts) {
+  if (qtypeLocked()) return;
+  const next = isQType(qtype) ? qtype : 'multiple_choice';
+  const changed = next !== selectedQType;
+  selectedQType = next;
+  renderQTypeSelection(changed && !(opts && opts.silent));
+  applyCreateMode();
+}
+
+// Swap the create modal between the text sources (PDF/paste/URL + estimate + slider) and
+// the image-only source used by Diagram Labeling.
+function applyCreateMode() {
+  // The create modal may not be wired yet during boot; it calls this itself once ready.
+  if (!createModalWired) return;
+  const imageOnly = isImageOnlyQType();
+  if (createSourcePanel) createSourcePanel.classList.toggle('hidden', imageOnly);
+  if (diagramSource) diagramSource.classList.toggle('hidden', !imageOnly);
+  if (diagramTip) diagramTip.classList.toggle('hidden', !(imageOnly && diagramState.image));
+  const showEstimate = !imageOnly && createEstimateReady;
+  if (estimateBox) estimateBox.classList.toggle('hidden', !showEstimate);
+  if (estimateControls) estimateControls.classList.toggle('hidden', !showEstimate);
+  if (qtypePanel) qtypePanel.classList.toggle('hidden', !createEstimateReady && !imageOnly);
+  if (imageOnly) {
+    hideGenerationError();
+    if (estimateStatus) { estimateStatus.textContent = ''; estimateStatus.className = 'auth-error'; }
+  }
+  if (estimateGenerate) estimateGenerate.classList.toggle('hidden', imageOnly);
+  if (estimateAll) estimateAll.classList.toggle('hidden', imageOnly);
+  if (estimateNote) estimateNote.classList.toggle('hidden', imageOnly || !createEstimateReady);
+  updateQTypeCount();
+}
+
+// Diagram mode keeps a tiny bit of state on the modal (the already-picked image).
+const diagramState = { image: null };
+let createEstimateReady = false;
+let createModalWired = false;
+
+function renderCreateDiagramChip() {
+  const img = diagramState.image;
+  if (!diagramChip || !diagramDrop) return;
+  if (!img) {
+    diagramChip.classList.add('hidden');
+    diagramDrop.classList.remove('hidden');
+    if (diagramTip) diagramTip.classList.add('hidden');
+    return;
+  }
+  diagramChip.classList.remove('hidden');
+  diagramDrop.classList.add('hidden');
+  if (diagramChipThumb) diagramChipThumb.src = img.thumb || img.dataUrl;
+  if (diagramName) diagramName.textContent = img.name || 'diagram';
+  if (diagramSize) diagramSize.textContent = img.width + ' x ' + img.height + ' px';
+  if (diagramTip) diagramTip.classList.toggle('hidden', !isImageOnlyQType());
+}
+
+function clearCreateDiagram() {
+  diagramState.image = null;
+  renderCreateDiagramChip();
+}
+
+async function onDiagramFileChosen(file) {
+  if (!file) return;
+  if (createStatus) { createStatus.textContent = ''; createStatus.className = 'auth-error'; }
+  setStatus(diagramError, '', null);
+  if (diagramTip) diagramTip.textContent = 'Optimizing your image...';
+  try {
+    const raw = await diagramImageFromFile(file);
+    const processed = await compressToBudget(raw.dataUrl, DIAGRAM_MAX_CHARS);
+    const thumb = await toDataUrlWithSize(processed.dataUrl, 320);
+    diagramState.image = {
+      dataUrl: processed.dataUrl,
+      thumb: thumb.dataUrl,
+      width: processed.width,
+      height: processed.height,
+      name: raw.name || 'diagram',
+      kind: raw.kind,
+    };
+    renderCreateDiagramChip();
+    if (diagramTip) {
+      diagramTip.textContent = 'Buck reads the labels printed on the image and turns each one into an answer box.';
+      diagramTip.classList.remove('hidden');
+    }
+    // Straight into the editor: pick the image, then scan.
+    openDiagramEditor({ dataUrl: diagramState.image.dataUrl, name: diagramState.image.name, width: diagramState.image.width, height: diagramState.image.height });
+  } catch (err) {
+    if (diagramTip) diagramTip.textContent = 'Buck reads the labels printed on the image and turns each one into an answer box.';
+    if (createStatus) {
+      createStatus.className = 'auth-error error';
+      createStatus.textContent = (err && err.message) || "Buck couldn't read that image.";
+    }
+  }
+}
+
+
+function renderQTypeSelection(settle) {
+  const info = QTYPES[currentQType()];
+  qtypeCards.forEach((el) => {
+    const on = el.dataset.qtype === currentQType();
+    el.classList.toggle('is-active', on);
+    el.classList.remove('is-settling');
+    el.setAttribute('aria-checked', on ? 'true' : 'false');
+    el.tabIndex = on ? 0 : -1;
+    const mark = el.querySelector('.qcard-mark-txt');
+    if (mark) mark.textContent = on ? 'Chosen' : 'Available';
+    if (on && settle) {
+      // Restart the settle animation: 1.02 → 1.0 with the orange wash fading in.
+      void el.offsetWidth;
+      el.classList.add('is-settling');
+    }
+  });
+  if (qtypeHint) qtypeHint.textContent = info.hint;
+  updateQTypeCount();
+}
+
+function updateQTypeCount() {
+  if (!qtypeCountN) return;
+  const info = QTYPES[currentQType()];
+  // "N questions in this format" only makes sense for generated questions.
+  if (qtypeFooterCount && info && info.imageOnly) {
+    qtypeFooterCount.classList.add('hidden');
+    return;
+  }
+  if (qtypeFooterCount) qtypeFooterCount.classList.remove('hidden');
+  const slider = document.getElementById('estimate-slider');
+  const n = parseInt(slider && slider.value, 10) || parseInt(estimateLabel && estimateLabel.textContent, 10) || 10;
+  qtypeCountN.textContent = n;
+  if (qtypeCountWord) qtypeCountWord.textContent = n === 1 ? 'question' : 'questions';
+}
+
+/* =====================================================================
+   Diagram Labeling — shared helpers
+   One editor serves both the generation modal and "+ Add question".
+   ===================================================================== */
+
+const DIAGRAM_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+const DIAGRAM_MAX_UPLOAD = 20 * 1024 * 1024;   // what the user may hand us
+const DIAGRAM_TARGET_CHARS = 200 * 1024;       // inline (localStorage-friendly) ceiling
+const DIAGRAM_MAX_CHARS = 900 * 1024;          // hard ceiling before upload / rejection
+const DIAGRAM_BUCKET = 'diagrams';
+
+// Percentage within the image box (0-100), tolerant of whatever the model sends back.
+function clampPct(value, fallback) {
+  const n = typeof value === 'number' ? value : parseFloat(String(value == null ? '' : value).replace(/[^0-9.\-]/g, ''));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(n * 10) / 10));
+}
+
+/* ---------------- Diagram label covers ----------------
+   A diagram card's labels carry a marker point (what the label names), a label position (where
+   the printed text sits) and a cover rectangle. The cover masks the printed answer in study
+   mode, so it has to be an area, not a pinprick. The vision model only gives us a point, so the
+   size is estimated from the text, then adjusted by the user in the review screen. */
+
+const DIAGRAM_TEXT_PX_PER_CHAR = 0.6;   // fallback only: canvas measurement is used when available
+const DIAGRAM_LINE_PX = 26;             // one line of printed label text (fallback)
+const DIAGRAM_PAD_X = 22;               // breathing room either side of the text
+const DIAGRAM_PAD_Y = 14;
+const DIAGRAM_WIDTH_SAFETY = 1.35;      // printed labels often run larger than our font guess
+const DIAGRAM_LEGACY_WIDTH_FACTOR = 1.75; // a point-only label is covered both ways (see below)
+const DIAGRAM_TEXT_FIT = 1.15;           // margin over the measured text so no letter escapes
+const DIAGRAM_MIN_COVER_W = 8;          // percent, so a tiny label still gets a usable chip
+const DIAGRAM_MAX_COVER_W = 86;
+
+// Text widths are measured for real rather than guessed: a "Bicuspid (mitral) valve" needs
+// very different room from "Aorta", and an under-sized cover leaves the answer readable.
+const diagramTextCache = new Map();
+let diagramTextCtx = null;
+
+function measureDiagramText(text, fontPx) {
+  const key = fontPx + '|' + text;
+  const cached = diagramTextCache.get(key);
+  if (cached != null) return cached;
+  let width = String(text || '').length * fontPx * DIAGRAM_TEXT_PX_PER_CHAR;
+  try {
+    if (!diagramTextCtx) {
+      const canvas = document.createElement('canvas');
+      diagramTextCtx = canvas.getContext('2d');
+    }
+    if (diagramTextCtx) {
+      diagramTextCtx.font = '700 ' + fontPx + 'px Arial, "Helvetica Neue", sans-serif';
+      const measured = diagramTextCtx.measureText(String(text || '')).width;
+      if (measured > 0) width = measured;
+    }
+  } catch (e) { /* keep the estimate */ }
+  if (diagramTextCache.size > 400) diagramTextCache.clear();
+  diagramTextCache.set(key, width);
+  return width;
+}
+
+// Longest visual line, which is the one the cover must span.
+function labelLongestLine(text) {
+  return String(text || '')
+    .split(/\s*\n\s*/)
+    .reduce((max, line) => (line.trim().length > max.trim().length ? line : max), '');
+}
+
+// Font size the artwork's printed labels appear to be, derived from the image width.
+function diagramLabelFontPx(imageW) {
+  const imgW = Number(imageW) || 1000;
+  return Math.max(12, Math.min(34, imgW * 0.022));
+}
+
+// How the printed text sits relative to the label point the model reported. The model gives
+// us an anchor, not a box: for labels near an edge the text almost always grows inwards, and
+// for interior labels it is roughly centred. The cover extends that way so nothing leaks out.
+function diagramTextBias(imageW, labelPos) {
+  const imgW = Number(imageW) || 1000;
+  const x = labelPos && typeof labelPos.x === 'number' ? labelPos.x : 50;
+  const margin = imgW * 0.2;
+  if (x <= margin) return 1;        // pinned left → text grows rightwards
+  if (x >= imgW - margin) return -1; // pinned right → text grows leftwards
+  return 0;
+}
+
+// Cover rectangle in image percentages.
+function estimateLabelBox(text, imageW, imageH, labelPos) {
+  const imgW = Number(imageW) || 1000;
+  const imgH = Number(imageH) || 750;
+  const fontPx = diagramLabelFontPx(imgW);
+  const textPx = measureDiagramText(labelLongestLine(text), fontPx) * DIAGRAM_WIDTH_SAFETY;
+  const totalPx = textPx + DIAGRAM_PAD_X * 2 + fontPx * 0.8;
+  const wPct = Math.max(DIAGRAM_MIN_COVER_W, Math.min(DIAGRAM_MAX_COVER_W, (totalPx / imgW) * 100));
+  const hPct = Math.max(3.5, Math.min(18, ((fontPx * 1.5 + DIAGRAM_PAD_Y) / imgH) * 100));
+  return {
+    w: Math.round(wPct * 10) / 10,
+    h: Math.round(hPct * 10) / 10,
+    bias: diagramTextBias(imgW, labelPos),
+  };
+}
+
+// A stored cover size, or null when the label has never been sized.
+// `v: 2` marks a box measured from the artwork (or set by the user) rather than estimated.
+function normalizeDiagramBox(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const w = Number(raw.w);
+  const h = Number(raw.h);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 1 || h <= 1) return null;
+  return {
+    w: Math.max(4, Math.min(95, w)),
+    h: Math.max(3, Math.min(60, h)),
+    bias: Number.isFinite(Number(raw.bias)) ? Number(raw.bias) : 0,
+    // An absolute top-left (percent) when the box was measured, not just a size.
+    x: Number.isFinite(Number(raw.x)) ? Math.max(0, Number(raw.x)) : null,
+    y: Number.isFinite(Number(raw.y)) ? Math.max(0, Number(raw.y)) : null,
+    v: Number(raw.v) || 0,
+    userSized: raw.userSized === true,
+  };
+}
+
+// The vision model's measured text box, if it gave us one.
+function labelBoxFromDetection(label) {
+  if (!label || !label.labelBox) return null;
+  const b = label.labelBox;
+  const w = Number(b.w);
+  const h = Number(b.h);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 1 || h <= 1) return null;
+  return {
+    x: Number.isFinite(Number(b.x)) ? Number(b.x) : Math.max(0, (label.labelPos ? label.labelPos.x : 50) - w / 2),
+    y: Number.isFinite(Number(b.y)) ? Number(b.y) : Math.max(0, (label.labelPos ? label.labelPos.y : 50) - h / 2),
+    w,
+    h,
+    bias: 0,
+    v: 2,
+  };
+}
+
+function normalizeDiagramLabel(raw, index) {
+  if (!raw || typeof raw !== 'object') return null;
+  const text = String(raw.text == null ? '' : raw.text).replace(/\s+/g, ' ').trim().slice(0, 80);
+  if (!text) return null;
+  const marker = raw.marker && typeof raw.marker === 'object' ? raw.marker : {};
+  const labelPos = raw.labelPos && typeof raw.labelPos === 'object' ? raw.labelPos : {};
+  // Sized by applyDiagramCoverSizes() once the card's image dimensions are known.
+  const box = normalizeDiagramBox(raw.box) || labelBoxFromDetection(raw);
+  return {
+    id: raw.id || ('l' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5)),
+    text,
+    marker: { x: clampPct(marker.x, 50), y: clampPct(marker.y, 50) },
+    labelPos: { x: clampPct(labelPos.x, 5), y: clampPct(labelPos.y, 5) },
+    box,
+    // A card saved before boxes existed has no measurement to trust.
+    needsBox: !box,
+  };
+}
+
+// Fill in any missing cover size by measuring the label text against the card's image size.
+// Every label also gets `minW`/`minH`: the smallest cover, in percent, that can hide this
+// label. Computed here because this is where the image dimensions are known.
+function applyDiagramCoverSizes(labels, imageW, imageH) {
+  const imgW = Number(imageW) || 1000;
+  const imgH = Number(imageH) || 750;
+  const fontPx = diagramLabelFontPx(imgW);
+  (labels || []).forEach((label) => {
+    if (!label) return;
+    const textPx = measureDiagramText(labelLongestLine(label.text), fontPx) * DIAGRAM_WIDTH_SAFETY;
+    label.minW = Math.max(6, Math.min(88, ((textPx + DIAGRAM_PAD_X * 2) / imgW) * 100));
+    label.minH = Math.max(3, Math.min(20, ((fontPx * 1.8 + DIAGRAM_PAD_Y) / imgH) * 100));
+    const stored = normalizeDiagramBox(label.box);
+    if (stored) { label.box = stored; label.needsBox = false; return; }
+    label.box = estimateLabelBox(label.text, imgW, imgH, label.labelPos);
+    label.needsBox = true;
+  });
+  return labels;
+}
+
+// The box a label's cover should occupy, in percentages, clamped inside the image.
+//
+// The model reports a label's *point*, not its extent, and that point is normally the end of
+// the printed text nearest the middle of the picture (leader lines run outwards). So the cover
+// is built as an interval rather than a centred box:
+//
+//   bias +1 (point on the left)  →  text runs right:   [point, point + w]
+//   bias -1 (point on the right) →  text runs left:    [point − w, point]
+//   bias  0 (interior)           →  centred on the point
+//
+// w is the measured text width plus padding and a safety margin, so the printed answer is
+// always inside the cover.
+// A measured box is clamped and padded: the model's boxes are good but occasionally a hair
+// tight at one end (rounding, a trailing letter), and a 1% gap still shows the answer.
+const DIAGRAM_BOX_PAD_X = 1.6;
+const DIAGRAM_BOX_PAD_Y = 0.8;
+
+function diagramCoverRect(label) {
+  const pos = label.labelPos || label.marker || { x: 50, y: 50 };
+  const box = label.box && label.box.w ? label.box : estimateLabelBox(label.text, 1000, 750, pos);
+
+  // A measured box (from the vision model or set by the user) is used as a starting point.
+  // The model's boxes are close but not exact, so the cover is never allowed to be smaller
+  // than the label's own measured text — otherwise a few letters stick out at one end.
+  if (box.v === 2 && box.x != null && box.y != null) {
+    if (box.userSized) {
+      const w = Math.max(4, box.w);
+      const h = Math.max(3, box.h);
+      return {
+        left: Math.max(0, Math.min(100 - w, box.x)),
+        top: Math.max(0, Math.min(100 - h, box.y)),
+        w,
+        h,
+      };
+    }
+
+    const detectedW = box.w + DIAGRAM_BOX_PAD_X * 2;
+    const detectedH = box.h + DIAGRAM_BOX_PAD_Y * 2;
+    const w = Math.max(4, Math.min(96, Math.max(detectedW, (Number(label.minW) || 0) * DIAGRAM_TEXT_FIT, detectedW * 1.25)));
+    const h = Math.max(3, Math.min(60, Math.max(detectedH, (Number(label.minH) || 0) * DIAGRAM_TEXT_FIT)));
+    // Grow around the box's own centre so a slightly-off measurement cannot expose an end.
+    const cx = box.x - DIAGRAM_BOX_PAD_X + (box.w + DIAGRAM_BOX_PAD_X * 2) / 2;
+    const cy = box.y - DIAGRAM_BOX_PAD_Y + (box.h + DIAGRAM_BOX_PAD_Y * 2) / 2;
+    return {
+      left: Math.max(0, Math.min(100 - w, cx - w / 2)),
+      top: Math.max(0, Math.min(100 - h, cy - h / 2)),
+      w,
+      h,
+    };
+  }
+
+  // A label with no measured box (cards saved before Buck measured them) is the risky case:
+  // all we have is a point, and we cannot tell whether that point is the text's start, middle,
+  // or end. So the cover is a symmetric band around the point — wide enough to hide the answer
+  // whatever the direction, without blanketing the artwork.
+  const minW = Number(label.minW) || 0;
+  const minH = Number(label.minH) || 0;
+  const w = Math.max(12, Math.min(88, Math.max(minW * DIAGRAM_LEGACY_WIDTH_FACTOR, box.w * DIAGRAM_LEGACY_WIDTH_FACTOR)));
+  const h = Math.max(4, Math.min(14, minH * 1.7));
+  const left = Math.max(0, Math.min(100 - w, pos.x - w / 2));
+  const top = Math.max(0, Math.min(100 - h, pos.y - h / 2));
+  return { left, top, w, h };
+}
+
+// The masked-label markup: an opaque cream cover with its numbered marker centred on it.
+function diagramCoverMarkup(label, index, opts) {
+  const o = opts || {};
+  const rect = diagramCoverRect(label);
+  const style = 'left:' + rect.left.toFixed(2) + '%;top:' + rect.top.toFixed(2) + '%;width:' + rect.w.toFixed(2) + '%;height:' + rect.h.toFixed(2) + '%';
+  if (o.static) {
+    // StudyPack preview: no interaction, just the same masked look.
+    return '<span class="dd-cover is-static" style="' + style + '"><b>' + (index + 1) + '</b></span>';
+  }
+  return '<button type="button" class="dd-cover" data-dd="' + index + '" style="' + style + '"' +
+    ' aria-label="Label ' + (index + 1) + ', hidden by Buck"><b>' + (index + 1) + '</b></button>';
+}
+
+// The labels of a diagram card, always a clean array of the shape the UI renders, with a
+// cover size filled in so the printed answers can be masked.
+function diagramLabels(card, imageW, imageH) {
+  if (!card || !Array.isArray(card.labels)) return [];
+  const labels = card.labels.map((l, i) => normalizeDiagramLabel(l, i)).filter(Boolean);
+  return applyDiagramCoverSizes(labels, imageW || card.image_width, imageH || card.image_height);
+}
+
+function newLabelId() {
+  return 'l' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+}
+
+// Always returns a Promise.
+function readAsDataUrl(file) {
+  return new Promise((resolve) => {
+    try {
+      const fr = new FileReader();
+      fr.onload = () => resolve(typeof fr.result === 'string' ? fr.result : '');
+      fr.onerror = () => resolve('');
+      fr.readAsDataURL(file);
+    } catch (e) { resolve(''); }
+  });
+}
+
+function loadImageEl(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("That image couldn't be opened. Try PNG, JPG, or WebP."));
+    img.src = src;
+  });
+}
+
+async function toDataUrlWithSize(source, maxEdge) {
+  const img = await loadImageEl(source);
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  if (!w || !h) throw new Error("That image couldn't be read.");
+  const scale = Math.min(1, maxEdge / Math.max(w, h));
+  const outW = Math.max(1, Math.round(w * scale));
+  const outH = Math.max(1, Math.round(h * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = outW;
+  canvas.height = outH;
+  const ctx = canvas.getContext('2d');
+  // Diagrams are mostly flat art on white — JPEG at 0.86 keeps text crisp and files small.
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, outW, outH);
+  ctx.drawImage(img, 0, 0, outW, outH);
+  return {
+    dataUrl: canvas.toDataURL('image/jpeg', 0.86),
+    width: outW,
+    height: outH,
+    naturalWidth: w,
+    naturalHeight: h,
+  };
+}
+
+// Shrink until the base64 payload fits the target budget (for inline storage / vision input).
+async function compressToBudget(source, targetChars) {
+  const attempts = [
+    { maxEdge: 1400, quality: 0.86 },
+    { maxEdge: 1100, quality: 0.8 },
+    { maxEdge: 900, quality: 0.72 },
+    { maxEdge: 720, quality: 0.66 },
+    { maxEdge: 560, quality: 0.6 },
+  ];
+  const img = await loadImageEl(source);
+  const natural = { w: img.naturalWidth || img.width, h: img.naturalHeight || img.height };
+  let best = null;
+  for (const attempt of attempts) {
+    const result = await toDataUrlWithSize(source, attempt.maxEdge);
+    best = result;
+    if (result.dataUrl.length <= targetChars) return result;
+  }
+  return best;
+}
+
+// Diagrams are stored in Supabase Storage when we can, and inline with the card when we
+// cannot (demo mode, no session, missing bucket) so the feature always works.
+async function storeDiagramImage(dataUrl, width, height) {
+  const fallback = () => ({ url: dataUrl, width, height, stored: 'inline' });
+  if (!supabaseClient || !currentUser || isDemo()) return fallback();
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const path = currentUser.id + '/diagram-' + Date.now().toString(36) + '.jpg';
+    const { error } = await supabaseClient.storage
+      .from(DIAGRAM_BUCKET)
+      .upload(path, blob, { upsert: false, cacheControl: '31536000', contentType: 'image/jpeg' });
+    if (error) throw error;
+    const { data } = supabaseClient.storage.from(DIAGRAM_BUCKET).getPublicUrl(path);
+    if (!data || !data.publicUrl) throw new Error('no public url');
+    return { url: data.publicUrl, width, height, stored: 'supabase' };
+  } catch (err) {
+    console.warn('Diagram upload fell back to inline storage:', (err && err.message) || err);
+    return fallback();
+  }
+}
+
+// Accepts an image *or* a single-page PDF (rendered to an image) and yields the working image.
+async function diagramImageFromFile(file) {
+  if (!file) throw new Error('No file chosen.');
+  const isPdf = /\.pdf$/i.test(file.name || '') || file.type === 'application/pdf';
+  if (isPdf) {
+    if (file.size > DIAGRAM_MAX_UPLOAD) throw new Error('That PDF is too large. Try a smaller file.');
+    const pages = await renderPdfImages(file, 1);
+    if (!pages.length) throw new Error("Buck couldn't read that PDF. Try an image instead.");
+    return { dataUrl: pages[0], name: (file.name || 'diagram.pdf').replace(/\.pdf$/i, ''), kind: 'pdf' };
+  }
+  if (!DIAGRAM_TYPES.includes(file.type)) {
+    throw new Error('Buck reads PNG, JPG, WebP, GIF or a single-page PDF.');
+  }
+  if (file.size > DIAGRAM_MAX_UPLOAD) throw new Error('That image is over 20MB. Try a smaller one.');
+  const dataUrl = await readAsDataUrl(file);
+  if (!dataUrl) throw new Error("That image couldn't be read. Try another file.");
+  return { dataUrl, name: (file.name || 'diagram').replace(/\.[a-z0-9]+$/i, ''), kind: 'image' };
+}
+
+
+/* =====================================================================
+   Diagram editor — pick an image, watch Buck scan it, then fix the labels.
+   Opened from the generation modal (creates a card) and from a StudyPack's
+   "+ Add question" (creates or edits a card in place).
+   ===================================================================== */
+
+const diagramEditor = {
+  stage: 'pick',
+  mode: 'create',       // 'create' (generation modal) | 'card' (inside a StudyPack)
+  packId: null,
+  editIndex: -1,
+  image: null,          // { dataUrl, name, width, height, thumb }
+  title: '',
+  labels: [],
+  scanning: false,
+  selected: -1,
+  placeTarget: null,    // label id waiting for a click on the image, or 'new'
+  dragId: null,
+  scanToken: 0,
+  lastResult: null,     // for "re-scan" / manual fallback
+};
+
+// Marker styling buckets: real printed labels are usually grouped at the edges, so each
+// marker gets a variant based on whether its neighbours are close by.
+function labelMarkerClasses(labels, label) {
+  const near = labels.filter((o) => o.id !== label.id
+    && Math.abs(o.marker.x - label.marker.x) <= 7
+    && Math.abs(o.marker.y - label.marker.y) <= 8);
+  const pos = label.marker.x >= 66 ? 'is-right' : label.marker.x <= 34 ? 'is-left' : 'is-mid';
+  if (!near.length) return 'm-mid ' + pos;
+  const group = [label].concat(near).sort((a, b) => a.marker.y - b.marker.y);
+  const rank = group.findIndex((o) => o.id === label.id);
+  return 'm-d' + (rank % 3) + ' ' + pos;
+}
+
+function diagramMarkerStyle(label, withLabel) {
+  const cls = withLabel ? '<span class="dm-label">' + escapeHtml(label.text) + '</span>' : '';
+  return 'left:' + label.marker.x + '%;top:' + label.marker.y + '%';
+}
+
+function markerMarkup(label, index, opts) {
+  const o = opts || {};
+  const classes = labelMarkerClasses(diagramEditor.labels, label) + (o.extra || '');
+  const num = '<b>' + (index + 1) + '</b>';
+  const text = o.showText === false ? '' : '<span class="dm-label">' + escapeHtml(label.text) + '</span>';
+  return '<span class="diagram-marker ' + classes + '" data-label="' + escAttr(label.id) + '" style="' + diagramMarkerStyle(label, false) + '">'
+    + num + text + '</span>';
+}
+
+/* ---------------- Open / close ---------------- */
+
+function openDiagramEditor(opts) {
+  const o = opts || {};
+  if (!diagramModal) return;
+  diagramEditor.mode = o.mode || 'create';
+  diagramEditor.packId = o.packId || currentPackId || null;
+  diagramEditor.editIndex = typeof o.editIndex === 'number' ? o.editIndex : -1;
+  diagramEditor.labels = Array.isArray(o.labels) ? o.labels.map(normalizeDiagramLabel).filter(Boolean) : [];
+  diagramEditor.title = o.title || '';
+  diagramEditor.selected = -1;
+  diagramEditor.placeTarget = null;
+  diagramEditor.dragId = null;
+  diagramEditor.lastResult = null;
+  setDiagramError('');
+  if (diagramTitleInput) diagramTitleInput.value = diagramEditor.title;
+  diagramModal.el.classList.add('hidden');
+  diagramModal.el.classList.remove('hidden');
+  applyDiagramModeCopy();
+  if (o.dataUrl) {
+    setDiagramImage({ dataUrl: o.dataUrl, name: o.name || 'diagram', width: o.width || 0, height: o.height || 0, thumb: o.thumb || o.dataUrl });
+    // Re-opening with labels already reviewed goes straight to the review screen.
+    if (diagramEditor.labels.length) showDiagramReview();
+    else startDiagramScan();
+  } else {
+    showDiagramPick();
+  }
+}
+
+function closeDiagramEditor() {
+  diagramEditor.scanning = false;
+  diagramEditor.scanToken++;
+  if (diagramScanTimer) { clearTimeout(diagramScanTimer); diagramScanTimer = null; }
+  if (diagramModal.el) diagramModal.el.classList.add('hidden');
+}
+
+function applyDiagramModeCopy() {
+  const inPack = diagramEditor.mode === 'card';
+  if (diagramSave) {
+    diagramSave.textContent = inPack
+      ? (diagramEditor.editIndex >= 0 ? 'Save changes' : 'Add to StudyPack')
+      : 'Create diagram card';
+  }
+  if (diagramHeading) diagramHeading.textContent = inPack && diagramEditor.editIndex >= 0 ? 'Edit diagram question' : 'Diagram Labeling';
+}
+
+function setDiagramStage(stage) {
+  diagramEditor.stage = stage;
+  [diagramPick, diagramScan, diagramReview].forEach((el) => { if (el) el.classList.add('hidden'); });
+  const el = stage === 'pick' ? diagramPick : stage === 'scan' ? diagramScan : diagramReview;
+  if (el) el.classList.remove('hidden');
+  if (diagramSave) diagramSave.classList.toggle('hidden', stage !== 'review');
+}
+
+function setDiagramImage(img) {
+  diagramEditor.image = img;
+  if (scanImg) scanImg.src = img.dataUrl;
+  if (reviewImg) reviewImg.src = img.dataUrl;
+}
+
+function setDiagramError(msg) {
+  if (!diagramError) return;
+  diagramError.textContent = msg || '';
+  diagramError.classList.toggle('hidden', !msg);
+}
+
+function setScanNote(msg) {
+  if (diagramNote) {
+    diagramNote.textContent = msg || '';
+    diagramNote.classList.toggle('hidden', !msg);
+  }
+}
+
+function showDiagramPick() {
+  setDiagramStage('pick');
+  setDiagramError('');
+  setScanNote('');
+  setDiagramImage(diagramEditor.image || { dataUrl: '', name: '' });
+}
+
+/* ---------------- Stage: scanning ---------------- */
+
+function startDiagramScan() {
+  if (!diagramEditor.image) { showDiagramPick(); return; }
+  const token = ++diagramEditor.scanToken;
+  diagramEditor.scanning = true;
+  setDiagramError('');
+  setScanNote('');
+  setDiagramStage('scan');
+  if (scanCopy) scanCopy.textContent = 'Buck is reading the diagram...';
+  if (scanDots) scanDots.innerHTML = '';
+  if (scanCancel) scanCancel.textContent = 'Stop';
+  if (scanShade) scanShade.style.opacity = '1';
+  if (scanLine) scanLine.classList.remove('scan-done');
+
+  // The sweep loops for as long as detection takes, so the pause is never dead air.
+  if (scanWrap) {
+    scanWrap.classList.remove('is-scanning');
+    void scanWrap.offsetWidth;
+    scanWrap.classList.add('is-scanning');
+  }
+  playScanWhoosh();
+  // Reading a busy diagram takes the vision model a while, so keep the copy honest about what
+  // is happening rather than showing one static line for the whole wait.
+  const scanNotes = [
+    [1900, 'Checking what each label points to...'],
+    [9000, 'Still reading — busy diagrams take Buck a moment...'],
+    [22000, "Almost there — Buck is measuring each label's text..."],
+    [40000, 'Big diagram! Hang on, Buck is nearly done...'],
+  ];
+  scanNotes.forEach(([at, text]) => {
+    setTimeout(() => {
+      if (diagramEditor.scanToken !== token || !diagramEditor.scanning) return;
+      if (scanCopy) scanCopy.textContent = text;
+    }, at);
+  });
+
+  const detected = detectDiagramLabelsRemote(diagramEditor.image.dataUrl)
+    .then((result) => ({ result }))
+    .catch((error) => ({ error }));
+
+  Promise.race([
+    detected,
+    new Promise((r) => setTimeout(() => r(null), 30000)),
+  ]).then((settled) => {
+    if (diagramEditor.scanToken !== token) return;
+    if (settled === null) {
+      // Detection took too long: stop the animation and offer a retry.
+      finishScan(token, { error: new Error('That took too long.') });
+      return;
+    }
+    const result = settled.result || null;
+    const labels = result && Array.isArray(result.labels) ? result.labels.map(normalizeDiagramLabel).filter(Boolean) : [];
+    finishScan(token, settled.error ? { error: settled.error } : { result, labels });
+  });
+}
+
+// Match detected labels to their marker positions so each dot pops as the line reaches it.
+function scanRevealOrder(labels) {
+  const pool = labels.slice();
+  const order = [];
+  for (let i = 0; i < labels.length; i++) {
+    let bestAt = -1;
+    let bestDist = Infinity;
+    pool.forEach((p, pi) => {
+      const d = Math.abs(p.marker.y - labels[i].marker.y) + Math.abs(p.marker.x - labels[i].marker.x) * 0.35;
+      if (d < bestDist) { bestDist = d; bestAt = pi; }
+    });
+    const picked = bestAt >= 0 ? pool.splice(bestAt, 1)[0] : labels[i];
+    order.push(picked);
+  }
+  return order;
+}
+
+function finishScan(token, payload) {
+  const labels = payload.labels || [];
+  const order = scanRevealOrder(labels);
+  const REVEAL_MS = 1500;   // how long the dots take to pop in along their stagger
+  const dots = [];
+
+  // The sweep stops, the shade lifts, and the detected dots land one after another.
+  if (scanWrap) scanWrap.classList.remove('is-scanning');
+  if (scanLine) scanLine.classList.add('scan-done');
+  if (scanShade) scanShade.style.opacity = '0';
+  if (scanDots) scanDots.innerHTML = '';
+
+  if (!payload.error) {
+    order.forEach((label, i) => {
+      const dot = document.createElement('span');
+      dot.className = 'scan-dot';
+      dot.style.left = label.marker.x + '%';
+      dot.style.top = label.marker.y + '%';
+      dot.innerHTML = '<b>' + (i + 1) + '</b>';
+      dot.style.transitionDelay = Math.round((i + 1) * (REVEAL_MS / (order.length + 1))) + 'ms';
+      if (scanDots) scanDots.appendChild(dot);
+      dots.push(dot);
+      const popAt = (i + 1) * (REVEAL_MS / (order.length + 1));
+      setTimeout(() => {
+        if (diagramEditor.scanToken !== token) return;
+        dot.classList.add('in');
+        playDetectDing();
+      }, popAt);
+    });
+  }
+
+  const wait = dots.length ? REVEAL_MS + 500 : 500;
+  diagramScanTimer = setTimeout(() => {
+    diagramScanTimer = null;
+    if (diagramEditor.scanToken !== token) return;
+    diagramEditor.scanning = false;
+
+    if (payload.error) {
+      // Buck looks apologetic and the button turns into a retry.
+      setScanNote('Buck got distracted. Try again?');
+      if (scanCopy) scanCopy.textContent = "Buck couldn't read that one.";
+      if (scanCancel) scanCancel.textContent = 'Try again';
+      if (scanLine) scanLine.classList.remove('scan-done');
+      if (scanShade) scanShade.style.opacity = '1';
+      playWrong();
+      return;
+    }
+
+    // Size the covers against the image we are editing, so `minW`/`minH` (the smallest cover
+    // that can hide each label) are known even for labels the model measured loosely.
+    const scanImage = diagramEditor.image || {};
+    applyDiagramCoverSizes(labels, scanImage.width, scanImage.height);
+    diagramEditor.labels = labels;
+    diagramEditor.lastResult = payload.result || null;
+    if (payload.result && payload.result.title && !diagramEditor.title) {
+      diagramEditor.title = payload.result.title;
+      if (diagramTitleInput) diagramTitleInput.value = payload.result.title;
+    }
+    if (scanCopy) {
+      scanCopy.textContent = labels.length
+        ? 'Found ' + labels.length + ' label' + (labels.length === 1 ? '' : 's') + '! Nice diagram.'
+        : "Hmm, Buck didn't spot any labels.";
+    }
+    playDetectDing();
+    showDiagramReview();
+  }, wait);
+}
+
+// The image sent to the vision model for detection. The full-resolution artwork can be ~1MB,
+// which the model takes 40s+ to read; a 1500px copy keeps label text legible while cutting
+// both the latency and the payload. Boxes come back as percentages, so they still map onto
+// the original image exactly.
+let diagramDetectImageCache = { src: '', dataUrl: '' };
+async function diagramDetectImage(dataUrl) {
+  if (!dataUrl) return dataUrl;
+  if (diagramDetectImageCache.src === dataUrl) return diagramDetectImageCache.dataUrl;
+  try {
+    const scaled = await toDataUrlWithSize(dataUrl, 1500);
+    // Only use the copy when it genuinely shrinks the payload.
+    const out = scaled.dataUrl && scaled.dataUrl.length < dataUrl.length ? scaled.dataUrl : dataUrl;
+    diagramDetectImageCache = { src: dataUrl, dataUrl: out };
+    return out;
+  } catch (e) {
+    return dataUrl;
+  }
+}
+
+async function detectDiagramLabelsRemote(imageUrl) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90000);
+  try {
+    const payloadImage = await diagramDetectImage(imageUrl);
+    const img = diagramEditor.image || {};
+    const res = await fetch('/api/diagram/detect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        imageUrl: payloadImage,
+        hint: diagramEditor.hint || '',
+        // Lets the server correct a pixel-space answer; percentages are relative to the original.
+        imageWidth: Number(img.width) || 0,
+        imageHeight: Number(img.height) || 0,
+      }),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.error || 'Diagram scan failed.');
+      err.code = data.code || 'HTTP_' + res.status;
+      throw err;
+    }
+    return data;
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      const e = new Error('The scan took too long.');
+      e.code = 'TIMEOUT';
+      throw e;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* ---------------- Stage: review ---------------- */
+
+function showDiagramReview() {
+  setDiagramStage('review');
+  setDiagramError('');
+  if (!diagramEditor.labels.length) {
+    setScanNote('');
+  }
+  renderDiagramReview();
+  // No labels at all: explain and wait for the user to mark them.
+  if (!diagramEditor.labels.length && reviewTip) {
+    reviewTip.textContent = "No labels detected — click the image to mark them yourself.";
+  } else if (reviewTip) {
+    // Cards created before Buck measured label boxes only have estimates — say so, because
+    // this is where the user can put them right.
+    const estimated = diagramEditor.labels.filter((l) => l.needsBox).length;
+    reviewTip.textContent = estimated
+      ? 'The cream boxes are what Buck hides in study mode. ' + estimated +
+        ' of them are estimated — use Re-measure boxes for exact ones, or drag a box to line it up.'
+      : 'The cream boxes are what Buck hides in study mode. Drag one to move it, or its corner to resize.';
+  }
+  if (reviewRemeasure) {
+    const estimated = diagramEditor.labels.filter((l) => l.needsBox).length;
+    reviewRemeasure.classList.toggle('hidden', !estimated || !diagramEditor.image);
+  }
+}
+
+function renderDiagramReview() {
+  if (!reviewMarkers || !reviewList) return;
+  const labels = diagramEditor.labels;
+  // Show the actual covers, so the user can see exactly what will be hidden in study mode and
+  // nudge or resize any box that does not line up with the printed label.
+  reviewMarkers.innerHTML = labels
+    .map((l, i) => markerMarkup(l, i, { extra: diagramEditor.selected === i ? ' is-selected' : '' }))
+    .join('') +
+    labels
+      .map((l, i) => {
+        const rect = diagramCoverRect(l);
+        return '<span class="review-cover dd-cover" data-cover="' + i + '"' +
+          ' style="left:' + rect.left.toFixed(2) + '%;top:' + rect.top.toFixed(2) + '%;width:' + rect.w.toFixed(2) + '%;height:' + rect.h.toFixed(2) + '%">' +
+          '<span class="review-cover-n">' + (i + 1) + '</span>' +
+          '<span class="review-cover-grip" data-grip="' + i + '" title="Drag to resize this cover" aria-hidden="true"></span>' +
+          '</span>';
+      })
+      .join('');
+  if (reviewCount) reviewCount.textContent = labels.length + (labels.length === 1 ? ' label' : ' labels');
+  renderDiagramList();
+  if (diagramSave) diagramSave.disabled = !labels.length || !diagramEditor.image;
+}
+
+function renderDiagramList() {
+  if (!reviewList) return;
+  const labels = diagramEditor.labels;
+  reviewList.innerHTML = '';
+  if (!labels.length) {
+    const empty = document.createElement('p');
+    empty.className = 'review-empty';
+    empty.innerHTML = 'Buck didn\'t spot any labels here.<br><span>Click the image to mark them yourself, or re-scan.</span>';
+    reviewList.appendChild(empty);
+    return;
+  }
+  labels.forEach((label, i) => {
+    const row = document.createElement('div');
+    row.className = 'review-row' + (diagramEditor.selected === i ? ' is-selected' : '');
+    row.dataset.i = i;
+    row.innerHTML =
+      '<span class="review-num">' + (i + 1) + '</span>' +
+      '<input class="review-text" type="text" maxlength="80" value="' + escAttr(label.text) + '" placeholder="Label text" aria-label="Label ' + (i + 1) + ' text" />' +
+      '<button type="button" class="review-icon-btn place" title="Place this label on the image" aria-label="Place label ' + (i + 1) + '">&#127919;</button>' +
+      '<button type="button" class="review-icon-btn del" title="Remove this label" aria-label="Remove label ' + (i + 1) + '">&times;</button>';
+    reviewList.appendChild(row);
+  });
+}
+
+function diagramPointFromEvent(e) {
+  const rect = reviewFrame.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const x = clampPct(((e.clientX - rect.left) / rect.width) * 100, 50);
+  const y = clampPct(((e.clientY - rect.top) / rect.height) * 100, 50);
+  return { x, y };
+}
+
+function selectDiagramLabel(index) {
+  diagramEditor.selected = index;
+  renderDiagramReview();
+  if (index >= 0) {
+    const row = reviewList.querySelector('.review-row[data-i="' + index + '"]');
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+// Size a label's cover from its text, using the image being edited.
+function sizeDiagramLabel(label) {
+  if (!label) return;
+  const img = diagramEditor.image || {};
+  const imgW = Number(img.width) || 1000;
+  const imgH = Number(img.height) || 750;
+  const fontPx = diagramLabelFontPx(imgW);
+  const textPx = measureDiagramText(labelLongestLine(label.text || ''), fontPx) * DIAGRAM_WIDTH_SAFETY;
+  label.minW = Math.max(6, Math.min(88, ((textPx + DIAGRAM_PAD_X * 2) / imgW) * 100));
+  label.minH = Math.max(3, Math.min(20, ((fontPx * 1.8 + DIAGRAM_PAD_Y) / imgH) * 100));
+  label.box = estimateLabelBox(label.text || '', imgW, imgH, label.labelPos || label.marker);
+}
+
+// (Re)size a label's cover, keeping any size the user has already adjusted.
+function sizeDiagramLabelIfNeeded(label) {
+  if (!label) return;
+  if (normalizeDiagramBox(label.box)) return;
+  sizeDiagramLabel(label);
+}
+
+function addDiagramLabel(point) {
+  const at = point || { x: 50, y: 50 };
+  const label = {
+    id: newLabelId(),
+    text: '',
+    marker: { x: clampPct(at.x, 50), y: clampPct(at.y, 50) },
+    labelPos: { x: clampPct(at.x, 5), y: clampPct(at.y, 5) },
+    box: null,
+  };
+  sizeDiagramLabelIfNeeded(label);
+  diagramEditor.labels.push(label);
+  renderDiagramReview();
+  selectDiagramLabel(diagramEditor.labels.length - 1);
+  if (reviewList) {
+    const input = reviewList.querySelector('.review-row[data-i="' + (diagramEditor.labels.length - 1) + '"] .review-text');
+    if (input) input.focus();
+  }
+  return diagramEditor.labels.length - 1;
+}
+
+function removeDiagramLabel(index) {
+  if (index < 0 || index >= diagramEditor.labels.length) return;
+  diagramEditor.labels.splice(index, 1);
+  diagramEditor.selected = -1;
+  renderDiagramReview();
+}
+
+function moveDiagramLabel(index, point) {
+  const label = diagramEditor.labels[index];
+  if (!label) return;
+  label.marker = { x: clampPct(point.x, label.marker.x), y: clampPct(point.y, label.marker.y) };
+  // The label point is where the printed text sits, so dragging a cover moves it too — but a
+  // size the user has already set is kept.
+  label.labelPos = { x: label.marker.x, y: label.marker.y };
+  renderDiagramReview();
+}
+
+/* ---------------- Save ---------------- */
+
+async function saveDiagramCard() {
+  const img = diagramEditor.image || {};
+  const labels = diagramEditor.labels
+    .map((l) => {
+      const text = String(l.text || '').trim();
+      // Keep a size the user adjusted; otherwise measure it now.
+      const box = normalizeDiagramBox(l.box) || estimateLabelBox(text, img.width, img.height, l.labelPos || l.marker);
+      return { id: l.id || newLabelId(), text, marker: l.marker, labelPos: l.labelPos || l.marker, box };
+    })
+    .filter((l) => l.text);
+  if (!diagramEditor.image) { setDiagramError('Choose a diagram image first.'); return; }
+  if (!labels.length) { setDiagramError('Add at least one label before saving.'); return; }
+
+  diagramSave.disabled = true;
+  diagramSave.textContent = 'Saving...';
+  setDiagramError('');
+  try {
+    let imageUrl = diagramEditor.image.url || '';
+    let stored = diagramEditor.image.stored || '';
+    let width = diagramEditor.image.width || 0;
+    let height = diagramEditor.image.height || 0;
+
+    if (!imageUrl) {
+      // Make sure the inline payload stays small enough to live with the card.
+      let payload = { dataUrl: diagramEditor.image.dataUrl, width, height };
+      if (payload.dataUrl.length > DIAGRAM_TARGET_CHARS) {
+        payload = await compressToBudget(diagramEditor.image.dataUrl, DIAGRAM_TARGET_CHARS);
+        width = payload.width;
+        height = payload.height;
+      }
+      const result = await storeDiagramImage(payload.dataUrl, width, height);
+      imageUrl = result.url;
+      stored = result.stored;
+      width = result.width || width;
+      height = result.height || height;
+    }
+
+    const item = {
+      type: 'diagram',
+      question: (diagramEditor.title || '').trim() || 'Label the diagram',
+      title: (diagramEditor.title || '').trim(),
+      image_url: imageUrl,
+      image_width: width,
+      image_height: height,
+      image_stored: stored,
+      labels,
+    };
+
+    if (diagramEditor.mode === 'card') {
+      const packId = diagramEditor.packId || currentPackId;
+      if (!packId) throw new Error('No StudyPack is open.');
+      updatePack(packId, (p) => {
+        if (diagramEditor.editIndex >= 0) p.items[diagramEditor.editIndex] = item;
+        else p.items.push(item);
+      });
+      closeDiagramEditor();
+      renderPack();
+      showToast(diagramEditor.editIndex >= 0 ? 'Diagram card updated 🦆' : 'Diagram card added to your StudyPack 🦆', 'correct');
+      diagramEditor.editIndex = -1;
+      return;
+    }
+
+    // Generation modal: commit the diagram card as its own StudyPack.
+    await commitDiagramFromCreate(item);
+  } catch (err) {
+    setDiagramError((err && err.message) || "Buck couldn't save that diagram.");
+    diagramSave.disabled = false;
+  } finally {
+    diagramSave.textContent = diagramEditor.mode === 'card'
+      ? (diagramEditor.editIndex >= 0 ? 'Save changes' : 'Add to StudyPack')
+      : 'Create diagram card';
+    diagramSave.disabled = !diagramEditor.labels.length;
+  }
+}
+
+// Creates the StudyPack for a diagram card coming out of the generation modal.
+async function commitDiagramFromCreate(item) {
+  if (!canGenerate()) {
+    lastGenerationCount = 1;
+    showGenerationError({ code: 'NO_HEARTS' });
+    return;
+  }
+  if (isDemo() && demoPackUsed()) {
+    closeCreate();
+    stopCreateLoading();
+    demoUpsellFeature('packs');
+    return;
+  }
+  const name = item.title || diagramEditor.image.name || 'Diagram';
+  const pack = addPack(name, [item], { target: 1, sourceName: name, questionType: 'diagram' });
+  if (!pack) { closeCreate(); stopCreateLoading(); return; }
+  consumeWingForGeneration();
+  closeDiagramEditor();
+  closeCreate();
+  stopCreateLoading();
+  openPack(pack.id);
+  renderPackBanner();
+  renderPack();
+  finishLiveGeneration(false, null);
+}
+
+// A diagram costs one wing, like a generated deck does.
+function consumeWingForGeneration() {
+  try {
+    if (typeof loseHeart === 'function') loseHeart();
+  } catch (e) { /* wings are best-effort here */ }
+}
+
+/* ---------------- Editor wiring ---------------- */
+
+function wireDiagramEditor() {
+  if (!diagramModal) return;
+  const pickFile = () => diagramFileInput && diagramFileInput.click();
+
+  [diagramDrop, diagramModalDrop].forEach((zone) => {
+    if (!zone) return;
+    zone.addEventListener('click', pickFile);
+    zone.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickFile(); }
+    });
+    ['dragenter', 'dragover'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.add('drag'); }));
+    ['dragleave', 'drop'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.remove('drag'); }));
+    zone.addEventListener('drop', (e) => {
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      onDiagramEditorFile(file);
+    });
+  });
+
+  if (diagramFileInput) {
+    diagramFileInput.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      onDiagramEditorFile(file);
+    });
+  }
+
+  if (diagramClose) diagramClose.addEventListener('click', closeDiagramEditor);
+  if (diagramCancel) diagramCancel.addEventListener('click', closeDiagramEditor);
+  if (diagramBackdrop) diagramBackdrop.addEventListener('click', closeDiagramEditor);
+  if (diagramSave) diagramSave.addEventListener('click', saveDiagramCard);
+
+  // A single "Try again" button doubles as the cancel button after a failed scan.
+  if (scanCancel) {
+    scanCancel.addEventListener('click', () => {
+      if (diagramEditor.scanning) { diagramEditor.scanning = false; diagramEditor.scanToken++; showDiagramReview(); return; }
+      startDiagramScan();
+    });
+  }
+
+  if (reviewAdd) reviewAdd.addEventListener('click', () => {
+    diagramEditor.placeTarget = 'new';
+    if (reviewFrame) reviewFrame.classList.add('is-placing');
+    if (reviewTip) reviewTip.textContent = 'Click the diagram where the new label points.';
+  });
+
+  if (reviewRescan) reviewRescan.addEventListener('click', () => {
+    if (!diagramEditor.image) { showDiagramPick(); return; }
+    startDiagramScan();
+  });
+
+  if (reviewRemeasure) reviewRemeasure.addEventListener('click', remeasureDiagramLabels);
+
+  if (reviewList) {
+    reviewList.addEventListener('input', (e) => {
+      const input = e.target.closest('.review-text');
+      if (!input) return;
+      const row = input.closest('.review-row');
+      const i = Number(row.dataset.i);
+      if (diagramEditor.labels[i]) {
+        const label = diagramEditor.labels[i];
+        const before = normalizeDiagramBox(label.box);
+        label.text = input.value;
+        // The user has not resized this one yet, so keep the cover matched to the new text.
+        if (!before) sizeDiagramLabel(label);
+      }
+      if (diagramSave) diagramSave.disabled = !diagramEditor.labels.length;
+      const marker = reviewMarkers.querySelector('.diagram-marker[data-label="' + diagramEditor.labels[i].id + '"] .dm-label');
+      if (marker) marker.textContent = input.value;
+    });
+    reviewList.addEventListener('click', (e) => {
+      const row = e.target.closest('.review-row');
+      if (!row) return;
+      const i = Number(row.dataset.i);
+      if (e.target.closest('.del')) { removeDiagramLabel(i); return; }
+      if (e.target.closest('.place')) {
+        diagramEditor.placeTarget = diagramEditor.labels[i].id;
+        if (reviewFrame) reviewFrame.classList.add('is-placing');
+        if (reviewTip) reviewTip.textContent = 'Click the diagram to place label ' + (i + 1) + '.';
+        return;
+      }
+      selectDiagramLabel(i);
+    });
+    reviewList.addEventListener('focusin', (e) => {
+      const row = e.target.closest('.review-row');
+      if (row) selectDiagramLabel(Number(row.dataset.i));
+    });
+  }
+
+  if (reviewFrame) {
+    // Click to place (new label or re-position), drag a marker to move it.
+    reviewFrame.addEventListener('pointerdown', (e) => {
+      // Grab a cover's grip to resize it.
+      const grip = e.target.closest('.review-cover-grip');
+      if (grip) {
+        const i = Number(grip.dataset.grip);
+        diagramEditor.resizeId = (diagramEditor.labels[i] || {}).id || null;
+        selectDiagramLabel(i);
+        reviewFrame.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      const cover = e.target.closest('.review-cover');
+      if (cover && !diagramEditor.placeTarget) {
+        // Dragging the cover body moves where it sits (its label point).
+        const i = Number(cover.dataset.cover);
+        const label = diagramEditor.labels[i];
+        if (label) {
+          diagramEditor.dragId = label.id;
+          selectDiagramLabel(i);
+          reviewFrame.setPointerCapture(e.pointerId);
+          e.preventDefault();
+        }
+        return;
+      }
+      const marker = e.target.closest('.diagram-marker');
+      if (marker && !diagramEditor.placeTarget) {
+        diagramEditor.dragId = marker.dataset.label;
+        const i = diagramEditor.labels.findIndex((l) => l.id === diagramEditor.dragId);
+        selectDiagramLabel(i);
+        reviewFrame.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      }
+    });
+    reviewFrame.addEventListener('pointermove', (e) => {
+      if (diagramEditor.resizeId) {
+        // Dragging a cover's grip resizes it into an exact box, which is stored with the card.
+        const i = diagramEditor.labels.findIndex((l) => l.id === diagramEditor.resizeId);
+        const label = diagramEditor.labels[i];
+        if (!label) return;
+        const rect = reviewFrame.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const current = diagramCoverRect(label);
+        const cx = rect.left + ((current.left + current.w / 2) / 100) * rect.width;
+        const cy = rect.top + ((current.top + current.h / 2) / 100) * rect.height;
+        const w = Math.max(4, Math.min(95, (Math.abs(e.clientX - cx) / rect.width) * 100 * 2));
+        const h = Math.max(3, Math.min(60, (Math.abs(e.clientY - cy) / rect.height) * 100 * 2));
+        label.box = {
+          x: Math.max(0, Math.min(100 - w, current.left + current.w / 2 - w / 2)),
+          y: Math.max(0, Math.min(100 - h, current.top + current.h / 2 - h / 2)),
+          w: Math.round(w * 10) / 10,
+          h: Math.round(h * 10) / 10,
+          bias: 0,
+          v: 2,
+          userSized: true,
+        };
+        renderDiagramReview();
+        return;
+      }
+      if (!diagramEditor.dragId) return;
+      const point = diagramPointFromEvent(e);
+      if (!point) return;
+      const i = diagramEditor.labels.findIndex((l) => l.id === diagramEditor.dragId);
+      if (i >= 0) moveDiagramLabel(i, point);
+    });
+    reviewFrame.addEventListener('pointerup', (e) => {
+      if (diagramEditor.resizeId) {
+        diagramEditor.resizeId = null;
+        if (reviewFrame.releasePointerCapture) { try { reviewFrame.releasePointerCapture(e.pointerId); } catch (err) {} }
+        return;
+      }
+      if (diagramEditor.dragId) {
+        diagramEditor.dragId = null;
+        if (reviewFrame.releasePointerCapture) { try { reviewFrame.releasePointerCapture(e.pointerId); } catch (err) {} }
+        return;
+      }
+      const point = diagramPointFromEvent(e);
+      if (!point) return;
+      if (diagramEditor.placeTarget === 'new') {
+        diagramEditor.placeTarget = null;
+        reviewFrame.classList.remove('is-placing');
+        addDiagramLabel(point);
+        return;
+      }
+      if (diagramEditor.placeTarget) {
+        const i = diagramEditor.labels.findIndex((l) => l.id === diagramEditor.placeTarget);
+        diagramEditor.placeTarget = null;
+        reviewFrame.classList.remove('is-placing');
+        if (i >= 0) moveDiagramLabel(i, point);
+      }
+    });
+  }
+}
+
+// Re-measures the covers on an existing card: runs detection once and compares it with what
+// the user already has, so their own labels and edits survive. Used by cards created before
+// Buck measured label boxes, where the covers were only estimated.
+async function remeasureDiagramLabels() {
+  const img = diagramEditor.image;
+  if (!img || !img.dataUrl) { showDiagramPick(); return; }
+  const button = dEl('review-remeasure');
+  const original = button ? button.textContent : '';
+  if (button) { button.disabled = true; button.textContent = 'Measuring...'; }
+  setDiagramError('');
+  try {
+    const detected = await detectDiagramLabelsRemote(img.dataUrl);
+    const found = (detected && Array.isArray(detected.labels) ? detected.labels : [])
+      .map((l) => normalizeDiagramLabel(l, 0))
+      .filter(Boolean);
+    if (!found.length) throw new Error("Buck couldn't measure these labels. Try Re-scan instead.");
+
+    const taken = new Set();
+    let updated = 0;
+    diagramEditor.labels.forEach((label) => {
+      // Prefer the same words, then fall back to the nearest detected point.
+      let bestAt = -1;
+      let bestScore = Infinity;
+      found.forEach((f, i) => {
+        if (taken.has(i)) return;
+        const sameText = f.text.toLowerCase() === String(label.text || '').toLowerCase();
+        const dist = Math.hypot(f.marker.x - label.marker.x, f.marker.y - label.marker.y);
+        const score = (sameText ? 0 : 500) + dist;
+        if (score < bestScore) { bestScore = score; bestAt = i; }
+      });
+      // Only accept a confident pairing, so labels are never moved to unrelated parts.
+      const accept = bestAt >= 0 && (bestScore < 500 || bestScore - 500 <= 12);
+      if (!accept) return;
+      taken.add(bestAt);
+      const match = found[bestAt];
+      if (match.box) { label.box = match.box; label.needsBox = false; label.userSized = false; updated++; }
+    });
+
+    if (!updated) throw new Error("Buck couldn't line the labels up. Try Re-scan instead.");
+    // Recompute the minimum cover sizes for the new image context.
+    applyDiagramCoverSizes(diagramEditor.labels, img.width, img.height);
+    renderDiagramReview();
+    showToast('Buck measured ' + updated + ' of ' + diagramEditor.labels.length + ' label boxes 🦆', 'correct');
+  } catch (err) {
+    setDiagramError((err && err.message) || "Buck couldn't measure these labels.");
+  } finally {
+    if (button) { button.disabled = false; button.textContent = original || 'Re-measure boxes'; }
+  }
+}async function onDiagramEditorFile(file) {
+  if (!file) return;
+  setDiagramError('');
+  setScanNote('');
+  // Keep the drop zone visible with a "thinks" note while the image is prepared.
+  if (diagramSub) diagramSub.textContent = 'Optimizing your image...';
+  try {
+    const raw = await diagramImageFromFile(file);
+    const processed = await compressToBudget(raw.dataUrl, DIAGRAM_MAX_CHARS);
+    diagramEditor.labels = [];
+    diagramEditor.title = '';
+    if (diagramTitleInput) diagramTitleInput.value = '';
+    setDiagramImage({
+      dataUrl: processed.dataUrl,
+      name: raw.name || 'diagram',
+      width: processed.width,
+      height: processed.height,
+      thumb: processed.dataUrl,
+    });
+    if (diagramSub) diagramSub.textContent = 'Upload a labeled diagram and Buck will turn every label into an answer box.';
+    // The editor owns the scan UI, so make sure it is open before sweeping.
+    diagramModal.el.classList.remove('hidden');
+    applyDiagramModeCopy();
+    startDiagramScan();
+  } catch (err) {
+    if (diagramSub) diagramSub.textContent = 'Upload a labeled diagram and Buck will turn every label into an answer box.';
+    setDiagramError((err && err.message) || "Buck couldn't read that image.");
+    showDiagramPick();
+  }
+}
+
+/* ---------------- Scan sounds (ride on Buck's existing beeps) ---------------- */
+
+function playScanWhoosh() {
+  beep([196, 233, 262], 0.16, 0.22, 'sine');
+}
+
+function playDetectDing() {
+  beep([880], 0, 0.07, 'sine');
+}
+
+function wireQType() {
+  if (!qtypeCards.length) return;
+  qtypeCards.forEach((el) => {
+    el.addEventListener('click', () => selectQType(el.dataset.qtype));
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        selectQType(el.dataset.qtype);
+      } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const order = Object.keys(QTYPES);
+        const at = order.indexOf(currentQType());
+        const step = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1;
+        selectQType(order[(at + step + order.length) % order.length]);
+        const active = qtypeCards.find((c) => c.classList.contains('is-active'));
+        if (active) active.focus();
+      }
+    });
+  });
+  renderQTypeSelection(false);
+  applyCreateMode();
+}
+
 fileInput.addEventListener('change', (e) => {
   const file = e.target.files && e.target.files[0];
   e.target.value = '';
@@ -258,6 +1867,7 @@ function openCreate(source) {
   if (!requireAuth()) return;
   if (!requireHearts()) return;
   createMode = hostingRoom ? 'choice' : 'flashcard';
+  if (hostingRoom) { selectedQType = 'multiple_choice'; renderQTypeSelection(false); }
   createModal.classList.remove('hidden');
   setCreateSource(source === 'link' ? 'url' : (source || 'pdf'));
 }
@@ -287,16 +1897,20 @@ function resetCreateState() {
   pdfSize.textContent = '';
   createStatus.textContent = '';
   createStatus.className = 'auth-error';
+  clearCreateDiagram();
   resetEstimate();
+  applyCreateMode();
 }
 
 function resetEstimate() {
   pendingContent = null;
+  createEstimateReady = false;
   hideGenerationError();
   estimatePlaceholder.classList.remove('hidden');
   estimatePlaceholder.textContent = 'Buck will estimate how many questions he can write once you add your content.';
   estimateBox.classList.add('hidden');
   estimateControls.classList.add('hidden');
+  qtypePanel.classList.add('hidden');
   if (estimateNote) estimateNote.classList.add('hidden');
   estimateAll.classList.add('hidden');
   estimateAll.disabled = true;
@@ -315,7 +1929,8 @@ function setCreateSource(src) {
   sourcePdf.classList.toggle('hidden', src !== 'pdf');
   sourceText.classList.toggle('hidden', src !== 'text');
   sourceUrl.classList.toggle('hidden', src !== 'url');
-  if (!createModal.classList.contains('hidden')) {
+  applyCreateMode();
+  if (!createModal.classList.contains('hidden') && !isImageOnlyQType()) {
     if (src === 'text') createTextEl.focus();
     else if (src === 'url') createUrlEl.focus();
   }
@@ -429,8 +2044,17 @@ function showEstimate() {
   estimateSlider.max = estimate;
   estimateSlider.value = Math.min(estimate, Math.max(5, Math.min(estimate, 10)));
   estimateControls.classList.remove('hidden');
+  // Keep the slider readout and the "N questions in this format" footer on the real count.
   updateEstimateLabel();
-  if (estimateNote) estimateNote.classList.toggle('hidden', !(pendingContent && pendingContent.images));
+  estimateNote.classList.toggle('hidden', !(pendingContent && pendingContent.images));
+  qtypePanel.classList.remove('hidden');
+  createEstimateReady = true;
+  // Live rooms ask everyone the same card in the same format, so the shape is fixed there.
+  qtypePanel.classList.toggle('is-room', !!hostingRoom);
+  const roomNote = document.getElementById('qtype-room-note');
+  if (roomNote) roomNote.hidden = !hostingRoom;
+  renderQTypeSelection(false);
+  applyCreateMode();
   estimateAll.classList.remove('hidden');
   estimateAll.disabled = false;
   estimateGenerate.disabled = false;
@@ -440,6 +2064,7 @@ function updateEstimateLabel() {
   const n = parseInt(estimateSlider.value, 10) || 0;
   estimateLabel.textContent = n;
   estimateGenerate.textContent = 'Generate ' + n;
+  updateQTypeCount();
 }
 
 function showEstimateErr(msg) {
@@ -468,19 +2093,29 @@ function loadGenCache() {
 function saveGenCache(c) {
   try { localStorage.setItem(GEN_CACHE_KEY, JSON.stringify(c)); } catch (e) {}
 }
-function getCachedGen(hash, count) {
+function getCachedGen(hash, count, qtype) {
   const c = loadGenCache();
-  const e = c[hash + ':' + count];
+  const key = hash + ':' + count + ':' + currentQTypeOf(qtype);
+  const e = c[key];
   if (!e) return null;
-  if (Date.now() - e.t > 86400000) { delete c[hash + ':' + count]; saveGenCache(c); return null; }
+  if (Date.now() - e.t > 86400000) { delete c[key]; saveGenCache(c); return null; }
   return e.cards;
 }
-function setCachedGen(hash, count, cards) {
+function setCachedGen(hash, count, cards, qtype) {
   const c = loadGenCache();
-  c[hash + ':' + count] = { t: Date.now(), cards };
+  const key = hash + ':' + count + ':' + currentQTypeOf(qtype);
+  c[key] = { t: Date.now(), cards };
   const keys = Object.keys(c);
   if (keys.length > 10) keys.sort((a, b) => c[a].t - c[b].t).slice(0, keys.length - 10).forEach((k) => delete c[k]);
   saveGenCache(c);
+}
+
+// Cache keys are per question shape, so a Multiple Choice deck is never served
+// enumeration cards (and vice versa) from the instant-load path.
+function currentQTypeOf(qtype) {
+  if (isQType(qtype)) return qtype;
+  if (genState && isQType(genState.qtype)) return genState.qtype;
+  return currentQType();
 }
 
 function planGeneration(text, count) {
@@ -628,6 +2263,10 @@ const GEN_ERROR_COPY = {
   HTTP_422: ['Buck could not read that file.', 'The PDF had no usable text. Try a text-based PDF.'],
   HTTP_504: ['That took a little too long.', 'The request timed out — try generating fewer questions.'],
   NO_HEARTS: ['Buck is out of wings.', 'Wait for a wing to refill, then try again.'],
+  INVALID_TYPE: ['Buck was not sure which question format to write.', 'Pick Multiple Choice, Enumeration, or Diagram Labeling and try again.'],
+  INVALID_IMAGE: ["Buck couldn't read that image.", 'Try a PNG, JPG, or WebP — or a single-page PDF.'],
+  IMAGE_TOO_LARGE: ['That image is a bit heavy.', 'Try a smaller diagram — Buck can read up to about 9MB.'],
+  DETECT_FAILED: ["Buck couldn't read the labels on this diagram.", 'Try again, or mark the labels yourself in the review screen.'],
   UNKNOWN: ['Buck could not write questions this time.', 'Something unexpected happened. Try again, or reduce the count.'],
 };
 
@@ -703,25 +2342,30 @@ async function startGeneration(count) {
   lastGenError = null;
   hideGenerationError();
 
+  // The shape the user picked in the modal (Multiple Choice by default). It travels with
+  // the pack so a resumed/continued generation keeps writing the same kind of question.
+  const qtype = currentQType();
+
   // 1) Create the StudyPack immediately and show it with a live banner.
   const pack = addPack(activeContent.name || 'StudyPack', [], {
     target,
     sourceText: activeContent.text || '',
     sourceName: activeContent.name || 'StudyPack',
+    questionType: qtype,
   });
   if (!pack) { closeCreate(); stopCreateLoading(); return; }
-  genState = { packId: pack.id, target, cancelled: false, controller: null, seen: new Set(), error: null, running: true };
+  genState = { packId: pack.id, target, qtype, cancelled: false, controller: null, seen: new Set(), error: null, running: true };
   closeCreate();
   stopCreateLoading();
   openPack(pack.id);
   renderPackBanner();
   renderPack();
 
-  // 2) Instant path: same document cached locally.
+  // 2) Instant path: same document + same question shape cached locally.
   if (activeContent.text) {
-    const cached = getCachedGen(textHash(activeContent.text), target);
+    const cached = getCachedGen(textHash(activeContent.text), target, qtype);
     if (cached && cached.length) {
-      appendLiveCards(ensureMixedChoice(cached.slice(0, target)));
+      appendLiveCards(cached.slice(0, target));
       finishLiveGeneration(false, null);
       showToast('⚡ Instant — loaded from cache', 'correct');
       return;
@@ -756,12 +2400,49 @@ async function startGeneration(count) {
     return;
   }
 
-  if (complete && activeContent.text) setCachedGen(textHash(activeContent.text), target, (getPack(genState.packId) || { items: [] }).items);
+  if (complete && activeContent.text) setCachedGen(textHash(activeContent.text), target, (getPack(genState.packId) || { items: [] }).items, qtype);
 
   finishLiveGeneration(!complete, genState.error);
 }
 
 // Runs the parallel wave loop, appending cards to the pack as they arrive.
+/* ---------------- Enumeration helpers ---------------- */
+
+// The expected items of an enumeration card, always as a clean array of strings.
+// Accepts the server's answer_items array, an array on `answer`, or a delimited string.
+function enumerationItems(card) {
+  if (!card) return [];
+  let raw = [];
+  if (Array.isArray(card.answer_items)) raw = card.answer_items;
+  else if (Array.isArray(card.answers)) raw = card.answers;
+  else if (Array.isArray(card.answer)) raw = card.answer;
+  else if (typeof card.answer === 'string' && card.answer) {
+    raw = card.answer.split(/\r?\n|;|\s\/\s/);
+  }
+  const out = [];
+  raw.forEach((v) => {
+    const s = String(v == null ? '' : v)
+      .replace(/^\s*(?:\d+[.)]|[-•*])\s*/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (s && !out.some((x) => x.toLowerCase() === s.toLowerCase())) out.push(s);
+  });
+  return out.slice(0, 8);
+}
+
+function packQuestionLabel(pack) {
+  const info = QTYPES[(pack && pack.questionType) || 'multiple_choice'] || QTYPES.multiple_choice;
+  return info.label;
+}
+
+// Rebuild the API payload for the pack currently generating. The question shape always
+// follows the pack (never the modal), so a reload or a "continue" keeps the format.
+function generationPayload(extra) {
+  const pack = genState ? getPack(genState.packId) : null;
+  const qtype = currentQTypeOf((pack && pack.questionType) || (genState && genState.qtype));
+  return Object.assign({ questionType: qtype }, extra || {});
+}
+
 async function runLiveWaves(target) {
   const packId = genState.packId;
   const got = () => ((getPack(packId) || { items: [] }).items || []).length;
@@ -778,14 +2459,14 @@ async function runLiveWaves(target) {
     if (activeContent.images && activeContent.images.length) {
       const groups = [];
       for (let i = 0; i < activeContent.images.length; i += 4) groups.push(activeContent.images.slice(i, i + 4));
-      settled = await Promise.allSettled(groups.map((group) => callGenerateWithFallback({ images: group }, per)));
+      settled = await Promise.allSettled(groups.map((group) => callGenerateWithFallback(generationPayload({ images: group }), per)));
     } else {
       const plan = planGeneration(activeContent.text, target);
       // Cycle chunks if we need to fill more in later rounds.
       const start = (fillRound * GEN_CONCURRENCY) % Math.max(1, plan.chunks.length);
       const rotated = plan.chunks.slice(start).concat(plan.chunks.slice(0, start));
       const batch = rotated.slice(0, GEN_CONCURRENCY);
-      settled = await Promise.allSettled(batch.map((chunk) => callGenerateWithFallback({ text: chunk }, per)));
+      settled = await Promise.allSettled(batch.map((chunk) => callGenerateWithFallback(generationPayload({ text: chunk }), per)));
     }
 
     if (genState.cancelled) break;
@@ -812,17 +2493,35 @@ function appendLiveCards(cards) {
   if (!genState || !cards || !cards.length) return;
   const pack = getPack(genState.packId);
   if (!pack) return;
+  const wanted = cardTypeForQType((pack && pack.questionType) || genState.qtype);
   const fresh = [];
   cards.forEach((f) => {
     if (!f || typeof f.question !== 'string') return;
     const key = String(f.question).toLowerCase().trim();
     if (genState.seen.has(key)) return; // exact-duplicate guard only
+    // Only accept the shape this pack was created for (the /api/analyze fallback can
+    // return a mix, and a stray card must not change the deck's format mid-generation).
+    const type = f.type === 'multiple_choice' ? 'choice' : f.type;
+    if (type !== wanted) return;
     genState.seen.add(key);
+    if (type === 'enumeration') {
+      const items = enumerationItems(f);
+      if (!items.length) return;
+      fresh.push({
+        type: 'enumeration',
+        question: f.question,
+        answer: items.join(' / '),
+        answer_items: items,
+        explanation: typeof f.explanation === 'string' && f.explanation.trim() ? f.explanation.trim() : undefined,
+      });
+      return;
+    }
     fresh.push({
-      type: f.type === 'choice' ? 'choice' : 'flashcard',
+      type: 'choice',
       question: f.question,
       answer: f.answer,
-      options: f.type === 'choice' ? f.options : undefined,
+      options: f.options,
+      explanation: typeof f.explanation === 'string' && f.explanation.trim() ? f.explanation.trim() : undefined,
     });
   });
   if (!fresh.length) return;
@@ -927,7 +2626,7 @@ async function resumeGeneration() {
     if (!Number.isInteger(batchSize) || batchSize <= 0) throw new Error('Invalid question count: ' + batchSize);
 
     const existing = pack.items.map((c) => c.question).filter(Boolean).slice(0, 60);
-    const body = hasImages ? { images: activeContent.images } : { text: activeContent.text };
+    const body = generationPayload(hasImages ? { images: activeContent.images } : { text: activeContent.text });
     body.existing = existing;
     body.count = batchSize;
     console.log('[Resume] asking=' + batchSize, 'existing=' + existing.length);
@@ -970,7 +2669,7 @@ async function continueLiveGeneration() {
   }
   const got = (getPack(genState.packId) || { items: [] }).items.length;
   const complete = !genState.error && got >= genState.target;
-  if (complete && activeContent && activeContent.text) setCachedGen(textHash(activeContent.text), genState.target, (getPack(genState.packId) || { items: [] }).items);
+  if (complete && activeContent && activeContent.text) setCachedGen(textHash(activeContent.text), genState.target, (getPack(genState.packId) || { items: [] }).items, genState.qtype);
   finishLiveGeneration(!complete, genState.error);
 }
 
@@ -1074,6 +2773,37 @@ async function renderPdfImages(file, maxPages = MAX_VISION_PAGES) {
 
 /* ---------------- Deck view ---------------- */
 
+// Pinch-to-zoom on touch devices, and Ctrl/⌘ + wheel on desktop (plain wheel keeps scrolling).
+function wireDiagramPinch() {
+  const vp = document.getElementById('dd-viewport');
+  if (!vp || vp.dataset.pinchWired) return;
+  vp.dataset.pinchWired = '1';
+  let pinch = null;
+  const distance = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+  vp.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 2) { pinch = null; return; }
+    pinch = { start: distance(e.touches), zoom: ddState.zoom };
+  }, { passive: true });
+
+  vp.addEventListener('touchmove', (e) => {
+    if (!pinch || e.touches.length !== 2) return;
+    e.preventDefault();
+    const ratio = distance(e.touches) / (pinch.start || 1);
+    ddSetZoom(pinch.zoom * ratio, { keepScroll: true });
+  }, { passive: false });
+
+  vp.addEventListener('touchend', (e) => {
+    if (e.touches.length < 2) pinch = null;
+  });
+
+  vp.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    ddSetZoom(ddState.zoom - (e.deltaY > 0 ? 0.2 : -0.2), { keepScroll: true });
+  }, { passive: false });
+}
+
 function wireDeck() {
   deckCheck.addEventListener('click', checkFill);
   deckSkip.addEventListener('click', skipFill);
@@ -1086,6 +2816,42 @@ function wireDeck() {
   });
   deckPrev.addEventListener('click', goPrev);
   deckNext.addEventListener('click', goNext);
+
+  // Diagram study mode: check answers, reveal, and zoom the diagram.
+  const ddCheck = document.getElementById('dd-check');
+  if (ddCheck) ddCheck.addEventListener('click', checkDiagramAnswers);
+  const ddReveal = document.getElementById('dd-reveal');
+  if (ddReveal) ddReveal.addEventListener('click', revealDiagramAnswers);
+  const ddZoomIn = document.getElementById('dd-zoom-in');
+  if (ddZoomIn) ddZoomIn.addEventListener('click', () => ddSetZoom(ddState.zoom + 0.4));
+  const ddZoomOut = document.getElementById('dd-zoom-out');
+  if (ddZoomOut) ddZoomOut.addEventListener('click', () => ddSetZoom(ddState.zoom - 0.4));
+  const ddZoomFit = document.getElementById('dd-zoom-fit');
+  if (ddZoomFit) ddZoomFit.addEventListener('click', () => ddSetZoom(1));
+  wireDiagramPinch();
+
+  // Enumeration list builder: type → Enter → chip.
+  const enumWrap = document.getElementById('deck-enum');  if (enumWrap) {
+    const input = document.getElementById('deck-enum-input');
+    const addBtn = document.getElementById('deck-enum-add');
+    const checkBtn = document.getElementById('deck-enum-check');
+    const chips = document.getElementById('deck-enum-chips');
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addEnumChip();
+      }
+    });
+    input.addEventListener('input', enumChipInputChanged);
+    addBtn.addEventListener('click', addEnumChip);
+    checkBtn.addEventListener('click', checkEnumeration);
+    chips.addEventListener('click', (e) => {
+      const x = e.target.closest('.deck-chip-x');
+      if (!x) return;
+      const chip = x.closest('.deck-chip');
+      if (chip) removeEnumChip(Number(chip.dataset.i));
+    });
+  }
   endlessToggle.addEventListener('click', () => {
     endless = !endless;
     endlessToggle.classList.toggle('active', endless);
@@ -1129,8 +2895,10 @@ const MAX_HEARTS = 15;
 const REFILL_MS = 10 * 60 * 1000;
 const LOW_WINGS = 5; // at or below this, show the "low" visual cue
 // New storage keys so everyone gets the new 15 default (old 'hearts' value ignored).
-let hearts = parseInt(localStorage.getItem('buckWings') || String(MAX_HEARTS), 10);
-let heartRefillAt = parseInt(localStorage.getItem('buckWingsRefillAt') || '0', 10);
+// safeInt keeps these finite: a corrupt value used to make hearts NaN, which no comparison
+// corrected, so generation stayed blocked behind the "no wings" modal forever.
+let hearts = safeInt(safeGet('buckWings'), MAX_HEARTS, 0, MAX_HEARTS);
+let heartRefillAt = safeInt(safeGet('buckWingsRefillAt'), 0, 0);
 
 // Buck's wing icon — orange fill, brown outline + feather detail (matches the mascot).
 const WING_SVG =
@@ -1140,9 +2908,16 @@ const WING_SVG =
   '<path d="M5.9 16.9c1.2-.5 2.3-1.2 3.2-2.1" stroke="#6B4226" stroke-width="1" stroke-linecap="round"/>' +
   '</svg>';
 
+// Skip redundant writes: this is called from a 1s interval, so without the guard the app
+// wrote to localStorage twice every second (and threw 1x/second when storage was unavailable).
+let heartsSavedSnapshot = null;
+
 function saveHearts() {
-  localStorage.setItem('buckWings', String(hearts));
-  localStorage.setItem('buckWingsRefillAt', String(heartRefillAt || 0));
+  const next = hearts + '|' + (heartRefillAt || 0);
+  if (next === heartsSavedSnapshot) return;
+  const ok1 = safeSet('buckWings', String(hearts));
+  const ok2 = safeSet('buckWingsRefillAt', String(heartRefillAt || 0));
+  if (ok1 && ok2) heartsSavedSnapshot = next;
 }
 
 function syncHearts() {
@@ -1253,12 +3028,19 @@ function heartsMarkup() {
   );
 }
 
+// Called every second by a timer, so it writes only when the rendered markup actually changes
+// (this used to rebuild both heart widgets 60x a minute).
+let heartsMarkupCache = null;
+
 function renderHearts() {
   syncHearts();
+  const markup = heartsMarkup();
+  if (markup === heartsMarkupCache) return;
+  heartsMarkupCache = markup;
   const el = document.getElementById('hearts-display');
-  if (el) el.innerHTML = heartsMarkup();
+  if (el) el.innerHTML = markup;
   const de = document.getElementById('deck-hearts');
-  if (de) de.innerHTML = heartsMarkup();
+  if (de) de.innerHTML = markup;
 }
 
 /* ---------------- Progress / XP / Streak ---------------- */
@@ -1279,26 +3061,32 @@ function yesterdayStr() {
 }
 
 function loadNum(key, fallback) {
-  const v = parseInt(localStorage.getItem(key), 10);
-  return Number.isFinite(v) ? v : fallback;
+  return safeInt(safeGet(key), fallback, 0);
 }
 
+// Each key is written independently and a failure is reported rather than thrown: an exception
+// here used to abort quiz submission midway, so the results screen never rendered and the
+// persisted streak silently disagreed with what the user had just seen.
 function saveProgress() {
-  localStorage.setItem('quizXp', String(quizXp));
-  localStorage.setItem('quizStreak', String(quizStreak));
-  localStorage.setItem('quizLastStudy', quizLastStudy || '');
-  localStorage.setItem('quizTodayQuestions', String(quizTodayQuestions));
-  localStorage.setItem('quizTodayDate', quizTodayDate || '');
-  localStorage.setItem('quizStudyDays', JSON.stringify(quizStudyDays));
+  const pairs = [
+    ['quizXp', String(quizXp)],
+    ['quizStreak', String(quizStreak)],
+    ['quizLastStudy', quizLastStudy || ''],
+    ['quizTodayQuestions', String(quizTodayQuestions)],
+    ['quizTodayDate', quizTodayDate || ''],
+    ['quizStudyDays', JSON.stringify(quizStudyDays || [])],
+  ];
+  let ok = true;
+  pairs.forEach(([k, v]) => { if (!safeSet(k, v)) ok = false; });
+  return ok;
 }
 
 let quizXp = loadNum('quizXp', 0);
 let quizStreak = loadNum('quizStreak', 0);
-let quizLastStudy = localStorage.getItem('quizLastStudy') || '';
+let quizLastStudy = safeGet('quizLastStudy') || '';
 let quizTodayQuestions = loadNum('quizTodayQuestions', 0);
-let quizTodayDate = localStorage.getItem('quizTodayDate') || '';
-let quizStudyDays = [];
-try { quizStudyDays = JSON.parse(localStorage.getItem('quizStudyDays') || '[]'); } catch (e) { quizStudyDays = []; }
+let quizTodayDate = safeGet('quizTodayDate') || '';
+let quizStudyDays = safeParse(safeGet('quizStudyDays'), []);
 if (!Array.isArray(quizStudyDays)) quizStudyDays = [];
 
 function levelInfo() {
@@ -2694,11 +4482,57 @@ function startQuiz() {
 /* ---------------- StudyPacks ---------------- */
 
 let studyPacks = [];
-try { studyPacks = JSON.parse(localStorage.getItem('studyPacks') || '[]'); } catch (e) { studyPacks = []; }
+studyPacks = safeParse(safeGet('studyPacks'), []);
 if (!Array.isArray(studyPacks)) studyPacks = [];
 
+// Rough byte cost of what this pack keeps in localStorage.
+function packByteCost(pack) {
+  try {
+    return JSON.stringify(pack).length;
+  } catch (e) {
+    return 0;
+  }
+}
+
+// A diagram stored inline is the heaviest thing a pack can hold. If the quota is hit, giving
+// those up (the artwork stays on screen until reload, and can be re-scanned) is far better
+// than losing every card the user just generated.
+function shedHeavyPackData() {
+  let shed = 0;
+  studyPacks.forEach((pack) => {
+    (pack.items || []).forEach((it) => {
+      if (it && it.type === 'diagram' && it.image_stored === 'inline' && it.image_url) {
+        it.image_url = '';
+        it.image_dropped = true;
+        shed++;
+      }
+    });
+    if (pack.sourceText && pack.sourceText.length > 4000) {
+      pack.sourceText = pack.sourceText.slice(0, 4000);
+      shed++;
+    }
+  });
+  return shed;
+}
+
 function savePacks() {
-  localStorage.setItem('studyPacks', JSON.stringify(studyPacks));
+  const json = JSON.stringify(studyPacks);
+  if (safeSet('studyPacks', json)) return true;
+
+  // Out of room: shed the heaviest optional data and try once more.
+  const shed = shedHeavyPackData();
+  if (shed && safeSet('studyPacks', JSON.stringify(studyPacks))) {
+    if (typeof showToast === 'function') {
+      showToast('Storage was full, so ' + shed + ' diagram image' + (shed === 1 ? '' : 's') +
+        ' had to be dropped to save your cards. Re-scan to bring them back.', 'wrong', 7000);
+    }
+    return true;
+  }
+
+  if (typeof showToast === 'function') {
+    showToast("Buck couldn't save to this device — storage is full. Delete a StudyPack to free space.", 'wrong', 8000);
+  }
+  return false;
 }
 
 function newPackId() {
@@ -2710,11 +4544,13 @@ function addPack(name, items, meta) {
   const pack = {
     id: newPackId(),
     name: name || 'StudyPack',
-    items: items.slice(), // [{question, answer}]
+    items: items.slice(), // [{question, answer}] — items may also be {type:'choice'|'enumeration'}
     createdAt: Date.now(),
     target: (meta && meta.target) || items.length,
     sourceText: (meta && meta.sourceText) || '',
     sourceName: (meta && meta.sourceName) || name || 'StudyPack',
+    // Question shape this deck was written in (older packs have no field → Multiple Choice).
+    questionType: isQType(meta && meta.questionType) ? meta.questionType : 'multiple_choice',
     doneForNow: false,
   };
   studyPacks.unshift(pack);
@@ -2758,7 +4594,7 @@ function renderStudyPackList() {
       <span class="hi-dot" style="background:${deckColor(pack.name)}"></span>
       <button class="hi-main-btn">
         <span class="hi-name">${escapeHtml(pack.name)}</span>
-        <span class="hi-meta">${pack.items.length} cards ${tag}</span>
+        <span class="hi-meta">${pack.items.length} cards \u00b7 ${packQuestionLabel(pack)} ${tag}</span>
       </button>
       <button class="hi-del" title="Delete StudyPack" aria-label="Delete StudyPack ${escapeHtml(pack.name)}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
@@ -2903,6 +4739,7 @@ function openPack(id) {
     genState = {
       packId: pack.id,
       target: pack.target,
+      qtype: isQType(pack.questionType) ? pack.questionType : 'multiple_choice',
       cancelled: false,
       error: null,
       running: false,
@@ -2939,7 +4776,9 @@ function renderPack() {
   }
   pack.items.forEach((it, i) => {
     const card = document.createElement('div');
-    card.className = 'pack-card' + (hlMode ? ' hl-mode' : '') + (it.type === 'choice' ? ' is-choice' : '');
+    const isEnum = it.type === 'enumeration';
+    const isDiagram = it.type === 'diagram';
+    card.className = 'pack-card' + (hlMode ? ' hl-mode' : '') + (it.type === 'choice' ? ' is-choice' : '') + (isEnum ? ' is-enum' : '') + (isDiagram ? ' is-diagram' : '');
     card.dataset.pi = i;
     const palette = Object.keys(HL)
       .map((c) => `<span class="hl-dot ${c === hlColor ? 'active' : ''}" data-c="${c}" style="background:${HL[c]}"></span>`)
@@ -2953,10 +4792,16 @@ function renderPack() {
         </div>
       </div>
       ${it.type === 'choice' ? '<span class="pk-badge">Multiple Choice</span>' : ''}
-      <div class="pk-q">${tokenText(it.question, it.hq, hlMode)}</div>
+      ${isEnum ? '<span class="pk-badge enum">Enumeration</span>' : ''}
+      ${isDiagram ? '<span class="pk-badge diagram">Diagram</span>' : ''}
+      <div class="pk-q">${isDiagram ? (it.title ? escapeHtml(it.title) : 'Label the diagram') : tokenText(it.question, it.hq, hlMode)}</div>
       ${it.type === 'choice'
         ? `<div class="pk-a"><div class="pk-answers">${renderPackOptions(it)}</div></div>`
-        : `<div class="pk-a">${tokenText(it.answer, it.ha, hlMode)}</div>`}
+        : isEnum
+          ? `<div class="pk-a">${renderEnumItems(it)}</div>`
+          : isDiagram
+            ? `<div class="pk-a">${renderDiagramPack(it)}</div>`
+            : `<div class="pk-a">${tokenText(it.answer, it.ha, hlMode)}</div>`}
       ${hlMode ? `<div class="pk-palette">${palette}<span class="pk-palette-hint">drag or click words to highlight</span></div>` : ''}
     `;
     const more = card.querySelector('.pk-more');
@@ -2993,6 +4838,50 @@ function renderPackOptions(it) {
       return `<div class="pk-opt ${ok ? 'ok' : 'no'}"><span class="pk-ic ${ok ? 'ok' : 'no'}">${ok ? '&#10003;' : '&#10005;'}</span><span class="pk-opt-txt">${escapeHtml(o)}</span></div>`;
     })
     .join('');
+}
+
+// Enumeration cards show the expected list in a cream panel with numbered bullets.
+function renderEnumItems(it) {
+  const items = enumerationItems(it);
+  if (!items.length) return '';
+  const rows = items
+    .map((txt, i) => `<li><span class="pk-item-n">${i + 1}</span><span class="pk-item-txt">${escapeHtml(txt)}</span></li>`)
+    .join('');
+  return `<div class="pk-items"><span class="pk-items-head">Expected items</span><ul class="pk-items-list">${rows}</ul></div>`;
+}
+
+/* ---------------- Diagram cards ---------------- */
+
+function diagramCardTitle(it) {
+  return (it && (it.title || it.question)) || 'Label the diagram';
+}
+
+const BLANK_LINE = '<span class="dgm-blank"></span>';
+
+// The StudyPack view of a diagram question: the image with numbered markers over empty
+// fill-in-the-blank style rows, joined by faint dashed leaders.
+// The stage is locked to the image's aspect ratio so percentage marker positions land
+// exactly where Buck found them, whatever size the card is rendered at.
+function renderDiagramPack(it) {
+  const w = Number(it.image_width) || 4;
+  const h = Number(it.image_height) || 3;
+  const labels = diagramLabels(it, w, h);
+  if (!it.image_url || !labels.length) return '<span class="dgm-missing">This diagram has no image.</span>';
+  // The preview masks the printed labels exactly like study mode does.
+  const covers = labels.map((l, i) => diagramCoverMarkup(l, i, { static: true })).join('');
+  const rows = labels
+    .map((l, i) => `<li><span class="dgm-n">${i + 1}</span>${BLANK_LINE}</li>`)
+    .join('');
+  return `<div class="dgm-pack">
+      <div class="dgm-stage" style="--dgm-ar:${w} / ${h}">
+        <svg class="dgm-fill" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <img class="dgm-img" src="${escAttr(it.image_url)}" alt="${escAttr(diagramCardTitle(it))}" loading="lazy" />
+        <span class="dgm-markers">${covers}</span>
+      </div>
+      <ul class="dgm-legend">${rows}</ul>
+      <p class="dgm-cta">Press <strong>Start Study</strong> to type your answers &mdash; these lines are just the preview.</p>
+      ${it.image_stored === 'inline' ? '<span class="dgm-note">Image stored on this device.</span>' : ''}
+    </div>`;
 }
 
 // word/highlighter clicks (delegated)
@@ -3089,19 +4978,88 @@ function syncOptionsFromInputs() {
   });
 }
 
+/* ---------------- Add-question: Diagram Labeling ----------------
+   The diagram editor is the actual form for this type, so the add-question modal
+   hands off to it and shows a thumbnail of the result if the user comes back. */
+
+function renderAqDiagram() {
+  const empty = document.getElementById('aq-diagram-empty');
+  const preview = document.getElementById('aq-diagram-preview');
+  const thumb = document.getElementById('aq-diagram-thumb');
+  const name = document.getElementById('aq-diagram-name');
+  const count = document.getElementById('aq-diagram-count');
+  if (!empty || !preview) return;
+  const has = !!(aqDiagramItem && aqDiagramItem.image_url);
+  empty.classList.toggle('hidden', has);
+  preview.classList.toggle('hidden', !has);
+  if (!has) return;
+  if (thumb) thumb.src = aqDiagramItem.image_url;
+  if (name) name.textContent = aqDiagramItem.title || 'diagram';
+  const n = diagramLabels(aqDiagramItem).length;
+  if (count) count.textContent = n + (n === 1 ? ' label' : ' labels');
+}
+
+// Hands off to the shared diagram editor in "card" mode so the result lands in this pack.
+function openAqDiagramEditor() {
+  if (!currentPackId) return;
+  const pack = getPack(currentPackId);
+  const editing = aqDiagramEditIndex >= 0 ? pack && pack.items[aqDiagramEditIndex] : null;
+  if (editing) {
+    openDiagramEditor({
+      mode: 'card',
+      packId: currentPackId,
+      editIndex: aqDiagramEditIndex,
+      dataUrl: editing.image_url,
+      name: pack.name,
+      title: editing.title || '',
+      labels: diagramLabels(editing),
+      width: editing.image_width,
+      height: editing.image_height,
+    });
+    return;
+  }
+  openDiagramEditor({ mode: 'card', packId: currentPackId, name: pack ? pack.name : 'diagram' });
+}
+
+let aqDiagramItem = null;
+let aqDiagramEditIndex = -1;
+
 function setAddQType(type) {
   syncOptionsFromInputs();
   addqType = type;
   document.querySelectorAll('.aq-type-opt').forEach((b) => b.classList.toggle('active', b.dataset.t === type));
   const hint = document.getElementById('aq-type-hint');
   const isChoice = type === 'choice';
-  if (hint) hint.textContent = isChoice
-    ? 'Multiple choice: define your choices and mark the correct one(s).'
-    : 'Fill in the blank: the question uses a ____ blank.';
+  const isEnum = type === 'enumeration';
+  const isDiagram = type === 'diagram';
+  if (hint) {
+    hint.textContent = isChoice
+      ? 'Multiple choice: define your choices and mark the correct one(s).'
+      : isEnum
+        ? 'Enumeration: the student lists the items from memory.'
+        : isDiagram
+          ? 'Diagram labeling: upload a labeled image and Buck turns each label into a box.'
+          : 'Fill in the blank: the question uses a ____ blank.';
+  }
   const qEl = document.getElementById('addq-question');
   const aEl = document.getElementById('addq-answer');
-  document.getElementById('aq-answer-group').classList.toggle('hidden', isChoice);
+  const iEl = document.getElementById('addq-items');
+  const aLabel = document.getElementById('aq-answer-label');
+  const qGroup = document.getElementById('aq-question-group');
+  const aqDiagramGroup = document.getElementById('aq-diagram-group');
+  document.getElementById('aq-answer-group').classList.toggle('hidden', isChoice || isDiagram);
   document.getElementById('aq-options-group').classList.toggle('hidden', !isChoice);
+  if (qGroup) qGroup.classList.toggle('hidden', isDiagram);
+  if (aqDiagramGroup) aqDiagramGroup.classList.toggle('hidden', !isDiagram);
+  aEl.classList.toggle('hidden', isEnum);
+  iEl.classList.toggle('hidden', !isEnum);
+  if (aLabel) aLabel.textContent = isEnum ? 'Expected items' : 'Answer';
+  const aHint = document.getElementById('aq-a-hint');
+  if (aHint) {
+    aHint.textContent = isEnum
+      ? 'One item per line — Buck marks each one the student lists.'
+      : 'Keep it short and specific.';
+  }
   if (isChoice) {
     qEl.placeholder = 'e.g. Which of the following are inputs of photosynthesis?';
     aEl.placeholder = 'mark the correct choice(s) below';
@@ -3109,9 +5067,17 @@ function setAddQType(type) {
       addqOptions = [{ text: '', correct: true }, { text: '', correct: false }, { text: '', correct: false }, { text: '', correct: false }];
     }
     renderAddQOptions();
+  } else if (isEnum) {
+    qEl.placeholder = 'e.g. List the three inputs of photosynthesis.';
+    const qh = document.getElementById('aq-q-hint');
+    if (qh) qh.textContent = 'Say how many items you expect the student to list.';
+  } else if (isDiagram) {
+    renderAqDiagram();
   } else {
     qEl.placeholder = 'e.g. The capital of France is ____.';
     aEl.placeholder = 'e.g. Paris';
+    const qh = document.getElementById('aq-q-hint');
+    if (qh) qh.textContent = 'Tip: use ____ where the answer goes.';
   }
 }
 
@@ -3119,6 +5085,8 @@ function openAddQ() {
   if (!requireAuth()) return;
   if (!currentPackId) return;
   addqEditIndex = -1;
+  aqDiagramItem = null;
+  aqDiagramEditIndex = -1;
   document.getElementById('addq-title').textContent = 'Add a question';
   document.getElementById('addq-save-label').textContent = 'Add to StudyPack';
   addqOptions = [];
@@ -3126,6 +5094,7 @@ function openAddQ() {
   setAddQType('flashcard');
   document.getElementById('addq-question').value = '';
   document.getElementById('addq-answer').value = '';
+  document.getElementById('addq-items').value = '';
   document.getElementById('addq-modal').classList.remove('hidden');
   setTimeout(() => document.getElementById('addq-question').focus(), 60);
 }
@@ -3135,11 +5104,20 @@ function openEditQ(index) {
   const pack = getPack(currentPackId);
   const it = pack.items[index];
   if (!it) return;
+  // Diagram cards are edited in the diagram editor, not this form.
+  if (it.type === 'diagram') {
+    aqDiagramEditIndex = index;
+    aqDiagramItem = it;
+    openAqDiagramEditor();
+    aqDiagramEditIndex = -1;
+    return;
+  }
   addqEditIndex = index;
   document.getElementById('addq-title').textContent = 'Edit question';
   document.getElementById('addq-save-label').textContent = 'Save changes';
   document.getElementById('addq-question').value = it.question;
   document.getElementById('addq-answer').value = it.answer || '';
+  document.getElementById('addq-items').value = it.type === 'enumeration' ? enumerationItems(it).join('\n') : '';
   const isChoice = it.type === 'choice';
   if (isChoice) {
     const answers = it.answers && it.answers.length ? it.answers : (it.answer ? [it.answer] : []);
@@ -3151,7 +5129,7 @@ function openEditQ(index) {
     addqOptions = [];
   }
   document.getElementById('aq-options').innerHTML = '';
-  setAddQType(isChoice ? 'choice' : 'flashcard');
+  setAddQType(it.type === 'choice' ? 'choice' : it.type === 'enumeration' ? 'enumeration' : 'flashcard');
   document.getElementById('addq-modal').classList.remove('hidden');
   setTimeout(() => document.getElementById('addq-question').focus(), 60);
 }
@@ -3159,6 +5137,13 @@ function openEditQ(index) {
 function saveAddQ() {
   const q = document.getElementById('addq-question').value.trim();
   let item;
+  if (addqType === 'diagram') {
+    // The diagram editor owns this type — it opens instead of saving from here.
+    document.getElementById('addq-modal').classList.add('hidden');
+    aqDiagramEditIndex = -1;
+    openAqDiagramEditor();
+    return;
+  }
   if (addqType === 'choice') {
     syncOptionsFromInputs();
     const options = addqOptions.map((o) => o.text.trim()).filter(Boolean);
@@ -3177,6 +5162,16 @@ function saveAddQ() {
     const hint = document.getElementById('aq-options-hint');
     if (hint) { hint.textContent = ''; hint.style.color = ''; }
     item = { type: 'choice', question: q, options, answers };
+  } else if (addqType === 'enumeration') {
+    const items = enumerationItems({ answer: document.getElementById('addq-items').value });
+    const aHint = document.getElementById('aq-a-hint');
+    if (!q) return;
+    if (items.length < 2) {
+      if (aHint) { aHint.textContent = 'List at least 2 expected items (one per line).'; aHint.style.color = '#dc2626'; }
+      return;
+    }
+    if (aHint) { aHint.textContent = 'One item per line — Buck marks each one the student lists.'; aHint.style.color = ''; }
+    item = { type: 'enumeration', question: q, answer: items.join(' / '), answer_items: items };
   } else {
     const a = document.getElementById('addq-answer').value.trim();
     if (!q || !a) return;
@@ -3206,6 +5201,27 @@ function startPackQuiz() {
         multi: (answers.length || 1) > 1,
       };
     }
+    if (it.type === 'enumeration') {
+      const items = enumerationItems(it);
+      return {
+        type: 'enumeration',
+        question: it.question,
+        items,
+        answer: items.join(' / '),
+      };
+    }
+    if (it.type === 'diagram') {
+      const labels = diagramLabels(it);
+      return {
+        type: 'diagram',
+        question: diagramCardTitle(it),
+        title: it.title || '',
+        image_url: it.image_url,
+        image_width: it.image_width,
+        image_height: it.image_height,
+        labels,
+      };
+    }
     return { type: 'flashcard', question: it.question, answer: it.answer };
   });
   results = new Array(flashcards.length).fill(null);
@@ -3221,7 +5237,8 @@ function startPackQuiz() {
 function makeChoiceOptions(it, pack) {
   const used = answerList(it);
   const others = pack.items
-    .map((x) => (x.type === 'choice' ? answerList(x) : [x.answer]))
+    // Only choice/flashcard cards make sense as distractors — enumeration answers are lists.
+    .map((x) => (x.type === 'choice' ? answerList(x) : x.type === 'enumeration' ? [] : [x.answer]))
     .flat()
     .filter((a) => a && !used.includes(a))
     .filter((v, i, arr) => arr.indexOf(v) === i);
@@ -3339,6 +5356,14 @@ function wirePack() {
   document.querySelectorAll('.aq-type-opt').forEach((b) => {
     b.addEventListener('click', () => setAddQType(b.dataset.t));
   });
+  const aqDiagramOpen = document.getElementById('aq-diagram-open');
+  if (aqDiagramOpen) aqDiagramOpen.addEventListener('click', () => {
+    document.getElementById('addq-modal').classList.add('hidden');
+    aqDiagramEditIndex = -1;
+    openAqDiagramEditor();
+  });
+  const aqDiagramEdit = document.getElementById('aq-diagram-edit');
+  if (aqDiagramEdit) aqDiagramEdit.addEventListener('click', () => openAqDiagramEditor());
 }
 
 function setHlMode(on) {
@@ -3450,14 +5475,24 @@ function markAnswered(index, verdict, userAnswer, correctAnswer, options) {
 function renderQuestion() {
   const item = currentItem();
   const isChoice = item.type === 'choice';
+  const isEnum = item.type === 'enumeration';
+  const isDiagram = item.type === 'diagram';
   attempted = [];
 
   const lb = document.getElementById('live-bar-area');
   if (lb) lb.classList.toggle('hidden', !roomMode);
 
-  deckBadge.textContent = !isChoice ? 'ENUMERATION' : (item.multi ? 'SELECT ALL THAT APPLY' : 'MULTIPLE CHOICE');
+  deckBadge.textContent = isChoice ? (item.multi ? 'SELECT ALL THAT APPLY' : 'MULTIPLE CHOICE')
+    : isEnum ? 'ENUMERATION'
+    : isDiagram ? 'DIAGRAM'
+    : 'FLASHCARD';
   deckBadge.classList.toggle('choice', isChoice);
-  deckQuestion.textContent = isChoice ? item.question : '';
+  deckBadge.classList.toggle('enum', isEnum || isDiagram);
+  deckBadge.classList.toggle('tiny', isDiagram);
+  // The diagram's own title is on the artwork, so the card title is an instruction
+  // instead of a duplicate heading.
+  deckQuestion.textContent = isDiagram ? 'Label the diagram' : (isChoice || isEnum ? item.question : '');
+  deckQuestion.classList.toggle('deck-instruction', isDiagram);
   deckFillInput.value = '';
   deckFillInput.disabled = false;
   deckCheck.disabled = false;
@@ -3481,6 +5516,8 @@ function renderQuestion() {
   deckNext.disabled = true;
 
   if (isChoice) {
+    clearEnumUi();
+    clearDiagramUi();
     deckChoices.classList.remove('hidden');
     deckChoices.innerHTML = '';
     const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
@@ -3501,7 +5538,37 @@ function renderQuestion() {
       chk.addEventListener('click', checkMultiAnswers);
       deckChoices.appendChild(chk);
     }
+  } else if (isEnum && roomMode) {
+    // Live rooms run on choice cards only; never mount the list builder inside a race.
+    deckChoices.classList.add('hidden');
+    deckChoices.innerHTML = '';
+    clearEnumUi();
+    clearDiagramUi();
+    deckResult.classList.remove('hidden');
+    deckResult.textContent = 'This card is enumeration — answer it in a solo Study session.';
+    deckResult.className = 'deck-result wrong';
+    deckNext.disabled = false;
+  } else if (isEnum) {
+    clearDiagramUi();
+    deckChoices.classList.add('hidden');
+    deckChoices.innerHTML = '';
+    renderEnumUi(item);
+  } else if (isDiagram) {
+    clearEnumUi();
+    deckChoices.classList.add('hidden');
+    deckChoices.innerHTML = '';
+    if (roomMode) {
+      clearDiagramUi();
+      deckResult.classList.remove('hidden');
+      deckResult.textContent = 'This card is a diagram — answer it in a solo Study session.';
+      deckResult.className = 'deck-result wrong';
+      deckNext.disabled = false;
+    } else {
+      renderDiagramStudy(item);
+    }
   } else {
+    clearEnumUi();
+    clearDiagramUi();
     deckChoices.classList.add('hidden');
     deckChoices.innerHTML = '';
     // fill-in-the-blank: replot the sentence with the blank replaced by a styled inline blank
@@ -3515,6 +5582,722 @@ function renderQuestion() {
   deckPrev.disabled = currentIndex === 0;
   const last = currentIndex === flashcards.length - 1;
   deckNext.textContent = last && !endless ? 'Finish' : 'Next ›';
+}
+
+/* ---------------- Enumeration study mode (list builder) ----------------
+   The user types an item, presses Enter, and it becomes a chip in their list.
+   "Check my answer" grades every chip locally against the expected items. */
+
+let enumChips = [];
+let enumBusy = false;
+let diagramScanTimer = null;
+
+function enumUiEls() {
+  return {
+    wrap: document.getElementById('deck-enum'),
+    chips: document.getElementById('deck-enum-chips'),
+    input: document.getElementById('deck-enum-input'),
+    check: document.getElementById('deck-enum-check'),
+    add: document.getElementById('deck-enum-add'),
+    hint: document.getElementById('deck-enum-hint'),
+    score: document.getElementById('deck-enum-score'),
+    expected: document.getElementById('deck-enum-expected'),
+  };
+}
+
+function clearEnumUi() {
+  enumChips = [];
+  enumBusy = false;
+  const e = enumUiEls();
+  if (e.wrap) e.wrap.classList.add('hidden');
+  if (e.chips) e.chips.innerHTML = '';
+  if (e.input) { e.input.value = ''; e.input.disabled = false; }
+  if (e.check) e.check.disabled = true;
+  if (e.add) e.add.disabled = true;
+  if (e.hint) e.hint.textContent = '';
+  if (e.score) { e.score.classList.add('hidden'); e.score.innerHTML = ''; }
+  if (e.expected) { e.expected.classList.add('hidden'); e.expected.innerHTML = ''; }
+}
+
+/* ---------------- Diagram study mode ----------------
+   Two panels: the diagram on the left with small numbered markers, the answers on the
+   right. Every answer is typed in the panel — nothing is ever placed over the artwork.
+   Hovering or focusing either side highlights the other. */
+
+const DD_MIN_ZOOM = 1;
+const DD_MAX_ZOOM = 3.2;
+const DD_MARKER_PX = 18;    // visual diameter on the (unscaled) stage
+const DD_TRIGGER_PX = 30;   // centre-to-centre spacing so an 18px dot never reads as crowded
+
+let ddState = {
+  labels: [],
+  entered: [],
+  itemResults: [],
+  revealed: false,
+  listMode: false,
+  zoom: 1,
+  active: -1,       // index highlighted from the panel side
+  lastOrder: [],
+};
+
+function ddEls() {
+  return {
+    wrap: document.getElementById('deck-diagram'),
+    viewport: document.getElementById('dd-viewport'),
+    stage: document.getElementById('dd-stage'),
+    img: document.getElementById('dd-img'),
+    markers: document.getElementById('dd-markers'),
+    leaders: document.getElementById('dd-leaders'),
+    list: document.getElementById('dd-list'),
+    sub: document.getElementById('dd-sub'),
+    counter: document.getElementById('dd-counter'),
+    check: document.getElementById('dd-check'),
+    reveal: document.getElementById('dd-reveal'),
+    score: document.getElementById('dd-score'),
+    zoomIn: document.getElementById('dd-zoom-in'),
+    zoomOut: document.getElementById('dd-zoom-out'),
+    zoomFit: document.getElementById('dd-zoom-fit'),
+    zoomLevel: document.getElementById('dd-zoom-level'),
+  };
+}
+
+function ddIsMobile() {
+  return !!(window.matchMedia && window.matchMedia('(max-width: 860px)').matches);
+}
+
+function clearDiagramUi() {
+  ddState = { labels: [], entered: [], itemResults: [], revealed: false, listMode: false, zoom: 1, active: -1, lastOrder: [] };
+  const e = ddEls();
+  if (!e.wrap) return;
+  e.wrap.classList.add('hidden');
+  if (e.markers) e.markers.innerHTML = '';
+  if (e.leaders) e.leaders.innerHTML = '';
+  if (e.list) e.list.innerHTML = '';
+  if (e.score) { e.score.classList.add('hidden'); e.score.innerHTML = ''; }
+}
+
+function ddSetZoom(next, opts) {
+  const e = ddEls();
+  const clamped = Math.max(DD_MIN_ZOOM, Math.min(DD_MAX_ZOOM, next));
+  ddState.zoom = clamped;
+  if (e.stage) e.stage.style.transform = clamped === 1 ? '' : 'scale(' + clamped + ')';
+  if (e.zoomLevel) e.zoomLevel.textContent = Math.round(clamped * 100) + '%';
+  if (e.zoomOut) e.zoomOut.disabled = clamped <= DD_MIN_ZOOM + 0.001;
+  if (e.zoomIn) e.zoomIn.disabled = clamped >= DD_MAX_ZOOM - 0.001;
+  if (e.viewport && !(opts && opts.keepScroll) && clamped === 1) {
+    e.viewport.scrollLeft = 0;
+    e.viewport.scrollTop = 0;
+  }
+  ddDrawLeaders();
+}
+
+function renderDiagramStudy(item) {
+  const e = ddEls();
+  if (!e.wrap) return;
+  const labels = (item.labels && item.labels.length ? item.labels : diagramLabels(item));
+  ddState = {
+    labels,
+    entered: labels.map(() => ''),
+    itemResults: [],
+    revealed: false,
+    listMode: ddIsMobile(),
+    zoom: 1,
+    active: -1,
+    lastOrder: [],
+  };
+  e.wrap.classList.remove('hidden');
+  e.wrap.classList.toggle('is-list', ddState.listMode);
+  if (e.stage) e.stage.style.transform = '';
+  if (e.img) {
+    e.img.src = item.image_url || item.image || '';
+    // The stage is locked to the image's aspect ratio so percentage markers always land.
+    const w = Number(item.image_width) || 4;
+    const h = Number(item.image_height) || 3;
+    if (e.stage) e.stage.style.setProperty('--dd-ar', w + ' / ' + h);
+  }
+  if (e.score) { e.score.classList.add('hidden'); e.score.innerHTML = ''; }
+  if (e.sub) e.sub.textContent = ddState.listMode
+    ? 'Fill in the label for each numbered marker. Tap a number to jump between the diagram and the list.'
+    : 'Fill in the label for each numbered marker. Hover a number to see where it points.';
+  if (e.check) { e.check.disabled = false; e.check.classList.remove('hidden'); e.check.textContent = 'Check my answers'; }
+  if (e.reveal) { e.reveal.textContent = 'Show all answers'; e.reveal.disabled = false; }
+  if (e.zoomLevel) e.zoomLevel.textContent = '100%';
+  if (e.zoomOut) e.zoomOut.disabled = true;
+  if (e.zoomIn) e.zoomIn.disabled = false;
+  ddRenderMarkers();
+  ddRenderList();
+  ddUpdateCounter();
+  // Fan-out and leaders need real geometry, so measure after layout settles.
+  const relayout = () => { ddResolveMarkerOverlaps(); ddDrawLeaders(); };
+  requestAnimationFrame(relayout);
+  setTimeout(relayout, 220);
+  const firstInput = e.list && e.list.querySelector('.dd-input');
+  if (firstInput) setTimeout(() => { try { firstInput.focus(); } catch (err) {} }, 120);
+}
+
+/* ---- markers: small, staggered in, and never overlapping ----
+   Markers are placed at their true percentage position, then a collision pass moves any
+   marker that would sit on top of another into a free slot nearby and links it back to the
+   real point with a short dashed line. */
+
+function ddRenderMarkers() {
+  const e = ddEls();
+  if (!e.markers) return;
+  const labels = ddState.labels;
+  const order = labels.map((_, i) => i);
+  // Stagger the pop-in in reading order (top to bottom, left to right).
+  order.sort((a, b) => (labels[a].marker.y - labels[b].marker.y) || (labels[a].marker.x - labels[b].marker.x));
+  ddState.lastOrder = order;
+  const delayOf = {};
+  order.forEach((idx, rank) => { delayOf[idx] = rank * 50; });
+
+  // Each label is masked by a cover sitting exactly where the printed text was, with its
+  // number on top — so the answer cannot be read off the artwork.
+  e.markers.innerHTML = labels
+    .map((l, i) => {
+      const rect = diagramCoverRect(l);
+      const style = 'left:' + rect.left.toFixed(2) + '%;top:' + rect.top.toFixed(2) + '%' +
+        ';width:' + rect.w.toFixed(2) + '%;height:' + rect.h.toFixed(2) + '%' +
+        ';animation-delay:' + delayOf[i] + 'ms';
+      return '<button type="button" class="dd-cover dd-mk" data-dd="' + i + '"' +
+        ' aria-label="Label ' + (i + 1) + ', hidden by Buck" style="' + style + '">' +
+        '<b>' + (i + 1) + '</b><span class="dd-tip" role="tooltip"></span></button>';
+    })
+    .join('');
+
+  e.markers.querySelectorAll('.dd-mk').forEach((marker) => {
+    const i = Number(marker.dataset.dd);
+    marker.addEventListener('mouseenter', () => ddHighlight(i, 'marker'));
+    marker.addEventListener('mouseleave', () => ddHighlight(-1, 'marker'));
+    marker.addEventListener('focus', () => ddHighlight(i, 'marker'));
+    marker.addEventListener('blur', () => ddHighlight(-1, 'marker'));
+    marker.addEventListener('click', () => {
+      const input = e.list && e.list.querySelector('.dd-row[data-i="' + i + '"] .dd-input');
+      if (!input) return;
+      if (input.scrollIntoView) input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      setTimeout(() => { try { input.focus(); } catch (err) {} }, 180);
+    });
+  });
+  ddUpdateTips();
+}
+
+// Covers are areas that sit on the printed labels, so the old pin-fanning pass is gone.
+// Kept as a no-op so existing call sites (render/resize) stay valid.
+function ddResolveMarkerOverlaps() {
+  return;
+}
+
+// The cover layer carries the labels; there are no separate leader lines any more.
+function ddDrawLeaders() {
+  const e = ddEls();
+  if (e && e.leaders) e.leaders.innerHTML = '';
+}
+
+/* ---- the answers panel ---- */
+
+function ddRenderList() {
+  const e = ddEls();
+  if (!e.list) return;
+  e.list.innerHTML = '';
+  if (!ddState.labels.length) return;
+
+  ddState.labels.forEach((label, i) => {
+    const row = document.createElement('div');
+    row.className = 'dd-row';
+    row.dataset.i = i;
+    row.innerHTML =
+      '<button type="button" class="dd-num" data-dd="' + i + '" aria-label="Jump to marker ' + (i + 1) + '">' + (i + 1) + '</button>' +
+      '<div class="dd-field">' +
+        '<input class="dd-input" type="text" autocomplete="off" spellcheck="false" aria-label="Label for marker ' + (i + 1) + '" />' +
+        '<p class="dd-correct-line" hidden></p>' +
+      '</div>' +
+      '<span class="dd-mark" aria-hidden="true"></span>';
+    e.list.appendChild(row);
+  });
+
+  e.list.querySelectorAll('.dd-row').forEach((row) => {
+    const i = Number(row.dataset.i);
+    const input = row.querySelector('.dd-input');
+    input.value = ddState.entered[i] || '';
+
+    input.addEventListener('input', () => {
+      ddState.entered[i] = input.value;
+      ddUpdateCounter();
+    });
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      const inputs = Array.prototype.slice.call(e.list.querySelectorAll('.dd-input'));
+      const next = inputs[i + 1];
+      if (next) next.focus();
+      else checkDiagramAnswers();
+    });
+    input.addEventListener('focus', () => ddHighlight(i, 'row', true));
+    input.addEventListener('blur', () => ddHighlight(-1, 'row', true));
+    // Hovering the row pulses its marker and tints the row.
+    row.addEventListener('mouseenter', () => {
+      row.classList.add('is-active');
+      ddHighlight(i, 'row');
+    });
+    row.addEventListener('mouseleave', () => {
+      if (!row.contains(document.activeElement)) row.classList.remove('is-active');
+      ddHighlight(-1, 'row');
+    });
+    const num = row.querySelector('.dd-num');
+    num.addEventListener('click', () => ddScrollToMarker(i));
+  });
+}
+
+function ddUpdateCounter() {
+  const e = ddEls();
+  if (!e.counter) return;
+  const filled = ddState.entered.filter((v) => String(v || '').trim()).length;
+  e.counter.textContent = filled + ' of ' + ddState.labels.length + ' filled';
+  e.counter.classList.toggle('is-complete', filled === ddState.labels.length && filled > 0);
+}
+
+// Two-way link between the image and the list.
+// Marker side: hovering/focusing a marker highlights its row.
+// Row side: hovering a row pulses its marker; focusing an input keeps a ring on it.
+function ddHighlight(index, from, persistent) {
+  const e = ddEls();
+  if (!e.wrap) return;
+
+  if (from === 'marker') {
+    e.wrap.querySelectorAll('.dd-row').forEach((row) => {
+      row.classList.toggle('is-active', Number(row.dataset.i) === index);
+    });
+    if (index >= 0) {
+      const row = e.list && e.list.querySelector('.dd-row[data-i="' + index + '"]');
+      if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+    }
+    return;
+  }
+
+  ddState.active = index;
+  e.wrap.querySelectorAll('.dd-mk').forEach((marker) => {
+    const i = Number(marker.dataset.dd);
+    marker.classList.toggle('is-hover', i === index);
+    // The ring is sticky: only the focused row may carry it.
+    if (persistent) marker.classList.toggle('is-ring', i === index);
+    else if (index === -1) marker.classList.remove('is-ring');
+  });
+}
+
+function ddScrollToMarker(index) {
+  const e = ddEls();
+  if (!e.markers) return;
+  const marker = e.markers.querySelector('.dd-mk[data-dd="' + index + '"]');
+  if (!marker) return;
+  if (marker.scrollIntoView) marker.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  // A brief pulse so the user sees which one it was.
+  e.wrap.querySelectorAll('.dd-mk').forEach((m) => m.classList.remove('is-ping'));
+  void marker.offsetWidth;
+  marker.classList.add('is-ping');
+  setTimeout(() => marker.classList.remove('is-ping'), 700);
+}
+
+// Tooltip text: the answer once it has been checked, otherwise a nudge.
+function ddUpdateTips() {
+  const e = ddEls();
+  if (!e.markers) return;
+  e.markers.querySelectorAll('.dd-mk').forEach((marker) => {
+    const i = Number(marker.dataset.dd);
+    const label = ddState.labels[i];
+    if (!label) return;
+    const tip = marker.querySelector('.dd-tip');
+    if (!tip) return;
+    const result = ddState.itemResults[i];
+    if (result) tip.textContent = result.text + (result.ok ? ' ✓' : '');
+    else tip.textContent = ddState.entered[i] ? String(ddState.entered[i]).slice(0, 40) : 'What is this?';
+  });
+}
+
+function checkDiagramAnswers() {
+  const e = ddEls();
+  const labels = ddState.labels;
+  if (!labels.length || !e.wrap) return;
+  const answered = ddState.entered.filter((v) => String(v || '').trim()).length;
+  if (!answered) {
+    deckResult.classList.remove('hidden');
+    deckResult.textContent = 'Fill in at least one answer first.';
+    deckResult.className = 'deck-result wrong';
+    return;
+  }
+  // NOTE: named `graded`, not `results` — `results` is the quiz-wide results array that
+  // this function must write into, and shadowing it silently dropped every score.
+  const graded = labels.map((label, i) => {
+    const entered = String(ddState.entered[i] || '').trim();
+    const verdict = gradeLocally(entered, label.text);
+    return { text: label.text, entered, ok: verdict === 'correct', verdict };
+  });
+  ddState.itemResults = graded;
+  const total = labels.length;
+  const hits = graded.filter((r) => r.ok).length;
+  const percent = total ? Math.round((hits / total) * 100) : 0;
+  const verdict = percent === 100 ? 'correct' : percent === 0 ? 'wrong' : 'partial';
+
+  ddPaintResults(graded);
+  ddShowScore(hits, total, {
+    label: percent === 100 ? 'Full marks' : percent === 0 ? 'No matches yet' : ((total - hits) === 1 ? '1 marker missed' : (total - hits) + ' markers missed'),
+    msg: percent === 100
+      ? 'Every label — Buck is impressed.'
+      : percent === 0
+        ? 'Not this time. Show all answers to see them.'
+        : 'Close! The ones you missed now show the correct text.',
+  });
+
+  results[currentIndex] = {
+    question: diagramCardTitle(currentItem()),
+    type: 'diagram',
+    options: labels.map((l) => l.text),
+    correctAnswer: labels.map((l) => l.text).join(' / '),
+    userAnswer: graded.map((r) => r.entered || '—').join(' / '),
+    verdict,
+    feedback: '',
+    score: { hits, total, percent },
+    itemResults: graded.map((r) => ({ text: r.text, ok: r.ok, given: r.entered })),
+  };
+
+  if (percent === 100) {
+    playCorrect();
+    if (roomMode) bumpRoomScore();
+  } else {
+    playWrong();
+  }
+  deckResult.classList.add('hidden');
+  deckHint.classList.add('hidden');
+  deckSee.classList.add('hidden');
+  deckNext.disabled = false;
+}
+
+// Paint one row + its marker per graded result, and shake the misses.
+function ddPaintResults(graded) {
+  const e = ddEls();
+  if (!e.wrap) return;
+  graded.forEach((r, i) => {
+    const row = e.list && e.list.querySelector('.dd-row[data-i="' + i + '"]');
+    if (row) {
+      row.classList.toggle('is-ok', r.ok);
+      row.classList.toggle('is-bad', !r.ok);
+      row.classList.add('is-checked');
+      const mark = row.querySelector('.dd-mark');
+      if (mark) mark.textContent = r.ok ? '✓' : '✕';
+      const input = row.querySelector('.dd-input');
+      if (input) input.classList.toggle('is-bad', !r.ok);
+      const line = row.querySelector('.dd-correct-line');
+      if (line) {
+        line.hidden = r.ok;
+        line.textContent = r.ok ? '' : 'Correct: ' + r.text;
+      }
+      if (!r.ok) {
+        row.classList.remove('is-shake');
+        void row.offsetWidth;
+        row.classList.add('is-shake');
+      }
+    }
+    const marker = e.markers && e.markers.querySelector('.dd-mk[data-dd="' + i + '"]');
+    if (marker) {
+      marker.classList.toggle('is-yes', r.ok);
+      marker.classList.toggle('is-no', !r.ok);
+      if (r.ok) {
+        marker.classList.remove('is-sparkle');
+        void marker.offsetWidth;
+        marker.classList.add('is-sparkle');
+      }
+    }
+  });
+  ddUpdateTips();
+}
+
+function ddShowScore(hits, total, copy) {
+  const e = ddEls();
+  if (!e.score) return;
+  const percent = total ? Math.round((hits / total) * 100) : 0;
+  e.score.className = 'deck-score ' + (percent === 100 ? 'is-perfect' : percent === 0 ? 'is-zero' : 'is-partial');
+  e.score.innerHTML = enumBuckFor(hits, total) +
+    '<span class="deck-score-body"><span class="deck-score-num">' + hits + ' of ' + total + ' correct</span>' +
+    '<span class="deck-score-label">' + copy.label + '</span>' +
+    '<span class="deck-score-msg">' + copy.msg + '</span></span>';
+  e.score.classList.remove('hidden');
+}
+
+function revealDiagramAnswers() {
+  const e = ddEls();
+  if (!e.wrap || !ddState.labels.length) return;
+  // Toggling back re-grades what the user typed, so they can retry.
+  if (ddState.revealed) {
+    ddState.revealed = false;
+    ddState.labels.forEach((label, i) => {
+      const row = e.list && e.list.querySelector('.dd-row[data-i="' + i + '"]');
+      if (!row) return;
+      row.classList.remove('is-ok', 'is-bad', 'is-checked', 'is-revealed');
+      const input = row.querySelector('.dd-input');
+      if (input) {
+        input.value = ddState.entered[i] || '';
+        input.classList.remove('is-bad');
+      }
+      const mark = row.querySelector('.dd-mark');
+      if (mark) mark.textContent = '';
+      const line = row.querySelector('.dd-correct-line');
+      if (line) { line.hidden = true; line.textContent = ''; }
+    });
+    if (e.markers) {
+      e.markers.querySelectorAll('.dd-mk').forEach((m) => m.classList.remove('is-yes', 'is-no'));
+    }
+    ddState.itemResults = [];
+    if (e.reveal) e.reveal.textContent = 'Show all answers';
+    ddUpdateTips();
+    return;
+  }
+
+  ddState.revealed = true;
+  // `graded`, not `results` — see the note in checkDiagramAnswers.
+  const graded = ddState.labels.map((label, i) => {
+    const entered = String(ddState.entered[i] || '').trim();
+    return { text: label.text, entered, ok: normAnswer(entered) === normAnswer(label.text), verdict: 'wrong' };
+  });
+  ddState.itemResults = graded;
+  ddState.labels.forEach((label, i) => {
+    const row = e.list && e.list.querySelector('.dd-row[data-i="' + i + '"]');
+    if (!row) return;
+    const input = row.querySelector('.dd-input');
+    if (input) { input.value = label.text; input.classList.remove('is-bad'); }
+    row.classList.add('is-revealed', 'is-checked', 'is-ok');
+    row.classList.remove('is-bad');
+    const mark = row.querySelector('.dd-mark');
+    if (mark) mark.textContent = '✓';
+    const line = row.querySelector('.dd-correct-line');
+    if (line) { line.hidden = true; line.textContent = ''; }
+  });
+  if (e.markers) {
+    e.markers.querySelectorAll('.dd-mk').forEach((m) => { m.classList.add('is-yes'); m.classList.remove('is-no'); });
+  }
+  if (e.reveal) e.reveal.textContent = 'Hide answers';
+  const hits = graded.filter((r) => r.ok).length;
+  ddShowScore(hits, graded.length, {
+    label: 'Answers shown',
+    msg: 'These are the labels Buck found in the image — edit any line to try again.',
+  });
+  results[currentIndex] = {
+    question: diagramCardTitle(currentItem()),
+    type: 'diagram',
+    options: ddState.labels.map((l) => l.text),
+    correctAnswer: ddState.labels.map((l) => l.text).join(' / '),
+    userAnswer: graded.map((r) => r.entered || '—').join(' / '),
+    verdict: hits === graded.length ? 'correct' : hits === 0 ? 'wrong' : 'partial',
+    feedback: '',
+    score: { hits, total: graded.length, percent: graded.length ? Math.round((hits / graded.length) * 100) : 0 },
+    itemResults: graded.map((r) => ({ text: r.text, ok: r.ok, given: r.entered })),
+  };
+  deckNext.disabled = false;
+}
+
+function renderEnumUi(item) {
+  const e = enumUiEls();
+  if (!e.wrap) return;
+  enumChips = [];
+  enumBusy = false;
+  e.wrap.classList.remove('hidden');
+  e.chips.innerHTML = '';
+  e.score.classList.add('hidden');
+  e.score.innerHTML = '';
+  e.expected.classList.add('hidden');
+  e.expected.innerHTML = '';
+  e.input.value = '';
+  e.input.disabled = false;
+  e.input.placeholder = 'Type an item, then press Enter…';
+  e.check.disabled = true;
+  e.add.disabled = true;
+  e.hint.textContent = 'Add every item you can recall — Buck checks them one by one.';
+  setTimeout(() => e.input.focus(), 60);
+}
+
+function addEnumChip() {
+  const item = currentItem();
+  const e = enumUiEls();
+  if (!item || item.type !== 'enumeration' || enumBusy) return;
+  const raw = String(e.input.value || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return;
+  if (enumChips.some((c) => c.toLowerCase() === raw.toLowerCase())) {
+    e.hint.textContent = 'That one is already on your list.';
+    e.input.value = '';
+    return;
+  }
+  if (enumChips.length >= 12) {
+    e.hint.textContent = "That's plenty — press Check my answer.";
+    return;
+  }
+  const removed = [...enumChips];
+  enumChips.push(raw);
+  e.input.value = '';
+  e.hint.textContent = 'Add every item you can recall — Buck checks them one by one.';
+  renderEnumChips({ removed });
+  e.input.focus();
+}
+
+function renderEnumChips(state) {
+  const e = enumUiEls();
+  const item = currentItem();
+  if (!e.chips || !item) return;
+  const graded = state && state.graded;
+  e.chips.innerHTML = '';
+  enumChips.forEach((text, i) => {
+    const chip = document.createElement('span');
+    const match = graded ? graded.chips[i] : null;
+    const ok = !!(match && match.matchedIndex >= 0);
+    chip.className = 'deck-chip' + (graded ? (ok ? ' is-ok' : ' is-miss') : '');
+    chip.dataset.i = i;
+    if (match) chip.dataset.result = match.matchedIndex;
+    if (state && state.removed && state.removed.indexOf(text) !== -1) chip.classList.add('is-removing');
+    chip.innerHTML = `<span class="deck-chip-txt">${escapeHtml(text)}</span>` +
+      (enumBusy ? '' : '<button type="button" class="deck-chip-x" aria-label="Remove item">&times;</button>');
+    e.chips.appendChild(chip);
+  });
+  e.check.disabled = enumBusy || !enumChips.length;
+  e.add.disabled = enumBusy || !String(e.input.value || '').trim();
+}
+
+function removeEnumChip(index) {
+  if (enumBusy) return;
+  const e = enumUiEls();
+  const removedText = enumChips[index];
+  enumChips.splice(index, 1);
+  renderEnumChips({ removed: [removedText] });
+  e.input.focus();
+}
+
+function enumChipInputChanged() {
+  const e = enumUiEls();
+  if (!e.add) return;
+  e.add.disabled = enumBusy || !String(e.input.value || '').trim();
+}
+
+// Pair every typed chip with its closest expected item (each expected item once).
+function matchEnumeration(userItems, expected) {
+  const claimed = new Set();
+  const chips = userItems.map((raw) => {
+    let best = -1;
+    let bestScore = 0;
+    expected.forEach((exp, ei) => {
+      if (claimed.has(ei)) return;
+      const exact = normAnswer(raw) === normAnswer(exp);
+      const score = exact ? 2 : (gradeLocally(raw, exp) === 'correct' ? 1 : 0);
+      if (score > bestScore) { bestScore = score; best = ei; }
+    });
+    if (best >= 0 && bestScore > 0) claimed.add(best);
+    return { text: raw, matchedIndex: best >= 0 && bestScore > 0 ? best : -1 };
+  });
+  const results = expected.map((exp, i) => {
+    const chip = chips.find((c) => c.matchedIndex === i);
+    return { text: exp, ok: !!chip, given: chip ? chip.text : '' };
+  });
+  return { chips, results, hits: results.filter((r) => r.ok).length };
+}
+
+function enumScoreClass(hits, total) {
+  const percent = total ? Math.round((hits / total) * 100) : 0;
+  if (percent === 100) return 'is-perfect';
+  if (percent === 0) return 'is-zero';
+  return 'is-partial';
+}
+
+function enumBuckFor(hits, total) {
+  const perfect = total > 0 && hits === total;
+  const zero = hits === 0;
+  const file = perfect ? 'celebrating' : zero ? 'thinking' : 'studying';
+  const alt = perfect ? 'Buck celebrating' : zero ? 'Buck thinking' : 'Buck studying';
+  return `<img class="deck-score-buck" src="/buck-svg/${file}.svg?v=3" alt="${alt}" />`;
+}
+
+function enumScoreMsg(percent) {
+  if (percent === 100) return 'Every item — Buck is impressed.';
+  if (percent === 0) return 'Not this time. Read the list below, then try the next card.';
+  return 'Close! The ones you missed are marked below.';
+}
+
+function enumScoreMarkup(hits, total) {
+  const percent = total ? Math.round((hits / total) * 100) : 0;
+  const perfect = percent === 100;
+  const zero = percent === 0;
+  const missLabel = total - hits === 1 ? '1 item missed' : (total - hits) + ' items missed';
+  return enumBuckFor(hits, total) +
+    `<span class="deck-score-body"><span class="deck-score-num">${hits} of ${total} correct</span>` +
+    `<span class="deck-score-label">${perfect ? 'Full marks' : zero ? 'No matches yet' : missLabel}</span>` +
+    `<span class="deck-score-msg">${enumScoreMsg(percent)}</span></span>`;
+}
+
+function enumExpectedMarkup(res) {
+  const rows = res
+    .map((r) => `<li class="${r.ok ? 'is-ok' : 'is-miss'}"><span class="deck-exp-mark">${r.ok ? '&#10003;' : '&#10007;'}</span><span>${escapeHtml(r.text)}</span></li>`)
+    .join('');
+  return `<span class="deck-expected-head">Expected items</span><ul class="deck-expected-list">${rows}</ul>`;
+}
+
+function checkEnumeration() {
+  const item = currentItem();
+  const e = enumUiEls();
+  if (!item || item.type !== 'enumeration' || enumBusy) return;
+  const pending = String(e.input.value || '').replace(/\s+/g, ' ').trim();
+  if (pending && !enumChips.some((c) => c.toLowerCase() === pending.toLowerCase())) {
+    enumChips.push(pending);
+    e.input.value = '';
+  }
+  if (!enumChips.length) {
+    deckResult.classList.remove('hidden');
+    deckResult.textContent = 'Add at least one item first.';
+    deckResult.className = 'deck-result wrong';
+    return;
+  }
+
+  enumBusy = true;
+  const expected = (item.items && item.items.length ? item.items : enumerationItems(item));
+  const graded = matchEnumeration(enumChips, expected);
+  const total = graded.results.length;
+  const hits = graded.hits;
+  const percent = total ? Math.round((hits / total) * 100) : 0;
+  const verdict = percent === 100 ? 'correct' : percent === 0 ? 'wrong' : 'partial';
+  const missed = graded.results.filter((r) => !r.ok).map((r) => r.text);
+
+  results[currentIndex] = {
+    question: item.question,
+    type: 'enumeration',
+    options: expected,
+    correctAnswer: expected.join(' / '),
+    userAnswer: enumChips.join(' / '),
+    verdict,
+    feedback: '',
+    score: { hits, total, percent },
+    itemResults: graded.results,
+    missed,
+  };
+
+  renderEnumChips({ graded });
+  e.check.disabled = true;
+  e.input.disabled = true;
+  const addBtn = e.add;
+  if (addBtn) addBtn.disabled = true;
+
+  e.score.className = 'deck-score ' + enumScoreClass(hits, total);
+  e.score.innerHTML = enumScoreMarkup(hits, total);
+  e.score.classList.remove('hidden');
+  e.expected.innerHTML = enumExpectedMarkup(graded.results);
+  e.expected.classList.remove('hidden');
+  e.hint.textContent = verdict === 'correct' ? 'Nice work — next card.' : 'Missed items are marked in red.';
+
+  deckResult.classList.add('hidden');
+  deckResult.textContent = '';
+  deckHint.classList.add('hidden');
+  deckSee.classList.add('hidden');
+  deckNext.disabled = false;
+  deckSkip.disabled = true;
+
+  if (verdict === 'correct') {
+    playCorrect();
+    if (roomMode) bumpRoomScore();
+  } else {
+    playWrong();
+  }
 }
 
 function renderBlankQuestion(question) {
@@ -3677,37 +6460,70 @@ function levDist(a, b) {
 
 // Local, offline answer grading (no AI, no tokens): case/space/punctuation
 // insensitive, tolerates small typos, and flags partial answers.
+// Exact match on a normalisation that KEEPS meaningful symbols, so "+", "=" or "×" can be
+// answered. The fuzzy path below deliberately strips symbols, so it could never match them.
+function looseEqual(a, b) {
+  const clean = (s) => String(s == null ? '' : s)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\s\u00A0]+/g, '')
+    .replace(/[.,;:!?'"`´]+$/g, '');
+  const ca = clean(a);
+  const cb = clean(b);
+  return ca !== '' && ca === cb;
+}
+
+// True when the answer contains a symbol that normAnswer would discard in a way that changes
+// its meaning — operators and units like "+", "×", "°". A hyphen or slash merely joins words
+// ("co-operation", "and/or"), so it is not treated as significant and still grades fuzzily.
+function hasMeaningfulSymbol(s) {
+  const stripped = String(s == null ? '' : s)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return /[^a-z0-9\s\-/']/i.test(stripped);
+}
+
 function gradeLocally(user, correct) {
+  // Settle exact wording (including symbol-carrying answers) before the symbol-stripping path.
+  if (looseEqual(user, correct)) return 'correct';
+  if (hasMeaningfulSymbol(user) || hasMeaningfulSymbol(correct)) return 'wrong';
+
   const u = normAnswer(user);
   const c = normAnswer(correct);
-  if (!c) return 'wrong';
-  if (!u) return 'wrong';
+  // Nothing comparable left after normalisation.
+  if (!c || !u) return 'wrong';
   if (u === c) return 'correct';
 
   const cl = c.length;
-  // typed a slightly longer phrase that fully contains the answer
-  if (u.includes(c)) return 'correct';
-  // typed a prefix that covers most of the answer
+  // Typo budget scaled to the answer's length. Math.max(2, ...) gave every short answer two
+  // free edits, which scored "16" correct for "6" and "A" correct for "B".
+  const tol = cl <= 3 ? 0 : cl <= 6 ? 1 : Math.floor(cl * 0.15);
+  const d = levDist(u, c);
+  if (d <= tol) return 'correct';
+
+  // Typed extra words around the answer; guarded so "16" is not accepted for "6".
+  if (c.length >= 3 && u.includes(c) && u.length - c.length <= 8) return 'correct';
+  // Typed a leading part that covers most of the answer.
   if (c.includes(u) && u.length >= Math.max(3, cl * 0.7)) return 'correct';
 
-  const d = levDist(u, c);
-  if (d <= Math.max(2, Math.floor(cl * 0.15))) return 'correct';
-
-  // typed a short word/phrase that is a piece of a longer correct answer
-  if (c.includes(u) && u.length >= 3) return 'partial';
-
-  const su = u.split(' ');
-  const sc = c.split(' ');
-  let hits = 0;
-  sc.forEach((w) => { if (su.includes(w)) hits++; });
-  const sim = sc.length ? hits / sc.length : 0;
-  if (sim >= 0.6 || d <= Math.max(4, Math.floor(cl * 0.35))) return 'partial';
+  // Partial credit, only for longer answers so short ones cannot absorb unrelated words.
+  if (cl >= 8) {
+    const su = u.split(' ');
+    const sc = c.split(' ');
+    let hits = 0;
+    sc.forEach((w) => { if (su.includes(w)) hits++; });
+    const sim = sc.length ? hits / sc.length : 0;
+    if (sim >= 0.6) return 'partial';
+    // Relative distance: a length-scaled threshold let "left ventricle" pass for "right ventricle".
+    if (d / cl <= 0.2) return 'partial';
+  }
   return 'wrong';
 }
 
 function checkFill() {
   const item = currentItem();
-  if (item.type === 'choice') return;
+  if (item.type !== 'flashcard') return;
   const answer = deckFillInput.value.trim();
   if (!answer) {
     deckResult.classList.remove('hidden');
@@ -3757,7 +6573,7 @@ function checkFill() {
 
 function skipFill() {
   const item = currentItem();
-  if (item.type === 'choice') return;
+  if (item.type !== 'flashcard') return;
   const res = results[currentIndex];
   if (!res || res.verdict === 'correct') return;
   if (res.verdict !== 'wrong' && res.verdict !== 'partial') return;
@@ -3769,7 +6585,7 @@ function skipFill() {
 
 function revealAnswer() {
   const item = currentItem();
-  if (item.type === 'choice') return;
+  if (item.type !== 'flashcard') return;
   deckAnswer.classList.remove('hidden');
   deckAnswer.textContent = item.answer;
   deckSee.classList.add('hidden');
@@ -3779,7 +6595,11 @@ function goNext() {
   const done = !!results[currentIndex];
   if (!done) {
     deckResult.classList.remove('hidden');
-    deckResult.textContent = currentItem().type === 'choice' ? 'Choose an answer first.' : 'Type the missing word(s) and press Check.';
+    const t = currentItem().type;
+    deckResult.textContent = t === 'choice' ? 'Choose an answer first.'
+      : t === 'enumeration' ? 'Add your list and press Check my answer.'
+      : t === 'diagram' ? 'Fill in the boxes and press Check my answers.'
+      : 'Type the missing word(s) and press Check.';
     deckResult.className = 'deck-result wrong';
     return;
   }
@@ -3838,7 +6658,22 @@ function showResults() {
   const partial = graded.filter((r) => r.verdict === 'partial').length;
   const wrong = graded.filter((r) => r.verdict === 'wrong').length;
   const ungraded = results.filter((r) => r && r.verdict === 'ungraded').length;
-  const percent = Math.round(((correct + partial * 0.5) / total) * 100);
+
+  // Cards that score per field (enumeration chips, diagram markers) contribute their own
+  // point totals; everything else counts as a single point.
+  let pointsEarned = 0;
+  let pointsPossible = 0;
+  results.forEach((r) => {
+    if (!r || r.verdict === 'ungraded') return;
+    if (r.score && r.score.total) {
+      pointsEarned += r.score.hits;
+      pointsPossible += r.score.total;
+      return;
+    }
+    pointsPossible += 1;
+    pointsEarned += r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0;
+  });
+  const percent = pointsPossible ? Math.round((pointsEarned / pointsPossible) * 100) : 0;
 
   renderResults({
     moduleName: lastModuleName,
@@ -3847,7 +6682,7 @@ function showResults() {
     partial,
     wrong,
     ungraded,
-    percent,
+    percent: Math.max(0, Math.min(100, percent)),
     details: results,
   });
 
@@ -3914,9 +6749,60 @@ function renderResults(entry) {
 
     const div = document.createElement('div');
     div.className = 'result-item ' + verdictClass;
+
+    if (r.type === 'enumeration' && Array.isArray(r.itemResults)) {
+      // Enumeration: the score leads, then the expected list with ticks and crosses.
+      const score = r.score || { hits: 0, total: r.itemResults.length, percent: 0 };
+      const listRows = r.itemResults
+        .map((it) => `<li class="${it.ok ? 'is-ok' : 'is-miss'}"><span class="deck-exp-mark">${it.ok ? '&#10003;' : '&#10007;'}</span><span>${escapeHtml(it.text)}</span></li>`)
+        .join('');
+      const given = r.userAnswer ? escapeHtml(r.userAnswer) : '<em>Nothing listed</em>';
+      div.innerHTML = `
+        <div class="ri-header">
+          <span class="ri-q">Q${i + 1}: ${escapeHtml(r.question)}</span>
+          <span class="ri-verdict">${verdictLabel}</span>
+        </div>
+        <div class="ri-score">${score.hits} of ${score.total} correct</div>
+        <div class="ri-row"><span class="ri-label">Your list:</span> ${given}</div>
+        <div class="ri-expected">
+          <span class="deck-expected-head">Expected items</span>
+          <ul class="deck-expected-list">${listRows}</ul>
+        </div>
+        ${feedback}
+      `;
+      detailsEl.appendChild(div);
+      return;
+    }
+
+    if (r.type === 'diagram' && Array.isArray(r.itemResults)) {
+      // Diagram: one row per marker, showing what was typed against the real label.
+      const score = r.score || { hits: 0, total: r.itemResults.length, percent: 0 };
+      const rows = r.itemResults
+        .map((it, n) => `<li class="${it.ok ? 'is-ok' : 'is-miss'}">` +
+          `<span class="deck-exp-mark">${it.ok ? '&#10003;' : '&#10007;'}</span>` +
+          `<span class="ri-diagram-line"><b>${n + 1}.</b> ${escapeHtml(it.text)}` +
+          (it.ok ? '' : `<em>${it.given ? ' (you wrote: ' + escapeHtml(it.given) + ')' : ' (left blank)'}</em>`) +
+          '</span></li>')
+        .join('');
+      div.innerHTML = `
+        <div class="ri-header">
+          <span class="ri-q">Q${i + 1}: ${escapeHtml(r.question)}</span>
+          <span class="ri-verdict">${verdictLabel}</span>
+        </div>
+        <div class="ri-score">${score.hits} of ${score.total} correct</div>
+        <div class="deck-expected">
+          <span class="deck-expected-head">Markers</span>
+          <ul class="deck-expected-list">${rows}</ul>
+        </div>
+        ${feedback}
+      `;
+      detailsEl.appendChild(div);
+      return;
+    }
+
     div.innerHTML = `
       <div class="ri-header">
-        <span class="ri-q">Q${i + 1}: ${r.question}</span>
+        <span class="ri-q">Q${i + 1}: ${escapeHtml(r.question)}</span>
         <span class="ri-verdict">${verdictLabel}</span>
       </div>
       <div class="ri-row"><span class="ri-label">Your answer:</span> ${r.userAnswer}</div>
@@ -5332,7 +8218,7 @@ function wireSidebar() {
   sidebarToggle.addEventListener('click', () => {
     const collapsed = !sidebar.classList.contains('collapsed');
     sidebar.classList.toggle('collapsed', collapsed);
-    localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
+    safeSet('sidebarCollapsed', collapsed ? '1' : '0');
   });
 
   const navTheme = document.getElementById('nav-theme');
@@ -5372,7 +8258,7 @@ function wireSidebar() {
   settingsOptions.querySelectorAll('.settings-option').forEach((btn) => {
     btn.addEventListener('click', () => {
       quizLength = parseInt(btn.dataset.count, 10);
-      localStorage.setItem('quizLength', String(quizLength));
+      safeSet('quizLength', String(quizLength));
       updateFlashcardCountLabel();
       closeSettings();
     });
@@ -5395,6 +8281,38 @@ function wireSidebar() {
     onPdfChosen(file);
   });
   pdfRemove.addEventListener('click', () => onPdfChosen(null));
+
+  // Diagram Labeling: its own image drop zone inside the create modal.
+  if (diagramDrop) {
+    diagramDrop.addEventListener('click', () => diagramFileInput && diagramFileInput.click());
+    diagramDrop.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (diagramFileInput) diagramFileInput.click(); }
+    });
+    ['dragenter', 'dragover'].forEach((ev) => diagramDrop.addEventListener(ev, (e) => { e.preventDefault(); diagramDrop.classList.add('drag'); }));
+    ['dragleave', 'drop'].forEach((ev) => diagramDrop.addEventListener(ev, (e) => { e.preventDefault(); diagramDrop.classList.remove('drag'); }));
+    diagramDrop.addEventListener('drop', (e) => {
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      onDiagramFileChosen(file);
+    });
+  }
+  if (diagramRemove) diagramRemove.addEventListener('click', clearCreateDiagram);
+  const diagramOpenBtn = document.getElementById('diagram-open');
+  if (diagramOpenBtn) diagramOpenBtn.addEventListener('click', () => {
+    const img = diagramState.image;
+    if (!img) { if (diagramFileInput) diagramFileInput.click(); return; }
+    const reviewed = diagramEditor.labels && diagramEditor.labels.length
+      ? diagramEditor.labels.map((l) => ({ id: l.id, text: l.text, marker: l.marker, labelPos: l.labelPos }))
+      : undefined;
+    // Straight back into the editor with the image (and any reviewed labels) already there.
+    openDiagramEditor({
+      dataUrl: img.dataUrl,
+      name: img.name,
+      width: img.width,
+      height: img.height,
+      labels: reviewed,
+      title: diagramEditor.title || '',
+    });
+  });
 
   // Text tab
   createTextEl.addEventListener('input', () => {
@@ -5433,6 +8351,9 @@ function wireSidebar() {
   createBackdrop.addEventListener('click', closeCreate);
 
   estimateSlider.addEventListener('input', updateEstimateLabel);
+  wireQType();
+  createModalWired = true;
+  applyCreateMode();
   estimateAll.addEventListener('click', () => {
     startGeneration(estimateQuestionCount(activeContent || pendingContent || {}));
   });
@@ -5601,7 +8522,7 @@ function renderSidebarHistory() {
 }
 
 function persistPinnedIds() {
-  localStorage.setItem('pinnedIds', JSON.stringify([...pinnedIds]));
+  safeSet('pinnedIds', JSON.stringify([...pinnedIds]));
 }
 
 function buildSidebarHistoryItem(entry) {
@@ -5721,6 +8642,8 @@ wireHearts();
 wireLive();
 wireFriends();
 wirePack();
+wireQType();
+wireDiagramEditor();
 updateFlashcardCountLabel();
 renderHearts();
 renderPendingDeck();
@@ -5728,6 +8651,25 @@ renderJumpBack();
 renderStudyPackList();
 renderProgress();
 setInterval(renderHearts, 1000);
+
+// Keep the diagram markers from colliding (and swap layouts on phones) when the view
+// changes size or the browser is zoomed.
+let ddResizeTimer = null;
+window.addEventListener('resize', () => {
+  if (!ddState.labels.length) return;
+  clearTimeout(ddResizeTimer);
+  ddResizeTimer = setTimeout(() => {
+    const wrap = document.getElementById('deck-diagram');
+    if (!wrap || wrap.classList.contains('hidden')) return;
+    const shouldList = ddIsMobile();
+    if (shouldList !== ddState.listMode) {
+      ddState.listMode = shouldList;
+      wrap.classList.toggle('is-list', shouldList);
+    }
+    ddResolveMarkerOverlaps();
+    ddDrawLeaders();
+  }, 160);
+});
 
 /* ---------------- Home: action cards, study input, jump back ---------------- */
 
