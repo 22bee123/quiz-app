@@ -3094,9 +3094,14 @@ function loseHeart() {
 }
 
 function gameOver() {
+  // Ending mid-question with no word of why felt like a crash.
+  showToast('Out of wings \u2014 here\u2019s how you did. Wings refill over time.', 'wrong');
   for (let i = 0; i < flashcards.length; i++) {
     if (!results[i]) {
-      results[i] = { question: flashcards[i].question, type: flashcards[i].type, options: flashcards[i].options, correctAnswer: flashcards[i].answer, userAnswer: '—', verdict: 'wrong', feedback: 'Out of wings' };
+      const card = flashcards[i];
+      // The question the last wing was lost on keeps the student's pick.
+      const picked = i === currentIndex && card.options && attempted.length ? card.options[attempted[0]] : '—';
+      results[i] = { question: card.question, type: card.type, options: card.options, correctAnswer: card.answer, userAnswer: picked, verdict: 'wrong', feedback: 'Out of wings' };
     }
   }
   finishQuiz();
@@ -5727,8 +5732,8 @@ function currentItem() {
   return flashcards[currentIndex];
 }
 
-function markAnswered(index, verdict, userAnswer, correctAnswer, options) {
-  results[index] = {
+function markAnswered(index, verdict, userAnswer, correctAnswer, options, extra) {
+  results[index] = Object.assign({
     question: flashcards[index].question,
     type: flashcards[index].type,
     options,
@@ -5736,7 +5741,7 @@ function markAnswered(index, verdict, userAnswer, correctAnswer, options) {
     userAnswer,
     verdict,
     feedback: '',
-  };
+  }, extra || {});
   saveQuizSession();
 }
 
@@ -5753,7 +5758,7 @@ function renderQuestion() {
   deckBadge.textContent = isChoice ? (item.multi ? 'SELECT ALL THAT APPLY' : 'MULTIPLE CHOICE')
     : isEnum ? 'ENUMERATION'
     : isDiagram ? 'DIAGRAM'
-    : 'FLASHCARD';
+    : 'FILL IN THE BLANK';
   deckBadge.classList.toggle('choice', isChoice);
   deckBadge.classList.toggle('enum', isEnum || isDiagram);
   deckBadge.classList.toggle('tiny', isDiagram);
@@ -5847,10 +5852,72 @@ function renderQuestion() {
     setTimeout(() => deckFillInput.focus(), 50);
   }
 
+  if (results[currentIndex]) showAnsweredState(item, results[currentIndex]);
+
   deckPrev.disabled = currentIndex === 0;
   const last = currentIndex === flashcards.length - 1;
   deckNext.textContent = last && !endless ? 'Finish' : 'Next ›';
   saveQuizSession();
+}
+
+// A question that was already answered (reached with Previous, or a resumed quiz) shows how
+// it went, locked, with Next ready. It used to come back blank with Next disabled, so the
+// user had to answer again: a wrong click cost another wing and overwrote the score.
+function showAnsweredState(item, r) {
+  const ok = r.verdict === 'correct';
+  const say = (text, cls) => {
+    deckResult.classList.remove('hidden');
+    deckResult.textContent = text;
+    deckResult.className = 'deck-result ' + cls;
+  };
+  if (item.type === 'choice') {
+    const correct = correctAnswersOf(item);
+    const wrongPicks = (r.tried || []).concat(r.picked || []).filter((t) => !correct.includes(t));
+    deckChoices.querySelectorAll('.deck-choice').forEach((b) => {
+      const txt = item.options[Number(b.dataset.oi)];
+      b.disabled = true;
+      if (correct.includes(txt)) b.classList.add('correct');
+      else if (wrongPicks.includes(txt)) b.classList.add('wrong', 'eliminated');
+    });
+    const chk = document.getElementById('deck-multi-check');
+    if (chk) chk.classList.add('hidden');
+    say(ok ? 'Correct!' : 'Correct answer: ' + displayCorrect(item), ok ? 'correct' : 'wrong');
+  } else if (item.type === 'enumeration' && !roomMode) {
+    const e = enumUiEls();
+    enumChips = Array.isArray(r.chips) ? r.chips.slice() : String(r.userAnswer || '').split(' / ').filter(Boolean);
+    enumBusy = true;
+    const graded = matchEnumeration(enumChips, item.items && item.items.length ? item.items : enumerationItems(item));
+    renderEnumChips({ graded });
+    e.input.disabled = true;
+    e.check.disabled = true;
+    e.add.disabled = true;
+    e.score.className = 'deck-score ' + enumScoreClass(graded.hits, graded.results.length);
+    e.score.innerHTML = enumScoreMarkup(graded.hits, graded.results.length);
+    e.score.classList.remove('hidden');
+    e.expected.innerHTML = enumExpectedMarkup(graded.results);
+    e.expected.classList.remove('hidden');
+    e.hint.textContent = '';
+  } else if (item.type === 'diagram' && !roomMode) {
+    const given = (r.itemResults || []).map((x) => x.given || '');
+    ddState.entered = ddState.labels.map((_, i) => given[i] || '');
+    const e = ddEls();
+    if (e.list) e.list.querySelectorAll('.dd-input').forEach((input, i) => { input.value = ddState.entered[i]; input.disabled = true; });
+    ddPaintResults(ddState.labels.map((label, i) => ({ text: label.text, entered: ddState.entered[i], ok: !!(r.itemResults && r.itemResults[i] && r.itemResults[i].ok) })));
+    if (r.score) ddShowScore(r.score.hits, r.score.total, { label: r.score.hits === r.score.total ? 'Full marks' : (r.score.total - r.score.hits) + ' missed', msg: 'Your answers from before.' });
+    if (e.check) e.check.classList.add('hidden');
+    if (e.reveal) e.reveal.disabled = true;
+    ddUpdateCounter();
+  } else if (item.type === 'flashcard') {
+    deckFillInput.value = r.userAnswer || '';
+    deckFillInput.disabled = true;
+    deckCheck.disabled = true;
+    say(ok ? 'Correct!' : r.verdict === 'partial' ? 'Partly correct.' : 'Not quite.', r.verdict);
+    if (!ok) {
+      deckAnswer.textContent = item.answer;
+      deckAnswer.classList.remove('hidden');
+    }
+  }
+  deckNext.disabled = false;
 }
 
 /* ---------------- Enumeration study mode (list builder) ----------------
@@ -6228,6 +6295,10 @@ function checkDiagramAnswers() {
     itemResults: graded.map((r) => ({ text: r.text, ok: r.ok, given: r.entered })),
   };
   saveQuizSession();
+  // Checked answers are final. The fields used to stay editable, so a student could correct
+  // the misses (now shown on screen) and check again for full marks.
+  if (e.list) e.list.querySelectorAll('.dd-input').forEach((input) => { input.disabled = true; });
+  if (e.check) e.check.classList.add('hidden');
 
   if (percent === 100) {
     playCorrect();
@@ -6536,6 +6607,7 @@ function checkEnumeration() {
     options: expected,
     correctAnswer: expected.join(' / '),
     userAnswer: enumChips.join(' / '),
+    chips: enumChips.slice(),
     verdict,
     feedback: '',
     score: { hits, total, percent },
@@ -6620,15 +6692,15 @@ function checkMultiAnswers() {
     deckResult.classList.remove('hidden');
     deckResult.textContent = 'Correct!';
     deckResult.className = 'deck-result correct';
-    markAnswered(currentIndex, 'correct', picked.join(', '), displayCorrect(item), item.options);
+    markAnswered(currentIndex, 'correct', picked.join(', '), displayCorrect(item), item.options, { picked });
   } else {
     playWrong();
+    markAnswered(currentIndex, 'wrong', picked.join(', '), displayCorrect(item), item.options, { picked });
     const out = loseHeart();
     if (out) return;
     deckResult.classList.remove('hidden');
     deckResult.textContent = `Not quite. Correct answers: ${displayCorrect(item)}`;
     deckResult.className = 'deck-result wrong';
-    markAnswered(currentIndex, 'wrong', picked.join(', '), displayCorrect(item), item.options);
   }
   deckNext.disabled = false;
 }
@@ -6646,7 +6718,7 @@ function revealCorrectChoice() {
   deckResult.classList.remove('hidden');
   deckResult.textContent = `That was the last option. The correct answer is: ${displayCorrect(item)}`;
   deckResult.className = 'deck-result wrong';
-  markAnswered(currentIndex, 'wrong', 'Out of options', displayCorrect(item), item.options);
+  markAnswered(currentIndex, 'wrong', item.options[attempted[0]] || 'Out of options', displayCorrect(item), item.options, { tried: attempted.map((i) => item.options[i]) });
   deckNext.disabled = false;
 }
 
@@ -6658,23 +6730,30 @@ function chooseAnswer(btn) {
   const isCorrect = correct.includes(item.options[oi]);
 
   if (isCorrect) {
-    playCorrect();
+    // Only a first-try pick scores. Clicking through the options until one turns green
+    // used to count as Correct, so anyone with wings left could finish on 100%.
+    const firstTry = attempted.length === 0;
+    const tried = attempted.map((i) => item.options[i]);
     deckChoices.querySelectorAll('.deck-choice').forEach((b) => (b.disabled = true));
     btn.classList.add('selected', 'correct');
     deckResult.classList.remove('hidden');
-    deckResult.textContent = 'Correct!';
-    deckResult.className = 'deck-result correct';
-    markAnswered(currentIndex, 'correct', item.options[oi], displayCorrect(item), item.options);
-    if (roomMode) bumpRoomScore();
+    deckResult.textContent = firstTry ? 'Correct!' : 'That\u2019s it \u2014 but it took ' + (tried.length + 1) + ' tries, so it counts as a miss.';
+    deckResult.className = 'deck-result ' + (firstTry ? 'correct' : 'wrong');
+    markAnswered(currentIndex, firstTry ? 'correct' : 'wrong', firstTry ? item.options[oi] : tried[0], displayCorrect(item), item.options, { tried });
+    if (firstTry) {
+      playCorrect();
+      if (roomMode) bumpRoomScore();
+    }
     deckNext.disabled = false;
     return;
   }
 
-  // wrong pick -> lose a heart
+  // wrong pick -> lose a heart. Record the pick first, so a quiz that ends on this wing
+  // still shows what the student chose instead of "Out of wings".
   playWrong();
+  attempted.push(oi);
   const out = loseHeart();
   if (out) return;
-  attempted.push(oi);
   btn.classList.add('wrong', 'eliminated');
   btn.disabled = true;
 
@@ -6826,15 +6905,10 @@ function checkFill() {
   deckFillInput.disabled = true;
   deckCheck.disabled = true;
 
-  if (verdict === 'correct') {
-    deckNext.disabled = false;
-    deckSkip.disabled = true;
-    deckSee.classList.add('hidden');
-  } else {
-    deckNext.disabled = true;
-    deckSkip.disabled = false;
-    deckSee.classList.remove('hidden');
-  }
+  // The answer is recorded either way, so Next always moves on. A wrong answer used to
+  // disable Next and route the user through a separate Skip button that did the same thing.
+  deckNext.disabled = false;
+  deckSee.classList.toggle('hidden', verdict === 'correct');
 
   if (roomMode && verdict === 'correct') bumpRoomScore();
   if (verdict === 'wrong') {
@@ -6959,6 +7033,7 @@ function showResults() {
     details: results,
   });
 
+  renderResultActions(!roomMode && lastPackQuizId ? getPack(lastPackQuizId) : null);
   if (percent >= 50) launchConfetti();
   recordStudy(correct, total);
   if (lastPackQuizId && !roomMode) {
@@ -7094,6 +7169,67 @@ function renderResults(entry) {
 }
 
 document.getElementById('restart-btn').addEventListener('click', resetToUpload);
+
+// Results: go again on the same pack, or back to it. Only offered when that pack still exists.
+function renderResultActions(pack) {
+  const again = document.getElementById('results-again');
+  const back = document.getElementById('results-pack');
+  if (again) again.classList.toggle('hidden', !pack);
+  if (back) back.classList.toggle('hidden', !pack);
+}
+document.getElementById('results-again').addEventListener('click', () => {
+  const pack = lastPackQuizId && getPack(lastPackQuizId);
+  if (!pack || !requireHearts()) return;
+  currentPackId = pack.id;
+  startPackQuiz();
+});
+document.getElementById('results-pack').addEventListener('click', () => {
+  const pack = lastPackQuizId && getPack(lastPackQuizId);
+  if (pack) openPack(pack.id);
+  else resetToUpload();
+});
+
+// On phones the Next button usually sits below the fold once a question is answered. Bring it
+// into view when it becomes available instead of making the student scroll to find it.
+new MutationObserver(() => {
+  if (deckNext.disabled || quizScreen.classList.contains('hidden')) return;
+  const r = deckNext.getBoundingClientRect();
+  if (r.bottom > window.innerHeight || r.top < 0) deckNext.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}).observe(deckNext, { attributes: true, attributeFilter: ['disabled'] });
+
+// The quiz breadcrumb's Home link was never wired, so it did nothing.
+document.getElementById('crumb-home').addEventListener('click', () => {
+  if (roomMode) { showToast('Finish the live round first.'); return; }
+  saveQuizSession();
+  const s = loadQuizSession();
+  resetToUpload();
+  if (s) showToastAction('Quiz saved \u2014 ' + quizSessionProgress(s), 'Continue', resumeQuizSession, 6000);
+});
+
+// Keyboard on desktop: A-D or 1-4 picks an option, Enter or the right arrow goes on, the
+// left arrow goes back. Ignored while typing or when a dialog is open.
+document.addEventListener('keydown', (e) => {
+  if (quizScreen.classList.contains('hidden') || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (document.querySelector('.modal:not(.hidden)')) return;
+  const tag = (e.target && e.target.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
+  const item = currentItem();
+  if (!item) return;
+  if (item.type === 'choice') {
+    const k = e.key.toLowerCase();
+    const idx = /^[1-8]$/.test(k) ? Number(k) - 1 : /^[a-h]$/.test(k) ? k.charCodeAt(0) - 97 : -1;
+    const btn = idx >= 0 ? deckChoices.querySelector('.deck-choice[data-oi="' + idx + '"]') : null;
+    if (btn && !btn.disabled) { e.preventDefault(); btn.click(); return; }
+  }
+  if ((e.key === 'Enter' || e.key === 'ArrowRight') && !deckNext.disabled) {
+    if (e.key === 'Enter' && e.target && e.target.tagName === 'BUTTON') return; // let a focused button act
+    e.preventDefault();
+    goNext();
+  } else if (e.key === 'ArrowLeft' && !deckPrev.disabled) {
+    e.preventDefault();
+    goPrev();
+  }
+});
 
 /* ---------------- Supabase Auth + History ---------------- */
 
@@ -7451,6 +7587,7 @@ function renderDemoPill() {
   const pill = document.getElementById('demo-pill');
   const text = document.getElementById('demo-pill-text');
   if (!pill) return;
+  document.body.classList.toggle('demo-on', isDemo());
   if (!isDemo()) { pill.classList.add('hidden'); return; }
   pill.classList.remove('hidden');
   const packsLeft = demoPackUsed() ? 0 : DEMO_MAX_PACKS;
@@ -8881,6 +9018,7 @@ async function togglePin(entry) {
 }
 
 function viewHistory(entry) {
+  renderResultActions(null);
   renderResults({
     moduleName: entry.module_name,
     total: entry.total_questions,

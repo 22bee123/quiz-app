@@ -1260,7 +1260,7 @@
           <div class="deck-fill hidden" id="deck-fill">
             <input id="deck-fill-input" class="deck-fill-input" placeholder="Type the missing word(s)..." autocomplete="off" />
             <button id="deck-check" class="btn btn-primary">Check</button>
-            <button id="deck-skip" class="btn btn-secondary">Skip</button>
+            <button id="deck-skip" class="btn btn-secondary hidden">Skip</button>
           </div>
           <div class="deck-see hidden" id="deck-see">
             <button id="deck-see-answer" class="btn btn-secondary">&#128065; See the answer</button>
@@ -1350,10 +1350,13 @@
           </div>
           <div class="score-stats" id="score-stats"></div>
           <div id="results-details"></div>
-          <button id="restart-btn" class="btn btn-primary">
-            <span class="btn-label">Try Another Module</span>
-            <span class="btn-arrow">&#8635;</span>
-          </button>
+          <div class="results-actions">
+            <button id="results-again" class="btn btn-primary hidden">Study again &#8635;</button>
+            <button id="results-pack" class="btn btn-secondary hidden">Back to StudyPack</button>
+            <button id="restart-btn" class="btn btn-secondary">
+              <span class="btn-label">Try Another Module</span>
+            </button>
+          </div>
         </div>
       </section>
     </div>
