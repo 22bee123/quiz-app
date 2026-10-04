@@ -237,7 +237,8 @@ const MULTIPLE_CHOICE_SYSTEM_PROMPT =
   '  ]\n' +
   '}\n\n' +
   'Rules: the "answer" must be copied character-for-character from one of the "options". ' +
-  'Every question must stand on its own. ' +
+  'Every question must stand on its own and be written out in words (never just a label like "A3."). ' +
+  'Every option is full answer text, never a bare letter like "A" and never prefixed with "A." or "B)". ' +
   JSON_ONLY_RULE;
 
 const ENUMERATION_SYSTEM_PROMPT =
@@ -1212,6 +1213,10 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no extr
 - "choice": a multiple-choice question with exactly 4 options and exactly one correct "answer".
 - "options": exactly 4 short, clearly distinct answer strings.
 - "answer": copied EXACTLY from one of the options (same wording, case, and spacing). Never use "all of the above" style filler.
+- "question": a complete question written out in words. Never just a number or label such as "A3." or "Question 5".
+- Every option is the full answer text. Never a bare letter ("A", "B"), and never prefixed with "A.", "B)" and so on.
+- If the material is itself a quiz or answer key, write new questions about its subject matter; do not copy its numbering or letter choices.
+- Vary which option is the correct one.
 
 Respond with ONLY a valid JSON object in this exact format (no markdown, no extra text):
 { "questions": [
@@ -1288,18 +1293,29 @@ function normalizeFlashcards(list) {
     }
 
     if (type === 'choice') {
+      // Echoing an answer sheet ("A3." with options A/B/C/D) gives a card that cannot be studied.
+      const stem = stripQuestionNumber(question);
+      if (!looksLikeRealQuestion(stem)) continue;
+      // The UI prints its own A-D letters, so a model's "A. " prefix would be doubled.
       const options = (Array.isArray(f.options) ? f.options : [])
-        .map((o) => String(o).trim())
+        .map((o) => stripOptionLabel(String(o == null ? '' : o).trim()))
         .filter(Boolean);
       const uniq = [...new Set(options)].slice(0, 4);
       if (uniq.length < 2) continue;
+      if (uniq.filter(isPlaceholderOption).length >= 2) continue;
       const rawAnswer = typeof f.answer === 'string' ? f.answer.trim() : '';
       if (!rawAnswer) continue;
       // Match the answer to one of the options case/space-insensitively so a
       // slightly different spelling never makes us silently drop the whole card.
-      const canonical = uniq.find((o) => o.toLowerCase() === rawAnswer.toLowerCase());
+      const plainAnswer = stripOptionLabel(rawAnswer).toLowerCase();
+      let canonical = uniq.find((o) => o.toLowerCase() === rawAnswer.toLowerCase() || o.toLowerCase() === plainAnswer);
+      // A bare letter answer ("B") names an option by position.
+      const letter = rawAnswer.match(/^\(?([A-Ha-h])[.):]?\)?$/);
+      if (!canonical && letter) canonical = uniq['abcdefgh'.indexOf(letter[1].toLowerCase())];
       if (!canonical) continue;
-      const card = { type, question, options: uniq, answer: canonical };
+      // Models put the correct answer first far more often than not; never let that
+      // become "the answer is always A".
+      const card = { type, question: stem, options: shuffleArray(uniq), answer: canonical };
       if (typeof f.explanation === 'string' && f.explanation.trim()) card.explanation = f.explanation.trim();
       out.push(card);
       continue;
@@ -1327,7 +1343,34 @@ function normalizeFlashcards(list) {
   return out;
 }
 
-function buildChoicePromptOld() { /* replaced by the cache-friendly version above */ }
+// "3. What is…", "Q3: What is…" → "What is…" (but never "3.5 billion…" or "3D printing…").
+function stripQuestionNumber(question) {
+  return String(question || '').replace(/^\s*(?:q(?:uestion)?\s*)?[a-z]?\d+\s*[.):-](?!\d)\s*/i, '').trim();
+}
+
+// A real question has words in it; "A3." or "12)" does not.
+function looksLikeRealQuestion(question) {
+  return (String(question || '').match(/\p{L}{2,}/gu) || []).length >= 2;
+}
+
+// "A. Mitochondria" / "(b) Golgi" → the option text alone.
+function stripOptionLabel(option) {
+  return String(option || '').replace(/^\s*\(?[A-Ha-h][.):]\s+(?=\S)/, '').trim();
+}
+
+// An option that is only a label ("A", "B.", "Option C") carries no answer text.
+function isPlaceholderOption(option) {
+  return /^(?:(?:option|choice)\s*)?\(?[A-Ha-h1-8][.):]?\)?$/i.test(String(option || '').trim());
+}
+
+function shuffleArray(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
 async function requestChoiceOnly(text, images, cap) {
   const ask = Math.min(cap, 15);

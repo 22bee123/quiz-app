@@ -412,7 +412,30 @@ function showScreen(screen) {
   document.body.classList.toggle('cal-open', screen === calendarScreen);
   document.body.classList.toggle('home-open', screen === uploadScreen);
   if (screen !== packScreen) resetHighlightMode();
+  // The app swaps screens without changing the URL, so the phone's Back gesture used to
+  // leave /app entirely (landing on the homepage). Any screen past home gets one history
+  // entry to absorb that Back press; the popstate handler below decides where it goes.
+  const inner = screen !== uploadScreen && screen !== authScreen;
+  if (inner && !(history.state && history.state.buckInner)) {
+    try { history.pushState({ buckInner: true }, ''); } catch (e) { /* sandboxed iframe */ }
+  }
 }
+
+window.addEventListener('popstate', () => {
+  if (!quizScreen.classList.contains('hidden')) {
+    // A live round can't be paused, so Back stays on the question.
+    if (roomMode) {
+      try { history.pushState({ buckInner: true }, ''); } catch (e) {}
+      showToast('Finish the live round first.');
+      return;
+    }
+    leaveQuizForBack();
+    return;
+  }
+  if (uploadScreen.classList.contains('hidden') && authScreen.classList.contains('hidden')) {
+    if (requireAuth()) resetToUpload();
+  }
+});
 
 function setStatus(el, msg, type) {
   el.textContent = msg;
@@ -2857,6 +2880,7 @@ function wireDeck() {
     endlessToggle.classList.toggle('active', endless);
     const last = currentIndex === flashcards.length - 1;
     deckNext.innerHTML = last && !endless ? 'Finish' : 'Next &#8250;';
+    saveQuizSession();
   });
 }
 
@@ -3336,7 +3360,8 @@ async function joinRoom(code) {
 }
 
 function enterRoomPlay(questions) {
-  flashcards = questions;
+  flashcards = (Array.isArray(questions) ? questions : []).map((q) =>
+    q && q.type === 'choice' && Array.isArray(q.options) ? Object.assign({}, q, { options: shuffle(q.options) }) : q);
   results = new Array(flashcards.length).fill(null);
   gradingPromises = {};
   currentIndex = 0;
@@ -4479,6 +4504,83 @@ function startQuiz() {
   renderQuestion();
 }
 
+/* ---------------- In-progress quiz (survives Back, app switches and reloads) ----------------
+   A solo quiz used to live only in memory, so the phone's Back gesture, a reload, or the
+   browser discarding the tab while the user was in another app lost every answer. */
+
+const QUIZ_SESSION_KEY = 'buckQuizSession';
+const QUIZ_SESSION_TTL = 7 * 24 * 60 * 60 * 1000;
+
+function saveQuizSession() {
+  if (roomMode || !lastPackQuizId || !flashcards.length) return;
+  // Inline diagram images can be large and are already stored in the pack, so keep them out.
+  const cards = flashcards.map((c) =>
+    c && typeof c.image_url === 'string' && c.image_url.startsWith('data:') ? Object.assign({}, c, { image_url: '' }) : c);
+  try {
+    localStorage.setItem(QUIZ_SESSION_KEY, JSON.stringify({
+      packId: lastPackQuizId,
+      name: lastModuleName,
+      flashcards: cards,
+      results,
+      currentIndex,
+      endless,
+      savedAt: Date.now(),
+    }));
+  } catch (e) { /* full or blocked storage: the quiz still runs, it just can't be resumed */ }
+}
+
+function clearQuizSession() {
+  safeRemove(QUIZ_SESSION_KEY);
+}
+
+function loadQuizSession() {
+  const s = safeParse(safeGet(QUIZ_SESSION_KEY), null);
+  if (!s || !Array.isArray(s.flashcards) || !s.flashcards.length || !Array.isArray(s.results)) return null;
+  if (Date.now() - (Number(s.savedAt) || 0) > QUIZ_SESSION_TTL) { clearQuizSession(); return null; }
+  const pack = getPack(s.packId);
+  // The pack was deleted or edited since, so the saved cards no longer line up with it.
+  if (!pack || pack.items.length !== s.flashcards.length) { clearQuizSession(); return null; }
+  return s;
+}
+
+function quizSessionProgress(s) {
+  const answered = s.results.filter(Boolean).length;
+  return answered + ' of ' + s.flashcards.length + ' answered';
+}
+
+function resumeQuizSession() {
+  const s = loadQuizSession();
+  if (!s) { showToast('That quiz is no longer available.'); renderJumpBack(); return; }
+  if (!requireHearts()) return;
+  const pack = getPack(s.packId);
+  flashcards = s.flashcards.map((c, i) =>
+    c && c.type === 'diagram' && !c.image_url && pack.items[i] ? Object.assign({}, c, { image_url: pack.items[i].image_url }) : c);
+  results = flashcards.map((_, i) => s.results[i] || null);
+  gradingPromises = {};
+  roomMode = false;
+  currentPackId = s.packId;
+  lastModuleName = s.name || pack.name;
+  // Land on the first question still to answer, not one that is already done.
+  let idx = Math.min(Math.max(0, Number(s.currentIndex) || 0), flashcards.length - 1);
+  while (results[idx] && idx < flashcards.length - 1) idx++;
+  currentIndex = idx;
+  startQuiz();
+  lastPackQuizId = s.packId;
+  endless = !!s.endless;
+  endlessToggle.classList.toggle('active', endless);
+  const last = currentIndex === flashcards.length - 1;
+  deckNext.innerHTML = last && !endless ? 'Finish' : 'Next &#8250;';
+}
+
+// Back from a quiz returns to its pack (like any app) instead of leaving the site.
+function leaveQuizForBack() {
+  saveQuizSession();
+  const s = loadQuizSession();
+  if (s && getPack(s.packId)) openPack(s.packId);
+  else resetToUpload();
+  if (s) showToastAction('Quiz saved — ' + quizSessionProgress(s), 'Continue', resumeQuizSession, 6000);
+}
+
 /* ---------------- StudyPacks ---------------- */
 
 let studyPacks = [];
@@ -5191,7 +5293,9 @@ function startPackQuiz() {
   flashcards = pack.items.map((it) => {
     if (it.type === 'choice') {
       const answers = answerList(it);
-      const options = it.options && it.options.length >= 2 ? it.options.slice() : makeChoiceOptions(it, pack);
+      // Shuffled every run: AI-written options tend to list the correct answer first, and
+      // packs saved before the server shuffled them would otherwise always answer "A".
+      const options = it.options && it.options.length >= 2 ? shuffle(it.options) : makeChoiceOptions(it, pack);
       return {
         type: 'choice',
         question: it.question,
@@ -5232,6 +5336,7 @@ function startPackQuiz() {
   lastModuleName = pack.name;
   startQuiz();
   lastPackQuizId = pack.id;
+  saveQuizSession();
 }
 
 function makeChoiceOptions(it, pack) {
@@ -5298,7 +5403,17 @@ function wirePack() {
     if (studyPacks.length) { openPack(studyPacks[0].id); }
   });
   document.getElementById('pack-back').addEventListener('click', () => resetToUpload());
-  document.getElementById('pack-study').addEventListener('click', () => { if (requireHearts()) startPackQuiz(); });
+  document.getElementById('pack-study').addEventListener('click', () => {
+    if (!requireHearts()) return;
+    // Pick up an unfinished run of this pack rather than silently starting over.
+    const s = loadQuizSession();
+    if (s && s.packId === currentPackId && s.results.some(Boolean)) {
+      resumeQuizSession();
+      showToastAction('Continuing — ' + quizSessionProgress(s), 'Start over', () => { if (requireHearts()) startPackQuiz(); }, 6000);
+      return;
+    }
+    startPackQuiz();
+  });
   document.getElementById('pack-add').addEventListener('click', openAddQ);
   document.getElementById('pack-hl').addEventListener('click', toggleHighlightMode);
   const bannerActions = document.getElementById('pack-banner-actions');
@@ -5470,6 +5585,7 @@ function markAnswered(index, verdict, userAnswer, correctAnswer, options) {
     verdict,
     feedback: '',
   };
+  saveQuizSession();
 }
 
 function renderQuestion() {
@@ -5582,6 +5698,7 @@ function renderQuestion() {
   deckPrev.disabled = currentIndex === 0;
   const last = currentIndex === flashcards.length - 1;
   deckNext.textContent = last && !endless ? 'Finish' : 'Next ›';
+  saveQuizSession();
 }
 
 /* ---------------- Enumeration study mode (list builder) ----------------
@@ -5958,6 +6075,7 @@ function checkDiagramAnswers() {
     score: { hits, total, percent },
     itemResults: graded.map((r) => ({ text: r.text, ok: r.ok, given: r.entered })),
   };
+  saveQuizSession();
 
   if (percent === 100) {
     playCorrect();
@@ -6090,6 +6208,7 @@ function revealDiagramAnswers() {
     score: { hits, total: graded.length, percent: graded.length ? Math.round((hits / graded.length) * 100) : 0 },
     itemResults: graded.map((r) => ({ text: r.text, ok: r.ok, given: r.entered })),
   };
+  saveQuizSession();
   deckNext.disabled = false;
 }
 
@@ -6271,6 +6390,7 @@ function checkEnumeration() {
     itemResults: graded.results,
     missed,
   };
+  saveQuizSession();
 
   renderEnumChips({ graded });
   e.check.disabled = true;
@@ -6646,6 +6766,7 @@ function finishQuiz() {
     finishRoomPlay();
     return;
   }
+  clearQuizSession();
   showResults();
 }
 
@@ -8442,6 +8563,7 @@ function resetToUpload() {
   setActiveNav('new');
   showScreen(uploadScreen);
   updateFlashcardCountLabel();
+  renderJumpBack(); // surfaces "Continue" for a quiz left mid-way
 }
 
 async function saveHistory(entry) {
@@ -8705,6 +8827,18 @@ function renderJumpBack() {
   if (!grid) return;
   grid.innerHTML = '';
 
+  const session = loadQuizSession();
+  if (session) {
+    grid.appendChild(buildJumpItem({
+      name: session.name || 'Quiz',
+      meta: 'In progress · ' + quizSessionProgress(session),
+      label: 'Continue',
+      onClick: resumeQuizSession,
+      score: null,
+      badge: false, // the card is too narrow for a badge plus the button
+    }));
+  }
+
   const pending = loadPendingDeck();
   if (pending && pending.status === 'ready' && pending.flashcards) {
     grid.appendChild(buildJumpItem({
@@ -8733,12 +8867,12 @@ function renderJumpBack() {
   }
 }
 
-function buildJumpItem({ name, meta, label, onClick, score }) {
+function buildJumpItem({ name, meta, label, onClick, score, badge }) {
   const div = document.createElement('div');
   div.className = 'jump-item';
   const icon = score !== null
     ? `<span class="ji-score ji-${score >= 75 ? 'good' : score >= 50 ? 'ok' : 'bad'}">${score}%</span>`
-    : `<span class="ji-score ready">READY</span>`;
+    : badge === false ? '' : '<span class="ji-score ready">READY</span>';
   div.innerHTML = `
     <span class="ji-icon">&#128214;</span>
     <span class="ji-main">
