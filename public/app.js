@@ -2395,7 +2395,7 @@ async function startGeneration(count) {
     }
   }
 
-  savePendingDeck('generating', activeContent.name, createMode);
+  savePendingDeck('generating', genState && genState.packId, activeContent.name);
   try {
     await runLiveWaves(target);
   } catch (err) {
@@ -2714,8 +2714,9 @@ async function finishLiveGeneration(partial, error) {
   } else {
     showToast('Saved ' + got + ' cards so far — add more anytime 🦆', 'correct');
   }
-  savePendingDeck('ready', pack.items, activeContent.name, createMode);
+  savePendingDeck('ready', genState.packId, pack.name || activeContent.name);
   renderJumpBack();
+  renderPendingDeck();
   if (hostingRoom && pack.items.length) {
     hostingRoom = false;
     await hostCreateRoom(activeContent, activeContent.name, pack.items);
@@ -4499,8 +4500,7 @@ function startQuiz() {
   renderHearts();
   renderProgress();
   setActiveNav('new');
-  const pending = loadPendingDeck();
-  deckName.textContent = pending && pending.name ? pending.name : 'Study deck';
+  deckName.textContent = lastModuleName || 'Study deck';
   renderQuestion();
 }
 
@@ -4733,6 +4733,8 @@ async function requestDeletePack(id) {
     studyPacks.splice(index, 1);
     savePacks();
     renderStudyPackList();
+    renderJumpBack();
+    renderPendingDeck();
     if (currentPackId === id) {
       currentPackId = null;
       if (!packScreen.classList.contains('hidden')) resetToUpload();
@@ -4741,6 +4743,8 @@ async function requestDeletePack(id) {
       studyPacks.splice(Math.min(index, studyPacks.length), 0, removed);
       savePacks();
       renderStudyPackList();
+      renderJumpBack();
+      renderPendingDeck();
       showToast('StudyPack restored! 🦆', 'correct');
     }, 5000);
   };
@@ -5516,15 +5520,17 @@ function renderHlPalette() {
 
 /* ---------------- Pending deck (survives refresh / tab switch) ---------------- */
 
-function savePendingDeck(status, flashcardsArg, nameArg, modeArg) {
-  const pending = {
-    status,
-    flashcards: status === 'ready' ? flashcardsArg : null,
-    mode: modeArg || createMode || 'flashcard',
-    name: nameArg || 'Study deck',
-    savedAt: Date.now(),
-  };
-  localStorage.setItem('pendingDeck', JSON.stringify(pending));
+// Points at the StudyPack Buck just built. It used to store a full copy of the cards and was
+// never tied to a pack, so it outlived the pack and showed up as a duplicate "READY" deck.
+function savePendingDeck(status, packId, name) {
+  try {
+    localStorage.setItem('pendingDeck', JSON.stringify({
+      status,
+      packId: packId || null,
+      name: name || 'Study deck',
+      savedAt: Date.now(),
+    }));
+  } catch (e) { /* storage full or blocked: the banner is only a shortcut */ }
 }
 
 function loadPendingDeck() {
@@ -5536,12 +5542,40 @@ function loadPendingDeck() {
   }
 }
 
+// The pack a "ready" pending deck refers to, or null once it was deleted. Records written
+// before packId existed are matched by name.
+function pendingDeckPack(pending) {
+  if (!pending || pending.status !== 'ready') return null;
+  return (pending.packId && getPack(pending.packId)) ||
+    (!pending.packId && studyPacks.find((p) => p.name === pending.name)) || null;
+}
+
+// The newest quiz result for a pack. History rows only carry the pack's name.
+function latestHistoryFor(pack) {
+  if (!pack || !currentUser) return null;
+  return historyEntries.find((e) => e.module_name === pack.name) || null;
+}
+
+// A pack someone has already quizzed on (or is mid-way through) is no longer "new".
+function packHasBeenStudied(pack) {
+  if (!pack) return false;
+  const session = loadQuizSession();
+  return (session && session.packId === pack.id) || pack.mastery != null || !!latestHistoryFor(pack);
+}
+
+// The pending deck still worth advertising: its pack exists and hasn't been studied yet.
+function freshPendingPack() {
+  const pack = pendingDeckPack(loadPendingDeck());
+  return pack && !packHasBeenStudied(pack) ? pack : null;
+}
+
 function renderPendingDeck() {
   const box = document.getElementById('pending-deck');
   if (!box) return;
-  const pending = loadPendingDeck();
-  if (!pending || pending.status === 'generating') {
+  const pack = freshPendingPack();
+  if (!pack) {
     box.classList.add('hidden');
+    box.innerHTML = '';
     return;
   }
   box.classList.remove('hidden');
@@ -5549,8 +5583,8 @@ function renderPendingDeck() {
     <div class="pending-body">
       <span class="pending-badge">&#128278; READY</span>
       <div class="pending-info">
-        <span class="pending-name">${escapeHtml(pending.name)}</span>
-        <span class="pending-meta">${pending.flashcards.length} questions &middot; ${pending.mode === 'choice' ? 'Multiple Choice' : 'Flashcards'}</span>
+        <span class="pending-name">${escapeHtml(pack.name)}</span>
+        <span class="pending-meta">${pack.items.length} questions &middot; ${escapeHtml(packQuestionLabel(pack))}</span>
       </div>
     </div>
     <button class="btn btn-primary pending-start" id="pending-start">Start Quiz &#8594;</button>
@@ -5564,10 +5598,9 @@ function renderPendingDeck() {
 }
 
 function startPendingDeck() {
-  const pending = loadPendingDeck();
-  if (!pending || pending.status !== 'ready') return;
+  const pack = pendingDeckPack(loadPendingDeck());
   if (!requireHearts()) return;
-  if (studyPacks.length) openPack(studyPacks[0].id);
+  if (pack) openPack(pack.id);
   else resetToUpload();
 }
 
@@ -8564,6 +8597,7 @@ function resetToUpload() {
   showScreen(uploadScreen);
   updateFlashcardCountLabel();
   renderJumpBack(); // surfaces "Continue" for a quiz left mid-way
+  renderPendingDeck();
 }
 
 async function saveHistory(entry) {
@@ -8827,38 +8861,48 @@ function renderJumpBack() {
   if (!grid) return;
   grid.innerHTML = '';
 
+  // One card per StudyPack that still exists. The in-progress quiz, the "ready" banner and the
+  // quiz history used to be listed independently, so one pack could appear three times and a
+  // deleted pack's old results stayed here forever.
+  const shown = new Set();
+  const add = (pack, card) => {
+    if (!pack || shown.has(pack.id) || shown.size >= 6) return;
+    shown.add(pack.id);
+    grid.appendChild(buildJumpItem(card));
+  };
+
   const session = loadQuizSession();
   if (session) {
-    grid.appendChild(buildJumpItem({
+    add(getPack(session.packId), {
       name: session.name || 'Quiz',
       meta: 'In progress · ' + quizSessionProgress(session),
       label: 'Continue',
       onClick: resumeQuizSession,
       score: null,
       badge: false, // the card is too narrow for a badge plus the button
-    }));
+    });
   }
 
-  const pending = loadPendingDeck();
-  if (pending && pending.status === 'ready' && pending.flashcards) {
-    grid.appendChild(buildJumpItem({
-      name: pending.name || 'Study deck',
-      meta: `${pending.flashcards.length} questions · ${pending.mode === 'choice' ? 'Multiple Choice' : 'Flashcards'}`,
+  const fresh = freshPendingPack();
+  if (fresh) {
+    add(fresh, {
+      name: fresh.name,
+      meta: `${fresh.items.length} questions · ${packQuestionLabel(fresh)}`,
       label: 'Take',
       onClick: startPendingDeck,
       score: null,
-    }));
+    });
   }
 
-  if (currentUser && historyEntries.length) {
-    historyEntries.slice(0, 6).forEach((entry) => {
-      grid.appendChild(buildJumpItem({
+  if (currentUser) {
+    historyEntries.forEach((entry) => {
+      add(studyPacks.find((p) => p.name === entry.module_name), {
         name: entry.module_name,
         meta: `${entry.score_percent}% · ${new Date(entry.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
         label: 'View',
         onClick: () => viewHistory(entry),
         score: entry.score_percent,
-      }));
+      });
     });
   }
 
