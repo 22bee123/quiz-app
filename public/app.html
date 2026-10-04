@@ -239,258 +239,145 @@
               <button id="create-close" class="modal-close">&times;</button>
             </div>
           </div>
-          <p class="create-sub">Upload a PDF, paste text, or add a URL &mdash; Buck will turn it into a quiz.</p>
-
-          <div class="src-tabs" role="tablist" aria-label="Choose input method">
-            <button type="button" class="src-tab active" data-src="pdf" role="tab" aria-selected="true">&#128196; PDF</button>
-            <button type="button" class="src-tab" data-src="text" role="tab" aria-selected="false">&#128221; Paste</button>
-            <button type="button" class="src-tab" data-src="url" role="tab" aria-selected="false">&#128279; URL</button>
-          </div>
-
-          <div id="create-source-panel">
-            <div id="source-pdf" class="source-box">
-              <div id="pdf-drop" class="dropzone" tabindex="0" role="button" aria-label="Choose a PDF file">
-                <span class="dz-icon" aria-hidden="true">&#128196;</span>
-                <span class="dz-title">Drag &amp; drop a PDF here, or click to browse</span>
-                <span class="dz-sub">PDF only &middot; up to 50 pages</span>
-              </div>
-              <div id="pdf-chip" class="file-chip hidden">
-                <span class="fc-icon" aria-hidden="true">&#128196;</span>
-                <span class="fc-text"><span class="fc-name" id="pdf-name"></span><span class="fc-size" id="pdf-size"></span></span>
-                <button type="button" class="fc-x" id="pdf-remove" aria-label="Remove file">&times;</button>
-              </div>
+          <!-- Header and actions stay put; only this body scrolls, so the dialog always fits. -->
+          <div class="create-body">
+            <p class="cstep"><span class="cstep-n">1</span>Add your material</p>
+            <div class="src-tabs" role="tablist" aria-label="Choose input method">
+              <button type="button" class="src-tab active" data-src="pdf" role="tab" aria-selected="true">&#128196; PDF</button>
+              <button type="button" class="src-tab" data-src="text" role="tab" aria-selected="false">&#128221; Paste</button>
+              <button type="button" class="src-tab" data-src="url" role="tab" aria-selected="false">&#128279; URL</button>
             </div>
 
-            <div id="source-text" class="source-box hidden">
-              <label class="field-label" for="create-text">Paste your study material</label>
-              <div class="ta-wrap">
-                <textarea id="create-text" rows="7" maxlength="20000" placeholder="Paste your notes, a chapter, or any content you want to study..."></textarea>
-                <button type="button" class="ta-clear hidden" id="text-clear" aria-label="Clear text">&times;</button>
-              </div>
-              <span class="helper" id="text-count">0 / 20,000 characters</span>
-            </div>
-
-            <div id="source-url" class="source-box hidden">
-              <label class="field-label" for="create-url">Paste a link to an article or page</label>
-              <div class="url-row">
-                <span class="url-prefix" aria-hidden="true">&#128279;</span>
-                <input id="create-url" type="url" placeholder="https://example.com/article" autocomplete="off" />
-                <button type="button" class="btn btn-primary" id="url-fetch" disabled>Fetch content</button>
-              </div>
-              <div class="url-preview hidden" id="url-preview"></div>
-              <span class="input-err" id="url-error"></span>
-            </div>
-          </div>
-
-          <div id="create-status" class="auth-error"></div>
-
-          <!-- Diagram Labeling: an image in, label fields out. Replaces PDF/paste/URL. -->
-          <div id="diagram-source" class="source-box hidden">
-            <div id="diagram-drop" class="dropzone diagram-drop" tabindex="0" role="button" aria-label="Choose a diagram image">
-              <span class="dz-icon" aria-hidden="true">
-                <svg viewBox="0 0 32 32" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M6.5 5.6h13.4l4 4.1v16.1c0 .9-.7 1.6-1.6 1.6H6.5c-.9 0-1.6-.7-1.6-1.6V7.2c0-.9.7-1.6 1.6-1.6z"/>
-                  <path d="M19.6 5.9v4.2h4.1"/>
-                  <path d="M10.5 22.4l3.4-4.2 3 3.1 2.3-2.6 3.2 3.7"/>
-                  <circle cx="12.6" cy="12.4" r="1.6"/>
-                </svg>
-              </span>
-              <span class="dz-title">Drag &amp; drop a labeled diagram, or click to browse</span>
-              <span class="dz-sub">PNG, JPG, WebP or a single-page PDF &middot; the labels must be readable</span>
-            </div>
-            <div id="diagram-chip" class="file-chip hidden">
-              <img id="diagram-chip-thumb" class="fc-thumb" alt="" />
-              <span class="fc-text"><span class="fc-name" id="diagram-name"></span><span class="fc-size" id="diagram-size"></span></span>
-              <button type="button" class="btn btn-secondary fc-action" id="diagram-open">Read the labels</button>
-              <button type="button" class="fc-x" id="diagram-remove" aria-label="Remove image">&times;</button>
-            </div>
-            <p class="diagram-tip hidden" id="diagram-tip">Buck reads the labels printed on the image and turns each one into an answer box.</p>
-          </div>
-
-          <div id="create-estimate-panel">
-            <p class="estimate-placeholder" id="estimate-placeholder">Buck will estimate how many questions he can write once you add your content.</p>
-            <div class="estimate-box hidden" id="estimate-box">
-              <div class="estimate-big" id="estimate-big">0</div>
-              <div class="estimate-copy">
-                Based on this content, Buck can generate about
-                <strong id="estimate-inline">0</strong> questions. Ready?
-              </div>
-            </div>
-            <p class="estimate-note hidden" id="estimate-note">&#128444;&#65039; This PDF has no readable text. Buck will read it as images &mdash; this may take a bit longer.</p>
-
-            <!-- How Buck writes the questions: two colour-coded index cards the user
-                 flips between. Mini question mocks double as a live preview. -->
-            <section id="qtype-panel" class="qtype hidden" aria-labelledby="qtype-heading">
-              <header class="qtype-head">
-                <p class="qtype-eyebrow"><span class="qtype-quill" aria-hidden="true"></span> Buck&rsquo;s pen</p>
-                <h4 class="qtype-title" id="qtype-heading">How should Buck write the questions?</h4>
-                <p class="qtype-sub">Pick the format that fits your study style.</p>
-              </header>
-
-              <div class="qtype-deck" role="radiogroup" aria-labelledby="qtype-heading">
-                <div class="qcard is-active" id="qcard-mc" data-qtype="multiple_choice" role="radio" aria-checked="true" tabindex="0">
-                  <span class="qcard-tab" aria-hidden="true"></span>
-                  <span class="qcard-mark" aria-hidden="true"><span class="qcard-mark-txt">Available</span></span>
-                  <span class="qcard-sticker" aria-hidden="true">
-                    <svg viewBox="0 0 30 30" class="buck-sticker-svg">
-                      <g fill="none" stroke="#6B4226" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M9.6 21.5c-2.1-1.4-3.3-3.7-3.3-6.3 0-4.5 3.7-8.1 8.2-8.1s8.2 3.6 8.2 8.1c0 4-2.3 7.4-5.6 8"/>
-                        <path d="M11.2 24.1c1 .7 2.2 1.1 3.5 1.1 1.2 0 2.4-.4 3.4-1"/>
-                        <path d="M12.4 13.2h.01M17.4 13.2h.01"/>
-                        <path d="M12.6 16.6c1.2 1 3.2 1 4.4 0"/>
-                        <path d="M7.6 18.6c-1.5-.2-2.7-.9-3.5-2"/>
-                        <path d="M21.8 9.6V6.3"/>
-                        <path d="M20.3 7.9 21.8 6.3 23.3 7.9"/>
-                      </g>
-                    </svg>
-                  </span>
-
-                  <span class="qcard-mock" aria-hidden="true">
-                    <svg viewBox="0 0 132 40" preserveAspectRatio="xMinYMid meet">
-                      <g fill="none" stroke="#B99C86" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M4 7.2h20.5"/>
-                        <path d="M4 17.4h27.5"/>
-                        <path d="M4 27.6h15.5"/>
-                        <circle cx="44" cy="7.2" r="4.1"/>
-                        <path d="M51.6 5.4l2.1 2.1 3.6-4.1"/>
-                        <circle cx="44" cy="17.4" r="4.1"/>
-                        <circle cx="44" cy="27.6" r="4.1"/>
-                      </g>
-                      <circle cx="44" cy="7.2" r="4.1" fill="#f97316" opacity="0.85"/>
-                      <path d="M51.6 5.4l2.1 2.1 3.6-4.1" stroke="#16a34a" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  </span>
-
-                  <svg class="qcard-icon" viewBox="0 0 26 26" aria-hidden="true">
-                    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M14.9 5.6l5.5 5.4-9.1 9.1-6.2 1.5 1.5-6.2z"/>
-                      <path d="M12.8 7.7l5.4 5.4"/>
-                      <path d="M5.5 15.4l5.2 5.1"/>
-                      <path d="M18.9 4.2c.8-1.1 2.4-.5 2.3.7-.1 1-.9 2.1-1.6 3"/>
-                    </g>
-                  </svg>
-
-                  <span class="qcard-text">
-                    <span class="qcard-name">Multiple Choice</span>
-                    <span class="qcard-desc">Pick one correct answer from four options.</span>
-                  </span>
+            <div id="create-source-panel">
+              <div id="source-pdf" class="source-box">
+                <div id="pdf-drop" class="dropzone" tabindex="0" role="button" aria-label="Choose a PDF file">
+                  <span class="dz-icon" aria-hidden="true">&#128196;</span>
+                  <span class="dz-title">Drag &amp; drop a PDF here, or click to browse</span>
+                  <span class="dz-sub">PDF only &middot; up to 50 pages</span>
                 </div>
-
-                <div class="qcard" id="qcard-enum" data-qtype="enumeration" role="radio" aria-checked="false" tabindex="-1">
-                  <span class="qcard-tab" aria-hidden="true"></span>
-                  <span class="qcard-mark" aria-hidden="true"><span class="qcard-mark-txt">Available</span></span>
-                  <span class="qcard-sticker" aria-hidden="true">
-                    <svg viewBox="0 0 30 30" class="buck-sticker-svg">
-                      <g fill="none" stroke="#6B4226" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M9.6 21.5c-2.1-1.4-3.3-3.7-3.3-6.3 0-4.5 3.7-8.1 8.2-8.1s8.2 3.6 8.2 8.1c0 4-2.3 7.4-5.6 8"/>
-                        <path d="M11.2 24.1c1 .7 2.2 1.1 3.5 1.1 1.2 0 2.4-.4 3.4-1"/>
-                        <path d="M12.4 13.2h.01M17.4 13.2h.01"/>
-                        <path d="M12.6 16.6c1.2 1 3.2 1 4.4 0"/>
-                        <path d="M7.6 18.6c-1.5-.2-2.7-.9-3.5-2"/>
-                        <path d="M21.8 9.6V6.3"/>
-                        <path d="M20.3 7.9 21.8 6.3 23.3 7.9"/>
-                      </g>
-                    </svg>
-                  </span>
-
-                  <span class="qcard-mock" aria-hidden="true">
-                    <svg viewBox="0 0 132 40" preserveAspectRatio="xMinYMid meet">
-                      <g fill="none" stroke="#B99C86" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M8.4 6.6l2.3 2.3 4.2-4.7"/>
-                        <path d="M8.4 17.4l2.3 2.3 4.2-4.7"/>
-                        <path d="M8.4 28.2l2.3 2.3 4.2-4.7"/>
-                        <path d="M19.5 7.4h26"/>
-                        <path d="M19.5 18.2h21"/>
-                        <path d="M19.5 29h24.5"/>
-                      </g>
-                      <path d="M56.5 12.4h33M56.5 23.2h22" stroke="#F97316" stroke-width="1.9" fill="none" stroke-linecap="round" opacity="0.5"/>
-                    </svg>
-                  </span>
-
-                  <svg class="qcard-icon" viewBox="0 0 26 26" aria-hidden="true">
-                    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M6.6 3.6h9.1l4.2 4.2v13.1c0 .9-.7 1.6-1.6 1.6H6.6c-.9 0-1.6-.7-1.6-1.6V5.2c0-.9.7-1.6 1.6-1.6z"/>
-                      <path d="M15.4 3.8v4.3h4.2"/>
-                      <path d="M8.6 12.1h6.4M8.6 16h4.4"/>
-                    </g>
-                  </svg>
-
-                  <span class="qcard-text">
-                    <span class="qcard-name">Enumeration</span>
-                    <span class="qcard-desc">Write the items from memory &mdash; Buck will check your list.</span>
-                  </span>
-                </div>
-
-                <div class="qcard" id="qcard-diagram" data-qtype="diagram" role="radio" aria-checked="false" tabindex="-1">
-                  <span class="qcard-tab" aria-hidden="true"></span>
-                  <span class="qcard-mark" aria-hidden="true"><span class="qcard-mark-txt">Available</span></span>
-                  <span class="qcard-sticker" aria-hidden="true">
-                    <svg viewBox="0 0 30 30" class="buck-sticker-svg">
-                      <g fill="none" stroke="#6B4226" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M9.6 21.5c-2.1-1.4-3.3-3.7-3.3-6.3 0-4.5 3.7-8.1 8.2-8.1s8.2 3.6 8.2 8.1c0 4-2.3 7.4-5.6 8"/>
-                        <path d="M11.2 24.1c1 .7 2.2 1.1 3.5 1.1 1.2 0 2.4-.4 3.4-1"/>
-                        <path d="M12.4 13.2h.01M17.4 13.2h.01"/>
-                        <path d="M12.6 16.6c1.2 1 3.2 1 4.4 0"/>
-                        <path d="M7.6 18.6c-1.5-.2-2.7-.9-3.5-2"/>
-                        <path d="M21.8 9.6V6.3"/>
-                        <path d="M20.3 7.9 21.8 6.3 23.3 7.9"/>
-                      </g>
-                    </svg>
-                  </span>
-
-                  <span class="qcard-mock" aria-hidden="true">
-                    <svg viewBox="0 0 132 40" preserveAspectRatio="xMinYMid meet">
-                      <g fill="none" stroke="#B99C86" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M14 10c-4.4 3.4-6.9 8.6-6.9 14.4 0 4.6 1.7 8.8 4.6 12"/>
-                        <path d="M14 10c4.4 3.4 6.9 8.6 6.9 14.4 0 4.6-1.7 8.8-4.6 12"/>
-                        <path d="M14 10v26"/>
-                        <path d="M8.4 22h11.2"/>
-                        <path d="M2 10.5c3.6-3 7.8-4.6 12-4.6s8.4 1.6 12 4.6"/>
-                        <path d="M2 10.5 6.5 9M2 10.5l4.6 1.4"/>
-                      </g>
-                      <g fill="#F97316">
-                        <circle cx="9.4" cy="22.6" r="2.6"/>
-                        <circle cx="14" cy="35.4" r="2.6"/>
-                        <circle cx="22.6" cy="14.8" r="2.6"/>
-                      </g>
-                      <g fill="none" stroke="#F97316" stroke-width="1.7" stroke-linecap="round">
-                        <path d="M48 9.6h38"/>
-                        <path d="M48 20h30"/>
-                        <path d="M48 30.4h34"/>
-                      </g>
-                    </svg>
-                  </span>
-
-                  <svg class="qcard-icon" viewBox="0 0 26 26" aria-hidden="true">
-                    <g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M5.4 4.1h11l3.3 3.4v11.9c0 .7-.6 1.3-1.3 1.3H5.4c-.7 0-1.3-.6-1.3-1.3V5.4c0-.7.6-1.3 1.3-1.3z"/>
-                      <path d="M16.3 4.3v3.4h3.3"/>
-                      <path d="M13.6 13.4a3.2 3.2 0 1 1-6.4 0 3.2 3.2 0 0 1 6.4 0z"/>
-                      <path d="M12.7 15.3l2.6 2.6"/>
-                    </g>
-                  </svg>
-
-                  <span class="qcard-text">
-                    <span class="qcard-name">Diagram Labeling</span>
-                    <span class="qcard-desc">Turn a labeled image into a fill-in-the-blank quiz.</span>
-                  </span>
+                <div id="pdf-chip" class="file-chip hidden">
+                  <span class="fc-icon" aria-hidden="true">&#128196;</span>
+                  <span class="fc-text"><span class="fc-name" id="pdf-name"></span><span class="fc-size" id="pdf-size"></span></span>
+                  <button type="button" class="fc-x" id="pdf-remove" aria-label="Remove file">&times;</button>
                 </div>
               </div>
 
-              <div class="qtype-footer">
-                <span class="qtype-hint" id="qtype-hint">Great for quick reviews and exam prep.</span>
-                <span class="qtype-count"><b id="qtype-count-n">10</b> <span id="qtype-count-word">questions</span> in this format</span>
+              <div id="source-text" class="source-box hidden">
+                <label class="field-label" for="create-text">Paste your study material</label>
+                <div class="ta-wrap">
+                  <textarea id="create-text" rows="7" maxlength="20000" placeholder="Paste your notes, a chapter, or any content you want to study..."></textarea>
+                  <button type="button" class="ta-clear hidden" id="text-clear" aria-label="Clear text">&times;</button>
+                </div>
+                <span class="helper" id="text-count">0 / 20,000 characters</span>
               </div>
 
-              <p class="qtype-room-note" id="qtype-room-note" hidden>&#127918; Live rooms play multiple choice only &mdash; everyone answers the same card at the same time.</p>
-            </section>
-
-            <div id="estimate-controls" class="hidden">
-              <label class="field-label" for="estimate-slider">Questions to generate</label>
-              <div class="estimate-value"><span id="estimate-label">10</span> questions</div>
-              <input type="range" id="estimate-slider" min="5" max="20" step="1" value="10" />
+              <div id="source-url" class="source-box hidden">
+                <label class="field-label" for="create-url">Paste a link to an article or page</label>
+                <div class="url-row">
+                  <span class="url-prefix" aria-hidden="true">&#128279;</span>
+                  <input id="create-url" type="url" placeholder="https://example.com/article" autocomplete="off" />
+                  <button type="button" class="btn btn-primary" id="url-fetch" disabled>Fetch content</button>
+                </div>
+                <div class="url-preview hidden" id="url-preview"></div>
+                <span class="input-err" id="url-error"></span>
+              </div>
             </div>
-            <div id="estimate-status" class="auth-error"></div>
+
+            <div id="create-status" class="auth-error"></div>
+
+            <!-- Diagram Labeling: an image in, label fields out. Replaces PDF/paste/URL. -->
+            <div id="diagram-source" class="source-box hidden">
+              <div id="diagram-drop" class="dropzone diagram-drop" tabindex="0" role="button" aria-label="Choose a diagram image">
+                <span class="dz-icon" aria-hidden="true">
+                  <svg viewBox="0 0 32 32" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M6.5 5.6h13.4l4 4.1v16.1c0 .9-.7 1.6-1.6 1.6H6.5c-.9 0-1.6-.7-1.6-1.6V7.2c0-.9.7-1.6 1.6-1.6z"/>
+                    <path d="M19.6 5.9v4.2h4.1"/>
+                    <path d="M10.5 22.4l3.4-4.2 3 3.1 2.3-2.6 3.2 3.7"/>
+                    <circle cx="12.6" cy="12.4" r="1.6"/>
+                  </svg>
+                </span>
+                <span class="dz-title">Drag &amp; drop a labeled diagram, or click to browse</span>
+                <span class="dz-sub">PNG, JPG, WebP or a single-page PDF &middot; the labels must be readable</span>
+              </div>
+              <div id="diagram-chip" class="file-chip hidden">
+                <img id="diagram-chip-thumb" class="fc-thumb" alt="" />
+                <span class="fc-text"><span class="fc-name" id="diagram-name"></span><span class="fc-size" id="diagram-size"></span></span>
+                <button type="button" class="btn btn-secondary fc-action" id="diagram-open">Read the labels</button>
+                <button type="button" class="fc-x" id="diagram-remove" aria-label="Remove image">&times;</button>
+              </div>
+              <p class="diagram-tip hidden" id="diagram-tip">Buck reads the labels printed on the image and turns each one into an answer box.</p>
+            </div>
+
+            <div id="create-estimate-panel">
+              <p class="estimate-placeholder" id="estimate-placeholder">Buck will estimate how many questions he can write once you add your content.</p>
+              <p class="estimate-note hidden" id="estimate-note"><span aria-hidden="true">&#128444;&#65039;</span> Scanned PDF &mdash; Buck will read the pages as images, so this takes a little longer.</p>
+
+              <section id="qtype-panel" class="qtype hidden" aria-labelledby="qtype-heading">
+                <p class="cstep" id="qtype-heading"><span class="cstep-n">2</span>Choose a question format</p>
+
+                <div class="qtype-deck" role="radiogroup" aria-labelledby="qtype-heading">
+                  <div class="qcard is-active" id="qcard-mc" data-qtype="multiple_choice" role="radio" aria-checked="true" tabindex="0">
+                    <svg class="qcard-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                        <circle cx="6" cy="6" r="2.3" fill="currentColor"/><path d="M11 6h9"/>
+                        <circle cx="6" cy="12" r="2.3"/><path d="M11 12h9"/>
+                        <circle cx="6" cy="18" r="2.3"/><path d="M11 18h6"/>
+                      </g>
+                    </svg>
+                    <span class="qcard-text">
+                      <span class="qcard-name">Multiple Choice</span>
+                      <span class="qcard-desc">Four options, one right answer.</span>
+                    </span>
+                    <span class="qcard-radio" aria-hidden="true"></span>
+                  </div>
+
+                  <div class="qcard" id="qcard-enum" data-qtype="enumeration" role="radio" aria-checked="false" tabindex="-1">
+                    <svg class="qcard-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3.5 6l1.7 1.7 3-3.2"/><path d="M11 6h9"/>
+                        <path d="M3.5 12l1.7 1.7 3-3.2"/><path d="M11 12h9"/>
+                        <path d="M3.5 18l1.7 1.7 3-3.2"/><path d="M11 18h6"/>
+                      </g>
+                    </svg>
+                    <span class="qcard-text">
+                      <span class="qcard-name">Enumeration</span>
+                      <span class="qcard-desc">You list the items, Buck checks them.</span>
+                    </span>
+                    <span class="qcard-radio" aria-hidden="true"></span>
+                  </div>
+
+                  <div class="qcard" id="qcard-diagram" data-qtype="diagram" role="radio" aria-checked="false" tabindex="-1">
+                    <svg class="qcard-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="4" width="12" height="16" rx="2"/>
+                        <circle cx="9" cy="10" r="1.8" fill="currentColor"/><path d="M10.8 10H21"/>
+                        <circle cx="8" cy="15.5" r="1.8" fill="currentColor"/><path d="M9.8 15.5H21"/>
+                      </g>
+                    </svg>
+                    <span class="qcard-text">
+                      <span class="qcard-name">Diagram Labeling</span>
+                      <span class="qcard-desc">Label the parts of an image.</span>
+                    </span>
+                    <span class="qcard-radio" aria-hidden="true"></span>
+                  </div>
+                </div>
+
+                <p class="qtype-hint" id="qtype-hint">Great for quick reviews and exam prep.</p>
+                <p class="qtype-room-note" id="qtype-room-note" hidden>&#127918; Live rooms play multiple choice only &mdash; everyone answers the same card at the same time.</p>
+              </section>
+
+              <div id="estimate-controls" class="camount hidden">
+                <div class="camount-head">
+                  <label class="cstep" for="estimate-slider"><span class="cstep-n">3</span>How many questions?</label>
+                  <span class="camount-value"><b id="estimate-label">10</b> of <span id="estimate-inline">0</span></span>
+                </div>
+                <input type="range" id="estimate-slider" min="5" max="20" step="1" value="10" />
+                <div class="camount-scale" id="estimate-box">
+                  <span>5</span>
+                  <span>Buck can write up to <b id="estimate-big">0</b> from this</span>
+                </div>
+              </div>
+              <div id="estimate-status" class="auth-error"></div>
 
             <div id="gen-error" class="gen-error hidden" role="alert">
               <div class="gen-error-head">
@@ -510,6 +397,7 @@
                 <button id="gen-different" class="link-btn">Choose a different source</button>
               </div>
               <pre id="gen-details" class="gen-details hidden"></pre>
+            </div>
             </div>
           </div>
 

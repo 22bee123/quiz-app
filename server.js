@@ -175,18 +175,21 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
     const content = typeof message.content === 'string' ? message.content : '';
     if (content.trim()) return content;
 
-    // Empty content: some models put the text in reasoning_content, and JSON mode sometimes
-    // yields an empty string. Recover instead of failing with "empty response".
-    const reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content : '';
-    if (reasoning.trim()) {
-      console.warn('DeepSeek returned empty content; using reasoning_content (' + reasoning.length + ' chars).');
-      return reasoning;
-    }
+    // Empty content almost always means the model spent its whole budget reasoning
+    // (finish_reason "length"). Retry once with more room first. Returning the reasoning itself
+    // turned the model's notes into 26 junk "questions" and an empty batch. This one retry
+    // drops JSON mode, but only for this call: an empty answer says nothing about whether the
+    // provider supports JSON mode, so the global flag is left alone.
     if (!opts._emptyRetry) {
-      console.warn(`DeepSeek returned empty content (finish_reason=${choice && choice.finish_reason}); retrying with higher max_tokens without JSON mode.`);
-      JSON_MODE_SUPPORTED = false;
+      console.warn(`DeepSeek returned empty content (finish_reason=${choice && choice.finish_reason}); retrying with higher max_tokens.`);
       const bumped = Math.min(8000, Math.max(maxTokens * 2, 4000));
       return callDeepSeek(messages, bumped, temperature, timeoutMs, Object.assign({}, opts, { jsonMode: false, _emptyRetry: true }));
+    }
+    // Last resort, for models that really do answer in reasoning_content.
+    const reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content : '';
+    if (reasoning.trim()) {
+      console.warn('DeepSeek returned empty content twice; using reasoning_content (' + reasoning.length + ' chars).');
+      return reasoning;
     }
     throw new Error('The AI returned an empty response.');
   }
@@ -717,10 +720,17 @@ function logMalformedResponse(raw, err) {
   console.error('full:', s.slice(0, 2000));
 }
 
+// Output budget for a question batch. The model reasons before it answers, and that reasoning
+// alone ran ~3,500 tokens for five enumeration questions; the old 3,000 floor left no room for
+// the JSON at all. Only tokens actually produced are billed, so a roomier ceiling costs nothing extra.
+function genMaxTokens(count) {
+  return Math.min(8000, Math.max(6000, count * 400));
+}
+
 async function generateOnce(text, images, count, existing, questionType) {
   const mode = normalizeQuestionType(questionType);
   const systemPrompt = systemPromptFor(mode);
-  const maxTokens = Math.min(8000, Math.max(3000, count * 300));
+  const maxTokens = genMaxTokens(count);
   const debug = process.env.NODE_ENV !== 'production' || process.env.DEBUG_AI === '1';
   const isImages = !!(images && images.length);
   const keywords = isImages ? [] : topKeywords(text, 12);
@@ -764,7 +774,7 @@ async function generateTextChunk(ask, chunk, extraInstruction) {
   // Legacy /api/analyze path: keeps the original mixed flashcard + choice behavior.
   const prompt = buildQuizPrompt(ask, chunk, null, undefined, undefined, DEFAULT_QUESTION_TYPE) + (extraInstruction || '');
   const content = [{ type: 'text', text: prompt }];
-  const maxTokens = Math.min(8000, Math.max(3000, ask * 300));
+  const maxTokens = genMaxTokens(ask);
   const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], maxTokens, 0.4, { jsonMode: true });
   try {
     return normalizeFlashcards(extractJson(raw)).slice(0, ask);
@@ -814,7 +824,7 @@ app.post('/api/analyze', async (req, res) => {
         { type: 'text', text: promptText },
         ...images.map((url) => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
       ];
-      const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(3000, ask * 300)), 0.4, { jsonMode: true });
+      const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], genMaxTokens(ask), 0.4, { jsonMode: true });
       try {
         flashcards.push(...normalizeFlashcards(extractJson(raw)));
       } catch (err) {
@@ -1031,7 +1041,9 @@ app.post('/api/generate', async (req, res) => {
     }
 
     const result = shaped.slice(0, count);
-    genCacheSet(cacheKey, result);
+    // Never cache a failure: an empty batch was stored for 24h, so every "Try again" on that
+    // material got zero questions back instantly.
+    if (result.length) genCacheSet(cacheKey, result);
     res.json({ flashcards: result, cached: false, questionType, requested: count, generated: result.length });
   } catch (err) {
     let code = classifyError(err);
@@ -1385,7 +1397,7 @@ async function requestChoiceOnly(text, images, cap) {
     } else {
       content = [{ type: 'text', text: buildChoicePrompt(ask, text || '', false) }];
     }
-    const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], Math.min(8000, Math.max(3000, ask * 300)), 0.4, { jsonMode: true });
+    const raw = await callDeepSeek([SYSTEM_PROMPT, { role: 'user', content }], genMaxTokens(ask), 0.4, { jsonMode: true });
     try {
       return normalizeFlashcards(extractJson(raw)).filter((f) => f.type === 'choice').slice(0, ask);
     } catch (err) {
@@ -1463,8 +1475,11 @@ function isPublicIp(ip) {
     if (low === '::' || low === '::1') return false;
     if (/^fe[89ab]/.test(low)) return false;          // fe80::/10 link-local
     if (/^f[cd]/.test(low)) return false;             // fc00::/7 unique-local
-    const mapped = low.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isPublicIp(mapped[1]);         // IPv4-mapped
+    // An IPv4 address inside IPv6 is judged as that IPv4 address. The URL parser rewrites
+    // [::ffff:127.0.0.1] to the hex form [::ffff:7f00:1], which the old dotted-only check
+    // waved through: the scraper fetched the server's own localhost.
+    const embedded = embeddedIpv4(low);
+    if (embedded) return isPublicIp(embedded);
     return true;
   }
   const p = addr.split('.').map(Number);
@@ -1478,6 +1493,17 @@ function isPublicIp(ip) {
   if (a >= 224) return false;                           // multicast + reserved
   if (a === 198 && (b === 18 || b === 19)) return false; // benchmarking
   return true;
+}
+
+// The IPv4 address carried by an IPv4-mapped (::ffff:), IPv4-translated (::ffff:0:),
+// IPv4-compatible (::) or NAT64 (64:ff9b::) IPv6 address, in dotted or hex form; else null.
+function embeddedIpv4(low) {
+  const m = String(low).match(/^(?:::ffff:0:|::ffff:|64:ff9b::|::)(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/);
+  if (!m) return null;
+  if (m[1]) return m[1];
+  const hi = parseInt(m[2], 16);
+  const lo = parseInt(m[3], 16);
+  return [hi >> 8, hi & 255, lo >> 8, lo & 255].join('.');
 }
 
 const SCRAPE_MAX_BYTES = 2 * 1024 * 1024;

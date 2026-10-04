@@ -513,6 +513,9 @@ function applyCreateMode() {
   if (!createModalWired) return;
   const imageOnly = isImageOnlyQType();
   if (createSourcePanel) createSourcePanel.classList.toggle('hidden', imageOnly);
+  // PDF / Paste / URL don't apply to a diagram, which always comes from an image.
+  const srcTabs = document.querySelector('#create-modal .src-tabs');
+  if (srcTabs) srcTabs.classList.toggle('hidden', imageOnly);
   if (diagramSource) diagramSource.classList.toggle('hidden', !imageOnly);
   if (diagramTip) diagramTip.classList.toggle('hidden', !(imageOnly && diagramState.image));
   const showEstimate = !imageOnly && createEstimateReady;
@@ -524,8 +527,12 @@ function applyCreateMode() {
     if (estimateStatus) { estimateStatus.textContent = ''; estimateStatus.className = 'auth-error'; }
   }
   if (estimateGenerate) estimateGenerate.classList.toggle('hidden', imageOnly);
-  if (estimateAll) estimateAll.classList.toggle('hidden', imageOnly);
-  if (estimateNote) estimateNote.classList.toggle('hidden', imageOnly || !createEstimateReady);
+  // "Generate all" means nothing until Buck has estimated how many questions there are.
+  if (estimateAll) estimateAll.classList.toggle('hidden', imageOnly || !createEstimateReady);
+  // Only a scanned PDF (read as page images) gets the "slower" note; this used to show for
+  // every PDF and pasted text, telling users their readable PDF had no text.
+  const scanned = !!(pendingContent && pendingContent.images && pendingContent.images.length);
+  if (estimateNote) estimateNote.classList.toggle('hidden', imageOnly || !createEstimateReady || !scanned);
   updateQTypeCount();
 }
 
@@ -2079,6 +2086,7 @@ function showEstimate() {
   renderQTypeSelection(false);
   applyCreateMode();
   estimateAll.classList.remove('hidden');
+  estimateAll.textContent = 'Generate all ' + estimate;
   estimateAll.disabled = false;
   estimateGenerate.disabled = false;
 }
@@ -2166,6 +2174,12 @@ function splitIntoChunks(text, chunkSize, overlap) {
     chunks.push(str.slice(start, end));
     if (end >= str.length) break;
     start = Math.max(0, end - overlap);
+    // Open the overlap on a sentence (or at least a word) boundary. A chunk that began
+    // mid-word ("rand theories" for "grand theories") got copied into questions verbatim.
+    const sentence = str.indexOf('. ', start);
+    const space = str.indexOf(' ', start);
+    if (sentence !== -1 && sentence + 2 < end) start = sentence + 2;
+    else if (space !== -1 && space + 1 < end) start = space + 1;
   }
   const filtered = chunks.map((c) => c.trim()).filter((c) => c.length > 60);
   return filtered.length ? filtered : [str];
@@ -2334,10 +2348,20 @@ function showGenerationError(err) {
     : detail;
   genDetails.textContent = detailsText;
 
+  // "Reduce to N" only helps when N is smaller than what was asked for.
+  const reduceTo = reduceTarget();
+  genReduce.textContent = 'Reduce to ' + reduceTo + ' questions';
+  genReduce.classList.toggle('hidden', !(lastGenerationCount > reduceTo));
+
   genError.classList.remove('hidden');
   genDetails.classList.add('hidden');
   genDetailsToggle.textContent = 'Show details';
   try { genError.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) {}
+}
+
+function reduceTarget() {
+  const max = parseInt(estimateSlider.max, 10) || 10;
+  return Math.max(5, Math.min(10, max));
 }
 
 function hideGenerationError() {
@@ -2378,6 +2402,9 @@ async function startGeneration(count) {
   });
   if (!pack) { closeCreate(); stopCreateLoading(); return; }
   genState = { packId: pack.id, target, qtype, cancelled: false, controller: null, seen: new Set(), error: null, running: true };
+  // Remember how the dialog looked, so a failed run can put the user straight back there.
+  const sourceBefore = createSource;
+  const urlBefore = createUrlEl.value;
   closeCreate();
   stopCreateLoading();
   openPack(pack.id);
@@ -2415,9 +2442,13 @@ async function startGeneration(count) {
     genState = null;
     studyPacks = studyPacks.filter((p) => p.id !== failedId);
     savePacks();
+    // The demo's single pack was claimed up front; a pack that never got a card must not use it up.
+    demoReleasePack();
     if (currentPackId === failedId) currentPackId = null;
     renderStudyPackList();
-    createModal.classList.remove('hidden');
+    // Leave the deleted pack's page, then reopen the dialog as the user left it.
+    resetToUpload();
+    reopenCreateAfterFailure(sourceBefore, qtype, urlBefore);
     renderPackBanner();
     showGenerationError(lastGenError || { code: 'EMPTY' });
     return;
@@ -2426,6 +2457,36 @@ async function startGeneration(count) {
   if (complete && activeContent.text) setCachedGen(textHash(activeContent.text), target, (getPack(genState.packId) || { items: [] }).items, qtype);
 
   finishLiveGeneration(!complete, genState.error);
+}
+
+// After a failed generation, show the dialog exactly as the user left it: the same source
+// tab, their material still loaded and the Generate buttons live. It used to come back
+// wiped (empty paste box, PDF gone) while still on the old tab, and because the internal
+// source had been reset to PDF, pasting again never re-enabled Generate.
+function reopenCreateAfterFailure(src, qtype, url) {
+  const content = activeContent;
+  const source = src === 'text' || src === 'url' ? src : 'pdf';
+  setCreateSource(source);
+  createModal.classList.remove('hidden');
+  if (!content) return;
+  if (source === 'text') {
+    createTextEl.value = content.text || '';
+    updateTextCount();
+    textClear.classList.toggle('hidden', !createTextEl.value);
+  } else if (source === 'url') {
+    createUrlEl.value = url || '';
+    urlContent = content;
+    urlPreview.textContent = '\u2713 ' + (content.name || url || 'Page loaded');
+    urlPreview.classList.remove('hidden');
+  } else {
+    pdfName.textContent = (content.name || 'Document') + '.pdf';
+    pdfSize.textContent = content.images ? content.images.length + ' scanned pages' : '';
+    pdfChip.classList.remove('hidden');
+    pdfDrop.classList.add('hidden');
+  }
+  pendingContent = content;
+  if (isQType(qtype)) selectQType(qtype, { silent: true });
+  showEstimate();
 }
 
 // Runs the parallel wave loop, appending cards to the pack as they arrive.
@@ -2466,6 +2527,14 @@ function generationPayload(extra) {
   return Object.assign({ questionType: qtype }, extra || {});
 }
 
+// The newest questions in a pack (the server reads up to 60), so Buck doesn't repeat them.
+function existingQuestions(packId) {
+  return ((getPack(packId) || { items: [] }).items || [])
+    .map((c) => c && c.question)
+    .filter((q) => typeof q === 'string' && q)
+    .slice(-60);
+}
+
 async function runLiveWaves(target) {
   const packId = genState.packId;
   const got = () => ((getPack(packId) || { items: [] }).items || []).length;
@@ -2478,18 +2547,22 @@ async function runLiveWaves(target) {
     const per = activeContent.images ? Math.min(10, Math.max(5, Math.ceil(remaining / GEN_CONCURRENCY)))
       : Math.min(PER_CALL_MAX, Math.max(5, Math.ceil(remaining / GEN_CONCURRENCY)));
 
+    // Tell the server what this pack already has. Without it, later rounds re-asked the same
+    // chunks blind: the server's cache handed back the identical cards, every one was dropped
+    // as a duplicate, and generation gave up short of the target (10 of 18).
+    const existing = existingQuestions(packId);
     let settled;
     if (activeContent.images && activeContent.images.length) {
       const groups = [];
       for (let i = 0; i < activeContent.images.length; i += 4) groups.push(activeContent.images.slice(i, i + 4));
-      settled = await Promise.allSettled(groups.map((group) => callGenerateWithFallback(generationPayload({ images: group }), per)));
+      settled = await Promise.allSettled(groups.map((group) => callGenerateWithFallback(generationPayload({ images: group, existing }), per)));
     } else {
       const plan = planGeneration(activeContent.text, target);
       // Cycle chunks if we need to fill more in later rounds.
       const start = (fillRound * GEN_CONCURRENCY) % Math.max(1, plan.chunks.length);
       const rotated = plan.chunks.slice(start).concat(plan.chunks.slice(0, start));
       const batch = rotated.slice(0, GEN_CONCURRENCY);
-      settled = await Promise.allSettled(batch.map((chunk) => callGenerateWithFallback(generationPayload({ text: chunk }), per)));
+      settled = await Promise.allSettled(batch.map((chunk) => callGenerateWithFallback(generationPayload({ text: chunk, existing }), per)));
     }
 
     if (genState.cancelled) break;
@@ -2648,7 +2721,7 @@ async function resumeGeneration() {
     const batchSize = Math.min(Math.max(BATCH_MIN, Math.ceil(missing / 2)), BATCH_MAX);
     if (!Number.isInteger(batchSize) || batchSize <= 0) throw new Error('Invalid question count: ' + batchSize);
 
-    const existing = pack.items.map((c) => c.question).filter(Boolean).slice(0, 60);
+    const existing = existingQuestions(packId);
     const body = generationPayload(hasImages ? { images: activeContent.images } : { text: activeContent.text });
     body.existing = existing;
     body.count = batchSize;
@@ -4922,7 +4995,21 @@ function renderPack() {
     });
     dd.addEventListener('click', (e) => e.stopPropagation());
     card.querySelector('.pk-edit').addEventListener('click', () => { close(); openEditQ(i); });
-    card.querySelector('.pk-del').addEventListener('click', () => { close(); if (confirm('Delete this question?')) { updatePack(pack.id, (p) => { p.items.splice(i, 1); }); renderPack(); } });
+    // The app's own dialog, not window.confirm(): in-app browsers (Messenger, Facebook) often
+    // suppress native dialogs and auto-cancel them, so the delete never happened there.
+    card.querySelector('.pk-del').addEventListener('click', async () => {
+      close();
+      const ok = await confirmDialog({
+        title: 'Delete this question?',
+        message: 'It will be removed from this StudyPack.',
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        danger: true,
+      });
+      if (!ok) return;
+      updatePack(pack.id, (p) => { p.items.splice(i, 1); });
+      renderPack();
+    });
     card.addEventListener('click', close);
     listEl.appendChild(card);
   });
@@ -5130,6 +5217,36 @@ function openAqDiagramEditor() {
 let aqDiagramItem = null;
 let aqDiagramEditIndex = -1;
 
+// Default helper text under each field, per question type.
+const AQ_Q_HINTS = {
+  flashcard: 'Tip: use ____ where the answer goes.',
+  choice: 'Write one clear question.',
+  enumeration: 'Say how many items you expect the student to list.',
+};
+const AQ_A_HINTS = {
+  enumeration: 'One item per line — Buck marks each one the student lists.',
+  flashcard: 'Keep it short and specific.',
+};
+
+// Back to the neutral hints (and no red outlines) for the current type.
+function resetAqHints() {
+  document.querySelectorAll('#addq-modal .aq-invalid').forEach((el) => el.classList.remove('aq-invalid'));
+  const qh = document.getElementById('aq-q-hint');
+  const ah = document.getElementById('aq-a-hint');
+  const oh = document.getElementById('aq-options-hint');
+  if (qh) { qh.textContent = AQ_Q_HINTS[addqType] || ''; qh.style.color = ''; }
+  if (ah) { ah.textContent = AQ_A_HINTS[addqType] || ''; ah.style.color = ''; }
+  if (oh) oh.style.color = '';
+}
+
+// Say what is missing. A save click that silently did nothing looked like a broken button.
+function aqError(fieldId, hintId, message) {
+  const hint = document.getElementById(hintId);
+  if (hint) { hint.textContent = message; hint.style.color = '#dc2626'; }
+  const field = fieldId && document.getElementById(fieldId);
+  if (field) { field.classList.add('aq-invalid'); field.focus(); }
+}
+
 function setAddQType(type) {
   syncOptionsFromInputs();
   addqType = type;
@@ -5160,12 +5277,6 @@ function setAddQType(type) {
   aEl.classList.toggle('hidden', isEnum);
   iEl.classList.toggle('hidden', !isEnum);
   if (aLabel) aLabel.textContent = isEnum ? 'Expected items' : 'Answer';
-  const aHint = document.getElementById('aq-a-hint');
-  if (aHint) {
-    aHint.textContent = isEnum
-      ? 'One item per line — Buck marks each one the student lists.'
-      : 'Keep it short and specific.';
-  }
   if (isChoice) {
     qEl.placeholder = 'e.g. Which of the following are inputs of photosynthesis?';
     aEl.placeholder = 'mark the correct choice(s) below';
@@ -5175,16 +5286,13 @@ function setAddQType(type) {
     renderAddQOptions();
   } else if (isEnum) {
     qEl.placeholder = 'e.g. List the three inputs of photosynthesis.';
-    const qh = document.getElementById('aq-q-hint');
-    if (qh) qh.textContent = 'Say how many items you expect the student to list.';
   } else if (isDiagram) {
     renderAqDiagram();
   } else {
     qEl.placeholder = 'e.g. The capital of France is ____.';
     aEl.placeholder = 'e.g. Paris';
-    const qh = document.getElementById('aq-q-hint');
-    if (qh) qh.textContent = 'Tip: use ____ where the answer goes.';
   }
+  resetAqHints();
 }
 
 function openAddQ() {
@@ -5250,19 +5358,27 @@ function saveAddQ() {
     openAqDiagramEditor();
     return;
   }
+  resetAqHints();
+  if (!q) {
+    aqError('addq-question', 'aq-q-hint', 'Write the question first.');
+    return;
+  }
   if (addqType === 'choice') {
     syncOptionsFromInputs();
     const options = addqOptions.map((o) => o.text.trim()).filter(Boolean);
     const answers = addqOptions.filter((o) => o.correct && o.text.trim()).map((o) => o.text.trim());
-    if (!q) return;
     if (options.length < 2) {
-      const hint = document.getElementById('aq-options-hint');
-      if (hint) { hint.textContent = 'Add at least 2 choices.'; hint.style.color = '#dc2626'; }
+      aqError(null, 'aq-options-hint', 'Add at least 2 choices.');
+      return;
+    }
+    // Two identical choices can't be told apart in a quiz (both turn green or red together).
+    const lower = options.map((o) => o.toLowerCase());
+    if (new Set(lower).size !== lower.length) {
+      aqError(null, 'aq-options-hint', 'Two choices are the same — make each one different.');
       return;
     }
     if (!answers.length) {
-      const hint = document.getElementById('aq-options-hint');
-      if (hint) { hint.textContent = 'Mark at least one correct choice.'; hint.style.color = '#dc2626'; }
+      aqError(null, 'aq-options-hint', 'Mark at least one correct choice.');
       return;
     }
     const hint = document.getElementById('aq-options-hint');
@@ -5270,17 +5386,17 @@ function saveAddQ() {
     item = { type: 'choice', question: q, options, answers };
   } else if (addqType === 'enumeration') {
     const items = enumerationItems({ answer: document.getElementById('addq-items').value });
-    const aHint = document.getElementById('aq-a-hint');
-    if (!q) return;
     if (items.length < 2) {
-      if (aHint) { aHint.textContent = 'List at least 2 expected items (one per line).'; aHint.style.color = '#dc2626'; }
+      aqError('addq-items', 'aq-a-hint', 'List at least 2 expected items (one per line).');
       return;
     }
-    if (aHint) { aHint.textContent = 'One item per line — Buck marks each one the student lists.'; aHint.style.color = ''; }
     item = { type: 'enumeration', question: q, answer: items.join(' / '), answer_items: items };
   } else {
     const a = document.getElementById('addq-answer').value.trim();
-    if (!q || !a) return;
+    if (!a) {
+      aqError('addq-answer', 'aq-a-hint', 'Write the answer.');
+      return;
+    }
     item = { type: 'flashcard', question: q, answer: a };
   }
   updatePack(currentPackId, (p) => {
@@ -5447,6 +5563,9 @@ function wirePack() {
     }
   });
   document.getElementById('addq-save').addEventListener('click', saveAddQ);
+  document.getElementById('addq-modal').addEventListener('input', (e) => {
+    if (e.target.classList.contains('aq-invalid')) resetAqHints();
+  });
   document.getElementById('addq-close').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
   document.getElementById('addq-backdrop').addEventListener('click', () => document.getElementById('addq-modal').classList.add('hidden'));
   document.getElementById('aq-add-option').addEventListener('click', () => {
@@ -6898,7 +7017,7 @@ function renderResults(entry) {
     const verdictClass = r.verdict === 'correct' ? 'item-correct' : r.verdict === 'partial' ? 'item-partial' : r.verdict === 'wrong' ? 'item-wrong' : 'item-ungraded';
     const verdictLabel = r.verdict === 'ungraded' ? 'NOT GRADED' : r.verdict.toUpperCase();
     const feedback = r.feedback
-      ? `<div class="ri-feedback">${r.feedback}</div>`
+      ? `<div class="ri-feedback">${escapeHtml(r.feedback)}</div>`
       : '';
 
     const div = document.createElement('div');
@@ -6959,8 +7078,8 @@ function renderResults(entry) {
         <span class="ri-q">Q${i + 1}: ${escapeHtml(r.question)}</span>
         <span class="ri-verdict">${verdictLabel}</span>
       </div>
-      <div class="ri-row"><span class="ri-label">Your answer:</span> ${r.userAnswer}</div>
-      <div class="ri-row"><span class="ri-label">Correct answer:</span> ${r.correctAnswer}</div>
+      <div class="ri-row"><span class="ri-label">Your answer:</span> ${escapeHtml(r.userAnswer)}</div>
+      <div class="ri-row"><span class="ri-label">Correct answer:</span> ${escapeHtml(r.correctAnswer)}</div>
       ${feedback}
     `;
     detailsEl.appendChild(div);
@@ -7230,6 +7349,13 @@ function demoClaimPack() {
   demoPersist();
   renderDemoPill();
   return true;
+}
+function demoReleasePack() {
+  if (!isDemo()) return;
+  try { localStorage.removeItem('buckDemoPackCreated'); } catch (e) {}
+  demo.packs = 0;
+  demoPersist();
+  renderDemoPill();
 }
 function demoTimeLeft() {
   const s = Math.floor(demoRemainingMs() / 1000);
@@ -8520,8 +8646,7 @@ function wireSidebar() {
     startGeneration(n);
   });
   genReduce.addEventListener('click', () => {
-    const max = parseInt(estimateSlider.max, 10) || 10;
-    const n = Math.max(5, Math.min(10, max));
+    const n = reduceTarget();
     estimateSlider.value = n;
     updateEstimateLabel();
     startGeneration(n);
@@ -8708,7 +8833,9 @@ function buildSidebarHistoryItem(entry) {
 }
 
 async function deleteHistory(entry) {
-  if (!window.confirm('Delete this quiz from your history?')) return;
+  // App dialog rather than window.confirm(), which in-app browsers can silently auto-cancel.
+  const ok = await confirmDialog({ title: 'Delete this quiz from your history?', confirmText: 'Delete', cancelText: 'Cancel', danger: true });
+  if (!ok) return;
   historyEntries = historyEntries.filter((e) => e.id !== entry.id);
   pinnedIds.delete(entry.id);
   persistPinnedIds();

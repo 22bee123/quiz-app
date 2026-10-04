@@ -2139,7 +2139,9 @@ html[data-theme='dark'] .ri-expected { background: #2f211a; border-color: rgba(2
 .modal {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  /* Above the floating sidebar button (1900), demo pill and chat, which otherwise sat on
+     top of dialogs on phones; below toasts (2000) and the generation overlay (3000). */
+  z-index: 1950;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4171,6 +4173,7 @@ header h1 {
   color: #7a5c46;
   margin-top: 6px;
 }
+#addq-modal .aq-invalid { border-color: #dc2626 !important; box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12); }
 
 /* ---------- Card â‹® menu ---------- */
 .pk-menu {
@@ -4405,7 +4408,10 @@ body.hl-on .pk-a {
 
 body.hl-on .hlw:hover { outline: 1px dashed #f97316; }
 
-.pk-badge { right: 46px; }
+/* The type badge sits on its own line above the question. Floating it over the top-right
+   corner hid the end of the question's first line on multiple-choice cards. */
+.pk-badge { position: static; display: inline-block; margin: 0 0 6px; }
+.pack-card .pk-q { padding-right: 34px; } /* room for the ⋮ menu */
 
 /* dropdown alignment fix */
 .pk-dropdown .pk-del {
@@ -5853,14 +5859,14 @@ html[data-theme='dark'] .role-pill { background: rgba(249, 115, 22, 0.2); color:
 }
 
 .estimate-note {
-  margin-top: 10px;
-  font-size: 0.84rem;
-  font-weight: 700;
+  margin-top: 8px;
+  font-size: 0.76rem;
+  font-weight: 600;
   color: #6b4226;
   background: #fff1e6;
   border: 1px solid #f3c9a4;
-  border-radius: 12px;
-  padding: 10px 12px;
+  border-radius: 10px;
+  padding: 7px 10px;
 }
 
 .cl-cancel {
@@ -7007,8 +7013,57 @@ html[data-theme='dark'] .pb-track { background: #4a3128; }
 /* =====================================================================
    Create-quiz modal (tabbed sources)
    ===================================================================== */
-.create-card { padding: 24px; max-width: 560px; }
-.create-sub { font-size: 14px; color: #8b5e3c; margin: -6px 0 16px; }
+/* Header and actions stay put and only the body scrolls, so the dialog never runs off
+   the screen however much it shows. */
+.create-card {
+  display: flex;
+  flex-direction: column;
+  max-width: 560px;
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  overflow: hidden;
+}
+.create-card > .modal-head { flex: 0 0 auto; margin: 0; padding: 18px 22px 14px; border-bottom: 1px solid #f3e7db; }
+.create-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 22px 20px;
+}
+
+/* Numbered step labels: 1 material, 2 format, 3 amount */
+.cstep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #4a3128;
+}
+.cstep-n {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff1e6;
+  color: #ea580c;
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+/* Step 3: how many questions */
+.camount { margin-top: 20px; }
+.camount-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.camount-head .cstep { margin: 0; }
+.camount-value { font-size: 0.8rem; font-weight: 700; color: #8b5e3c; white-space: nowrap; }
+.camount-value b { font-size: 1.05rem; font-weight: 900; color: #ea580c; }
+.camount-scale { display: flex; justify-content: space-between; gap: 10px; margin-top: 2px; font-size: 0.72rem; color: #a0826c; }
+.camount-scale b { color: #8b5e3c; }
 .modal-head-actions { display: flex; align-items: center; gap: 6px; }
 .head-icon-btn {
   width: 34px; height: 34px;
@@ -7023,14 +7078,14 @@ html[data-theme='dark'] .pb-track { background: #4a3128; }
   background: #fff8f0;
   border: 1.5px solid #e8d5c4;
   border-radius: 999px;
-  padding: 5px;
-  margin-bottom: 18px;
+  padding: 4px;
+  margin-bottom: 12px;
 }
 .src-tab {
   flex: 1;
   border: none; background: transparent;
   color: #6b4226; font-family: inherit; font-weight: 800; font-size: 0.86rem;
-  padding: 10px 8px; border-radius: 999px; cursor: pointer;
+  padding: 8px; border-radius: 999px; cursor: pointer;
   white-space: nowrap;
   transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
@@ -7041,13 +7096,13 @@ html[data-theme='dark'] .pb-track { background: #4a3128; }
   box-shadow: 0 6px 14px rgba(249, 115, 22, 0.3);
 }
 
-.source-box { margin-bottom: 16px; }
+.source-box { margin-bottom: 0; }
 
 .dropzone {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   text-align: center;
   border: 2px dashed #d9c3b2; border-radius: 16px;
-  background: #fffdfb; padding: 30px 18px;
+  background: #fffdfb; padding: 24px 18px;
   cursor: pointer;
   transition: border-color 0.2s, background 0.2s, transform 0.2s;
 }
@@ -7060,7 +7115,7 @@ html[data-theme='dark'] .pb-track { background: #4a3128; }
 .file-chip {
   display: flex; align-items: center; gap: 12px;
   border: 1.5px solid #f3c9a4; background: #fff7ef;
-  border-radius: 14px; padding: 12px 14px;
+  border-radius: 12px; padding: 10px 12px;
 }
 .fc-icon { font-size: 1.4rem; }
 .fc-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -7100,15 +7155,20 @@ html[data-theme='dark'] .pb-track { background: #4a3128; }
 }
 
 .estimate-placeholder {
-  font-size: 0.88rem; color: #8b5e3c;
-  background: #fdf6ec; border: 1px dashed #e3d3c4; border-radius: 14px;
-  padding: 14px; text-align: center;
+  margin-top: 12px;
+  font-size: 0.8rem; color: #8b5e3c; text-align: center;
 }
-#estimate-box { margin-bottom: 14px; }
-#estimate-controls .field-label { margin-top: 0; }
-#estimate-slider { width: 100%; accent-color: #f97316; margin-top: 4px; cursor: pointer; }
+#estimate-slider { width: 100%; accent-color: #f97316; margin-top: 8px; cursor: pointer; }
+/* Status lines reserve a row for messages; collapse them while they have nothing to say. */
+#create-modal .auth-error:empty { min-height: 0; margin-top: 0; }
 
-.create-actions { display: flex; gap: 10px; margin-top: 18px; }
+.create-actions {
+  display: flex; gap: 10px;
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding: 14px 22px 18px;
+  border-top: 1px solid #f3e7db;
+}
 .create-actions .btn { flex: 1; margin-top: 0; }
 .create-actions .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 #estimate-generate { flex: 1.4; }
@@ -7117,14 +7177,23 @@ html[data-theme='dark'] .pb-track { background: #4a3128; }
   .create-actions { flex-wrap: wrap; }
   #estimate-generate { order: -1; flex: 1 1 100%; }
   .create-actions .btn { flex: 1 1 40%; }
-  .src-tab { font-size: 0.8rem; padding: 10px 4px; }
+  .create-card > .modal-head { padding: 14px 16px 12px; }
+  .create-body { padding: 14px 16px 16px; }
+  .create-actions { padding: 12px 16px 14px; gap: 8px; }
+  .src-tab { font-size: 0.8rem; padding: 8px 4px; }
   .url-row { flex-wrap: wrap; }
   .url-row input { flex: 1 1 100%; }
   .url-row .btn { flex: 1 1 100%; }
   .ta-wrap textarea { min-height: 45vh; }
 }
 
-html[data-theme='dark'] .create-sub { color: #cbb4a2; }
+html[data-theme='dark'] .create-card > .modal-head,
+html[data-theme='dark'] .create-actions { border-color: rgba(243, 231, 219, 0.12); }
+html[data-theme='dark'] .cstep { color: #f3d9c4; }
+html[data-theme='dark'] .cstep-n { background: rgba(249, 115, 22, 0.18); color: #fdba74; }
+html[data-theme='dark'] .camount-value { color: #cbb4a2; }
+html[data-theme='dark'] .camount-scale { color: #a88f7c; }
+html[data-theme='dark'] .camount-scale b { color: #cbb4a2; }
 html[data-theme='dark'] .src-tabs { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); }
 html[data-theme='dark'] .src-tab { color: #ffe8d6; }
 html[data-theme='dark'] .src-tab:hover { background: #3a2a20; }
@@ -7134,7 +7203,7 @@ html[data-theme='dark'] .file-chip { background: #2f211a; border-color: rgba(249
 html[data-theme='dark'] .fc-name { color: #fff8f0; }
 html[data-theme='dark'] .ta-wrap textarea,
 html[data-theme='dark'] .url-row input { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); color: #fff8f0; }
-html[data-theme='dark'] .estimate-placeholder { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); color: #cbb4a2; }
+html[data-theme='dark'] .estimate-placeholder { color: #cbb4a2; }
 html[data-theme='dark'] .head-icon-btn { background: #2f211a; border-color: rgba(243, 231, 219, 0.16); color: #ffe8d6; }
 
 /* =====================================================================
@@ -7746,351 +7815,104 @@ html[data-theme='dark'] .demo-pill-exit { color: #cbb4a2; }
 html[data-theme='dark'] .demo-pill-exit:hover { background: #2f211a; color: #fca5a5; }
 
 /* =====================================================================
-   Question shape â€” two colour-coded index cards Buck offers the user
-   (create modal, between the estimate card and the count slider)
+   Question format picker (create modal, step 2)
+   Three compact radio cards: icon, name, one-line description.
    ===================================================================== */
-.qtype {
-  margin: 18px 0 22px;
-  padding-top: 18px;
-  border-top: 1px dashed #f0e4d8;
-  text-align: left;
-}
-
-.qtype-head { margin-bottom: 14px; }
-
-.qtype-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 0.63rem;
-  font-weight: 800;
-  letter-spacing: 0.17em;
-  text-transform: uppercase;
-  color: #7a5c46;
-}
-
-.qtype-quill {
-  width: 11px;
-  height: 11px;
-  flex: 0 0 auto;
-  border-radius: 3px 7px 3px 7px;
-  background: #f97316;
-  transform: rotate(-18deg);
-  box-shadow: inset -1px -1px 0 rgba(107, 66, 38, 0.35);
-}
-
-.qtype-title {
-  margin-top: 7px;
-  font-size: 1.04rem;
-  font-weight: 800;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
-  color: #3e2723;
-}
-
-.qtype-sub {
-  margin-top: 3px;
-  font-size: 0.79rem;
-  color: #8b5e3c;
-}
+.qtype { margin-top: 20px; text-align: left; }
 
 .qtype-deck {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  align-items: stretch;
+  gap: 8px;
 }
 
-/* The card itself â€” cream stock, soft tan edge, feels like real index card */
 .qcard {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 196px;
-  padding: 20px;
-  padding-bottom: 34px;
-  border: 1px solid #e8d5c4;
-  border-radius: 14px;
-  background: #fff8f0;
+  gap: 8px;
+  padding: 12px;
+  border: 1.5px solid #ecdccd;
+  border-radius: 12px;
+  background: #fffdfb;
   cursor: pointer;
   outline: none;
-  transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
+.qcard:hover { border-color: #e0bba0; background: #fffaf5; }
+.qcard:focus-visible { box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.25); }
 
-.qcard:hover { background: #fffdfa; border-color: #e0bba0; }
+.qcard-icon { width: 22px; height: 22px; color: #b9967c; flex: 0 0 auto; transition: color 0.15s ease; }
+.qcard-text { display: block; min-width: 0; }
+.qcard-name { display: block; font-size: 0.86rem; font-weight: 800; line-height: 1.25; color: #3e2723; }
+.qcard-desc { display: block; margin-top: 2px; font-size: 0.74rem; line-height: 1.35; color: #8b5e3c; }
 
-.qcard:focus-visible {
-  border-color: #f97316;
-  box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.16);
-}
-
-/* the little coloured stock tab peeking out of the top, like a tabbed notebook */
-.qcard-tab {
+.qcard-radio {
   position: absolute;
-  top: -3px;
-  left: 18px;
-  width: 40px;
-  height: 3px;
-  border-radius: 3px;
-  background: #e8d5c4;
-  transition: background-color 0.2s ease, width 0.2s ease;
-}
-
-/* ---- mini question preview: the reason this reads as a format, not a label ---- */
-.qcard-mock {
-  display: block;
-  height: 44px;
-  margin-bottom: 12px;
-  opacity: 0.62;
-  transition: opacity 0.2s ease;
-}
-
-.qcard-mock svg { display: block; width: 100%; height: 44px; }
-.qcard:hover .qcard-mock { opacity: 0.78; }
-
-/* ---- hand-drawn corner icon (never tinted orange â€” keeps accents intentional) ---- */
-.qcard-icon {
-  position: absolute;
-  top: 15px;
-  right: 15px;
-  width: 24px;
-  height: 24px;
-  color: #c2a189;
-  transition: color 0.2s ease, transform 0.2s ease;
-}
-
-.qcard:hover .qcard-icon { color: #a97f5f; }
-.qcard.is-active .qcard-icon { color: #b1743f; transform: rotate(-8deg); }
-
-/* ---- card copy ---- */
-.qcard-text { display: block; margin-top: auto; }
-
-.qcard-name {
-  display: block;
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 1.25;
-  color: #3e2723;
-}
-
-.qcard-desc {
-  display: block;
-  margin-top: 4px;
-  font-size: 13px;
-  line-height: 1.42;
-  color: #8b5e3c;
-  transition: color 0.2s ease;
-}
-
-/* ---- quiet availability mark, tucked into the card's bottom-left corner ---- */
-.qcard-mark {
-  position: absolute;
-  left: 20px;
-  bottom: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.qcard-mark-txt {
-  font-size: 0.6rem;
-  font-weight: 800;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-  color: #c2a189;
-  transition: color 0.2s ease;
-}
-
-.qcard-mark::before {
-  content: '';
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
+  top: 12px;
+  right: 12px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   border: 1.5px solid #d8c3b4;
-  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+  background: #fff;
+  transition: border 0.15s ease;
 }
 
-/* ---- selected: orange wash, 2px border, sticker, lift ---- */
 .qcard.is-active {
-  background: rgba(249, 115, 22, 0.06);
-  border: 2px solid #f97316;
-  box-shadow: 0 10px 22px rgba(249, 115, 22, 0.16);
-  transform: translateY(-2px);
-  animation: qcardSettle 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.qcard.is-active .qcard-tab { background: #f97316; width: 52px; }
-.qcard.is-active .qcard-mock { opacity: 0.9; }
-.qcard.is-active .qcard-desc { color: #7a4c2e; }
-.qcard.is-active .qcard-mark-txt { color: #e07b28; }
-.qcard.is-active .qcard-mark::before {
   border-color: #f97316;
-  background: #f97316;
-  box-shadow: inset 0 0 0 1.5px #fff8f0;
+  background: #fff7ef;
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12);
 }
+.qcard.is-active .qcard-icon { color: #f97316; }
+.qcard.is-active .qcard-radio { border: 5px solid #f97316; }
 
-/* ---- Buck sticker: only on the chosen card, bouncing in a beat later ---- */
-.qcard-sticker {
-  position: absolute;
-  top: -10px;
-  left: -9px;
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: #fff8f0;
-  border: 1.5px solid #f3c9a4;
-  box-shadow: 0 4px 10px rgba(107, 66, 38, 0.2);
-  transform: rotate(-8deg);
-  opacity: 0;
-  pointer-events: none;
-}
+.qtype-hint { margin-top: 8px; font-size: 0.76rem; color: #8b5e3c; }
 
-.qcard.is-active .qcard-sticker {
-  animation: qcardSticker 0.42s cubic-bezier(0.3, 1.4, 0.5, 1) 0.15s both;
-}
-
-.buck-sticker-svg { width: 27px; height: 27px; display: block; }
-
-/* ---- dynamic microcopy under the cards ---- */
-.qtype-footer {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 14px;
-  margin-top: 13px;
-  padding: 0 2px;
-}
-
-.qtype-hint {
-  font-size: 0.77rem;
-  font-style: italic;
-  color: #8b5e3c;
-  animation: qtypeHintIn 0.24s ease both;
-}
-
-.qtype-count {
-  flex: 0 0 auto;
-  font-size: 0.69rem;
-  font-weight: 700;
-  color: #7a5c46;
-  white-space: nowrap;
-}
-
-.qtype-count b { color: #e07b28; font-weight: 900; }
-
-/* ---- motion ---- */
-@keyframes qcardSettle {
-  0% { transform: translateY(-2px) scale(1.02); }
-  100% { transform: translateY(-2px) scale(1); }
-}
-
-@keyframes qcardSticker {
-  0% { opacity: 0; transform: rotate(-8deg) scale(0.5); }
-  62% { opacity: 1; transform: rotate(-8deg) scale(1.14); }
-  100% { opacity: 1; transform: rotate(-8deg) scale(1); }
-}
-
-@keyframes qtypeHintIn {
-  from { opacity: 0; transform: translateY(2px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* Re-trigger of the settle animation when the selection actually changes */
-.qcard.is-settling { animation: qcardSettle 0.24s cubic-bezier(0.22, 1, 0.36, 1) both; }
-
-/* Locked (live room): the shape is fixed to Multiple Choice */
-.qtype.is-room .qtype-deck { opacity: 0.72; }
+/* Locked (live room): the format is fixed to Multiple Choice */
 .qtype.is-room .qcard { cursor: not-allowed; }
-.qtype.is-room .qcard:not(.is-active) { filter: grayscale(0.4); }
-.qtype.is-room .qcard-sticker { display: none; }
+.qtype.is-room .qcard:not(.is-active) { opacity: 0.55; }
 
 .qtype-room-note {
-  margin-top: 11px;
-  padding: 9px 12px;
-  font-size: 0.75rem;
+  margin-top: 8px;
+  padding: 8px 10px;
+  font-size: 0.74rem;
   font-weight: 700;
   color: #6b4226;
   background: #fff1e6;
   border: 1px solid #f3c9a4;
-  border-radius: 12px;
+  border-radius: 10px;
+}
+
+/* Phones: one card per row, icon left and radio right */
+@media (max-width: 520px) {
+  .qtype-deck { grid-template-columns: 1fr; gap: 6px; }
+  .qcard { flex-direction: row; align-items: center; gap: 12px; padding: 10px 40px 10px 12px; }
+  .qcard-radio { top: 50%; margin-top: -8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .qcard.is-active,
-  .qcard.is-active .qcard-sticker,
-  .qtype-hint { animation: none; }
-  .qcard-sticker { opacity: 1; }
-  .qcard { transition: none; }
+  .qcard, .qcard-icon, .qcard-radio { transition: none; }
 }
 
-/* Tablet â€” narrower cards; two across so the previews stay readable */
-@media (max-width: 620px) {
-  .qtype-deck { grid-template-columns: 1fr 1fr; gap: 12px; }
-  .qcard { min-height: 186px; padding: 17px; padding-bottom: 32px; }
-  .qcard-name { font-size: 15px; }
-  .qcard-desc { font-size: 12.5px; }
-  .qcard-icon { top: 12px; right: 12px; width: 21px; height: 21px; }
-  .qcard-mark { left: 17px; bottom: 11px; }
-  .qtype-footer { flex-wrap: wrap; gap: 6px; }
-}
-
-/* Mobile â€” stack the cards, keep the mini mocks up top so the preview survives */
-@media (max-width: 470px) {
-  .qtype-deck { grid-template-columns: 1fr; gap: 12px; }  .qcard { min-height: 0; padding: 16px 16px 30px; }
-  .qcard-mock { height: 40px; margin-bottom: 10px; }
-  .qcard-mock svg { height: 40px; }
-  .qcard-text { margin-top: 0; }
-  .qtype-footer { display: block; }
-  .qtype-count { display: block; margin-top: 4px; }
-  .qtype-title { font-size: 0.99rem; }
-}
-
-/* Very small screens â€” trim the mock, keep everything readable */
-@media (max-width: 360px) {
-  .qcard { padding: 14px 14px 26px; border-radius: 12px; }
-  .qcard-mock { height: 30px; margin-bottom: 8px; }
-  .qcard-mock svg { height: 30px; }
-  .qcard-name { font-size: 14.5px; }
-  .qcard-desc { font-size: 12px; }
-  .qcard-sticker { width: 29px; height: 29px; top: -11px; left: -8px; }
-  .buck-sticker-svg { width: 23px; height: 23px; }
-  .qcard-mark-txt { font-size: 0.55rem; }
-  .qtype-eyebrow { font-size: 0.58rem; }
-}
-
-/* ---- dark mode ---- */
-html[data-theme='dark'] .qtype { border-top-color: rgba(243, 231, 219, 0.12); }html[data-theme='dark'] .qtype-title { color: #fff8f0; }
-html[data-theme='dark'] .qtype-sub { color: #cbb4a2; }
 html[data-theme='dark'] .qcard { background: #3a2a20; border-color: rgba(243, 231, 219, 0.16); }
 html[data-theme='dark'] .qcard:hover { background: #423024; border-color: rgba(249, 115, 22, 0.5); }
-html[data-theme='dark'] .qcard-tab { background: rgba(243, 231, 219, 0.22); }
-html[data-theme='dark'] .qcard-icon { color: #c9ab93; }
 html[data-theme='dark'] .qcard.is-active { background: rgba(249, 115, 22, 0.16); border-color: #f97316; }
-html[data-theme='dark'] .qcard.is-active .qcard-tab { background: #f97316; }
+html[data-theme='dark'] .qcard-icon { color: #c9ab93; }
+html[data-theme='dark'] .qcard.is-active .qcard-icon { color: #fb923c; }
 html[data-theme='dark'] .qcard-name { color: #fff8f0; }
-html[data-theme='dark'] .qcard-desc { color: #cbb4a2; }
-html[data-theme='dark'] .qcard.is-active .qcard-desc { color: #f3d9c4; }
-html[data-theme='dark'] .qcard-mark-txt { color: #c9ab93; }
-html[data-theme='dark'] .qcard-mark::before { border-color: #6b5443; }
-html[data-theme='dark'] .qcard-sticker { background: #2f211a; border-color: rgba(249, 115, 22, 0.5); }
-html[data-theme='dark'] .buck-sticker-svg g { stroke: #ffe8d6; }
+html[data-theme='dark'] .qcard-desc,
 html[data-theme='dark'] .qtype-hint { color: #cbb4a2; }
-html[data-theme='dark'] .qtype-count { color: #c9ab93; }
+html[data-theme='dark'] .qcard-radio { background: #2f211a; border-color: #6b5443; }
+html[data-theme='dark'] .qcard.is-active .qcard-radio { border-color: #f97316; }
 html[data-theme='dark'] .qtype-room-note { background: rgba(249, 115, 22, 0.14); border-color: rgba(249, 115, 22, 0.4); color: #ffe8d6; }
 
 /* =====================================================================
    Enumeration cards â€” pack list ("Expected items" panel)
    ===================================================================== */
 .pack-card.is-enum { border-color: rgba(107, 66, 38, 0.18); }
-.pack-card.is-enum .pk-q { margin-bottom: 10px; padding-right: 108px; }
+.pack-card.is-enum .pk-q { margin-bottom: 10px; }
 
-@media (max-width: 520px) {
-  /* Badge sits on its own line next to shorter questions on phones */
-  .pack-card.is-enum .pk-q { padding-right: 0; }
-}
 
 .pk-badge.enum {
   color: #7a4c2e;
@@ -8443,7 +8265,7 @@ html[data-theme='dark'] .deck-exp-mark { background: #4a3128; color: #cbb4a2; }
 }
 
 /* The diagram editor opens from the create modal (or a StudyPack), so it must sit above. */
-#diagram-modal { z-index: 1200; }
+#diagram-modal { z-index: 1960; } /* opens on top of the create dialog */
 
 .diagram-sub { font-size: 0.86rem; color: #8b5e3c; margin: -6px 0 14px; }
 .diagram-stage { animation: dgStageIn 0.22s ease both; }
@@ -8873,7 +8695,7 @@ html[data-theme='dark'] .deck-exp-mark { background: #4a3128; color: #cbb4a2; }
 /* ---- 4. the card in a StudyPack ---- */
 .pk-badge.diagram { color: #8b3d0f; background: #ffe8d6; border: 1px solid #f3c9a4; }
 .pack-card.is-diagram { border-color: rgba(249, 115, 22, 0.22); }
-.pack-card.is-diagram .pk-q { padding-right: 76px; }
+
 
 .dgm-pack { display: flex; flex-direction: column; gap: 12px; }
 
