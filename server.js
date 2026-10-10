@@ -3,6 +3,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const dns = require('dns').promises;
+const tidyQuestion = require('./public/question-tidy');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -224,6 +225,19 @@ function normalizeQuestionType(value) {
 const JSON_ONLY_RULE =
   'Respond with valid JSON only. No markdown fences, no commentary, no preamble, and nothing before or after the JSON object.';
 
+// Students said questions read like "what does the material conclude?" and had to be read
+// several times. These rules go into every text-generation prompt.
+const QUESTION_STYLE_RULES =
+  'Writing style for every question:\n' +
+  '- Ask about the subject directly, as a teacher would. NEVER mention the source: no "the material", "the module", ' +
+  '"the module material", "the handout", "the lesson", "the passage", "the text", "the reading", "the author", ' +
+  '"according to ...", "based on ...", or "in this module". Bad: "According to the material, what is ethics?" Good: "What is ethics?"\n' +
+  '- Keep it short and clear: one sentence, ideally under 20 words, understandable on the first read.\n' +
+  '- Use simple, everyday words and active voice. No double negatives, no repeated words, no awkward or circular ' +
+  'phrasing (bad: "If humans are imposed to follow actions that are imposed on them, what does it conclude?"; ' +
+  'good: "Are people morally responsible for actions they are forced to do?").\n' +
+  '- Options are short (a few words, at most about 12), similar in length and grammar, and plausible.';
+
 const MULTIPLE_CHOICE_SYSTEM_PROMPT =
   'You are Buck, a study assistant. Generate {N} multiple-choice questions from the text below.\n\n' +
   'Each question MUST have exactly 4 options with one correct answer.\n\n' +
@@ -241,7 +255,8 @@ const MULTIPLE_CHOICE_SYSTEM_PROMPT =
   '}\n\n' +
   'Rules: the "answer" must be copied character-for-character from one of the "options". ' +
   'Every question must stand on its own and be written out in words (never just a label like "A3."). ' +
-  'Every option is full answer text, never a bare letter like "A" and never prefixed with "A." or "B)". ' +
+  'Every option is full answer text, never a bare letter like "A" and never prefixed with "A." or "B)".\n\n' +
+  QUESTION_STYLE_RULES + '\n\n' +
   JSON_ONLY_RULE;
 
 const ENUMERATION_SYSTEM_PROMPT =
@@ -261,7 +276,8 @@ const ENUMERATION_SYSTEM_PROMPT =
   '}\n\n' +
   'Rules: every "answer" MUST be a JSON array of 2 to 6 short expected items (a few words each, never a full ' +
   'sentence). Write the question so the expected number of items is unmistakable ("List the three ..."). ' +
-  'Items must be distinct from one another. ' +
+  'Items must be distinct from one another.\n\n' +
+  QUESTION_STYLE_RULES + '\n\n' +
   JSON_ONLY_RULE;
 
 const SYSTEM_PROMPTS = {
@@ -1206,7 +1222,7 @@ function buildQuizPrompt(ask, chunk, images, keywords, existing, mode) {
   const questionType = normalizeQuestionType(mode);
 
   const staticInstructions = questionType === 'enumeration'
-    ? `You are an expert quiz creator. Based ONLY on the module material provided, create ENUMERATION questions that test recall of lists, steps, stages, parts, and sets of items.
+    ? `You are an expert quiz creator. Using ONLY facts from the study content below, create ENUMERATION questions that test recall of lists, steps, stages, parts, and sets of items.
 
 - "enumeration": the question asks the student to list the expected items from memory. The question MUST be answerable by an explicit, finite list taken from the material, it MUST state how many items are expected, and it MUST NOT contain any blanks.
 - "answer": a JSON array of the expected items — between 2 and 6 entries, each a SHORT term or phrase (a few words), never a full sentence. The items must be distinct.
@@ -1216,11 +1232,13 @@ Requirements:
 - Focus on key concepts, definitions, categories, processes, and important facts that genuinely have a countable list.
 - Never invent items that are not supported by the material.
 
+${QUESTION_STYLE_RULES}
+
 Respond with ONLY a valid JSON object in this exact format (no markdown, no extra text):
 { "questions": [
   { "type": "enumeration", "question": "List the ... ", "answer": ["item 1", "item 2", "item 3"] }
 ] }`
-    : `You are an expert quiz creator. Based ONLY on the module material provided, create MULTIPLE-CHOICE questions that test understanding.
+    : `You are an expert quiz creator. Using ONLY facts from the study content below, create MULTIPLE-CHOICE questions that test understanding.
 
 - "choice": a multiple-choice question with exactly 4 options and exactly one correct "answer".
 - "options": exactly 4 short, clearly distinct answer strings.
@@ -1229,6 +1247,8 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no extr
 - Every option is the full answer text. Never a bare letter ("A", "B"), and never prefixed with "A.", "B)" and so on.
 - If the material is itself a quiz or answer key, write new questions about its subject matter; do not copy its numbering or letter choices.
 - Vary which option is the correct one.
+
+${QUESTION_STYLE_RULES}
 
 Respond with ONLY a valid JSON object in this exact format (no markdown, no extra text):
 { "questions": [
@@ -1239,27 +1259,29 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no extr
     ? 'Important key terms to cover where relevant: ' + keywords.join(', ') + '.\n\n'
     : '';
   const material = images
-    ? 'Module images:'
-    : 'Module content:\n' + String(chunk || '').slice(0, 30000);
+    ? 'Study content (images) — never refer to it as "the material" or "the module" in questions:'
+    : 'Study content — never refer to it as "the material" or "the module" in questions:\n' + String(chunk || '').slice(0, 30000);
   const existingLine = (existing && existing.length)
     ? '\n\nIMPORTANT: Do NOT duplicate or rephrase any of these already-used questions:\n' +
       existing.slice(0, 60).map((q, i) => (i + 1) + '. ' + String(q).slice(0, 160)).join('\n')
     : '';
   const askLine = questionType === 'enumeration'
-    ? `Now create exactly ${ask} NEW enumeration questions from the material above.`
-    : `Now create exactly ${ask} NEW multiple-choice questions from the material above.`;
+    ? `Now create exactly ${ask} NEW enumeration questions from the study content above.`
+    : `Now create exactly ${ask} NEW multiple-choice questions from the study content above.`;
   const finalAsk = `\n\n${askLine} Respond with ONLY the JSON object described above.`;
 
   return staticInstructions + '\n\n' + keyLine + material + existingLine + finalAsk;
 }
 
 function buildChoicePrompt(ask, contentText, imagesFlag, keywords) {
-  const staticInstructions = `You are an expert quiz creator. Based ONLY on the module material provided, create MULTIPLE-CHOICE questions.
+  const staticInstructions = `You are an expert quiz creator. Using ONLY facts from the study content below, create MULTIPLE-CHOICE questions.
 
 For each question include exactly 4 options and exactly one correct answer:
 - "question": a standalone question (NOT a fill-in-the-blank sentence).
 - "options": an array of exactly 4 short answer strings.
 - "answer": the one correct option, spelled EXACTLY like that option (same case and spacing).
+
+${QUESTION_STYLE_RULES}
 
 Respond with ONLY a valid JSON object (no markdown, no extra text):
 { "questions": [ { "type": "choice", "question": "...?", "options": ["a", "b", "c", "d"], "answer": "a" } ] }`;
@@ -1268,9 +1290,9 @@ Respond with ONLY a valid JSON object (no markdown, no extra text):
     ? 'Important key terms to cover where relevant: ' + keywords.join(', ') + '.\n\n'
     : '';
   const material = imagesFlag
-    ? 'Module images:'
-    : 'Module content:\n' + String(contentText || '').slice(0, 30000);
-  const finalAsk = `\n\nNow create up to ${ask} multiple-choice questions (fewer is fine if the material is short — never pad). Respond with ONLY the JSON object.`;
+    ? 'Study content (images) — never refer to it as "the material" or "the module" in questions:'
+    : 'Study content — never refer to it as "the material" or "the module" in questions:\n' + String(contentText || '').slice(0, 30000);
+  const finalAsk = `\n\nNow create up to ${ask} multiple-choice questions (fewer is fine if the content is short — never pad). Respond with ONLY the JSON object.`;
 
   return staticInstructions + '\n\n' + keyLine + material + finalAsk;
 }
@@ -1295,7 +1317,7 @@ function normalizeFlashcards(list) {
     if (!f || typeof f !== 'object') continue;
     // Models sometimes echo the request's question-type name instead of the card type.
     const type = f.type === 'multiple_choice' ? 'choice' : f.type;
-    const question = typeof f.question === 'string' ? f.question.trim() : '';
+    const question = typeof f.question === 'string' ? tidyQuestion(f.question) : '';
     if (!question) continue;
 
     if (type === 'flashcard') {
