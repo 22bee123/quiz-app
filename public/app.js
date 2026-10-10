@@ -5764,7 +5764,7 @@ function renderQuestion() {
   deckBadge.classList.toggle('tiny', isDiagram);
   // The diagram's own title is on the artwork, so the card title is an instruction
   // instead of a duplicate heading.
-  deckQuestion.textContent = isDiagram ? 'Label the diagram' : (isChoice || isEnum ? item.question : '');
+  deckQuestion.textContent = isDiagram ? 'Label the diagram' : (isChoice || isEnum ? displayQuestion(item.question) : '');
   deckQuestion.classList.toggle('deck-instruction', isDiagram);
   deckFillInput.value = '';
   deckFillInput.disabled = false;
@@ -7107,7 +7107,7 @@ function renderResults(entry) {
       const given = r.userAnswer ? escapeHtml(r.userAnswer) : '<em>Nothing listed</em>';
       div.innerHTML = `
         <div class="ri-header">
-          <span class="ri-q">Q${i + 1}: ${escapeHtml(r.question)}</span>
+          <span class="ri-q">Q${i + 1}: ${escapeHtml(displayQuestion(r.question))}</span>
           <span class="ri-verdict">${verdictLabel}</span>
         </div>
         <div class="ri-score">${score.hits} of ${score.total} correct</div>
@@ -7134,7 +7134,7 @@ function renderResults(entry) {
         .join('');
       div.innerHTML = `
         <div class="ri-header">
-          <span class="ri-q">Q${i + 1}: ${escapeHtml(r.question)}</span>
+          <span class="ri-q">Q${i + 1}: ${escapeHtml(displayQuestion(r.question))}</span>
           <span class="ri-verdict">${verdictLabel}</span>
         </div>
         <div class="ri-score">${score.hits} of ${score.total} correct</div>
@@ -7150,7 +7150,7 @@ function renderResults(entry) {
 
     div.innerHTML = `
       <div class="ri-header">
-        <span class="ri-q">Q${i + 1}: ${escapeHtml(r.question)}</span>
+        <span class="ri-q">Q${i + 1}: ${escapeHtml(displayQuestion(r.question))}</span>
         <span class="ri-verdict">${verdictLabel}</span>
       </div>
       <div class="ri-row"><span class="ri-label">Your answer:</span> ${escapeHtml(r.userAnswer)}</div>
@@ -9045,6 +9045,11 @@ function deckColor(name) {
   let h = 0;
   for (let i = 0; i < String(name).length; i++) h = (h * 31 + String(name).charCodeAt(i)) >>> 0;
   return colors[h % colors.length];
+}
+
+// Cards saved before question-tidy.js existed may still say "according to the material".
+function displayQuestion(q) {
+  return typeof window.tidyQuestion === 'function' ? window.tidyQuestion(q) : String(q || '');
 }
 
 function escapeHtml(str) {
