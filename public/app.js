@@ -1246,7 +1246,8 @@ function finishScan(token, payload) {
 
     if (payload.error) {
       // Buck looks apologetic and the button turns into a retry.
-      setScanNote('Buck got distracted. Try again?');
+      const limitCode = payload.error.code === 'RATE_LIMITED' || payload.error.code === 'SIGNIN_REQUIRED';
+      setScanNote(limitCode && payload.error.message ? payload.error.message : 'Buck got distracted. Try again?');
       if (scanCopy) scanCopy.textContent = "Buck couldn't read that one.";
       if (scanCancel) scanCancel.textContent = 'Try again';
       if (scanLine) scanLine.classList.remove('scan-done');
@@ -1302,7 +1303,7 @@ async function detectDiagramLabelsRemote(imageUrl) {
     const img = diagramEditor.image || {};
     const res = await fetch('/api/diagram/detect', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await apiHeaders(),
       body: JSON.stringify({
         imageUrl: payloadImage,
         hint: diagramEditor.hint || '',
@@ -2035,7 +2036,7 @@ async function fetchUrlContent() {
   try {
     const sc = await fetch('/api/scrape', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await apiHeaders(),
       body: JSON.stringify({ url: val }),
     });
     const scData = await sc.json();
@@ -2185,6 +2186,42 @@ function splitIntoChunks(text, chunkSize, overlap) {
   return filtered.length ? filtered : [str];
 }
 
+// Headers for the AI routes. A signed-in user's Supabase token lets the server limit them
+// per account (a bigger budget than the per-IP one demo visitors get).
+async function apiHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  if (supabaseClient && currentUser && !isDemo()) {
+    try {
+      const { data } = await supabaseClient.auth.getSession();
+      const token = data && data.session && data.session.access_token;
+      if (token) headers.Authorization = 'Bearer ' + token;
+    } catch (e) { /* send without it; the server falls back to the per-IP limit */ }
+  }
+  return headers;
+}
+
+// Requests the AI routes accept. Vercel caps a request body at 4.5MB and the server at 4MB,
+// so scanned-PDF pages are sent in groups that stay under this many base64 characters.
+const MAX_IMAGE_PAYLOAD_CHARS = 3.5 * 1024 * 1024;
+
+function groupImagesForUpload(images, maxPerGroup) {
+  const groups = [];
+  let group = [];
+  let size = 0;
+  images.forEach((img) => {
+    const len = String(img || '').length;
+    if (group.length && (group.length >= maxPerGroup || size + len > MAX_IMAGE_PAYLOAD_CHARS)) {
+      groups.push(group);
+      group = [];
+      size = 0;
+    }
+    group.push(img);
+    size += len;
+  });
+  if (group.length) groups.push(group);
+  return groups;
+}
+
 async function callGenerate(body) {
   const controller = new AbortController();
   if (genState) genState.controller = controller;
@@ -2194,7 +2231,7 @@ async function callGenerate(body) {
     try {
       res = await fetch(path, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await apiHeaders(),
         body: JSON.stringify(body),
         signal: controller.signal,
       });
@@ -2265,7 +2302,8 @@ async function callGenerateWithFallback(body, ask, attempt) {
   } catch (err) {
     if (err && err.name === 'AbortError') throw err;
     const smaller = Math.max(5, Math.floor(ask / 2));
-    if (RETRYABLE_CODES.includes(err.code) && smaller < ask && tries < 3) {
+    // A body the server refused for size is the same size with fewer questions — don't resend it.
+    if (RETRYABLE_CODES.includes(err.code) && err.reason !== 'body_too_large' && smaller < ask && tries < 3) {
       console.warn('Retrying batch with fewer questions:', smaller, '(' + (err.reason || err.code) + ')');
       return callGenerateWithFallback(body, smaller, tries + 1);
     }
@@ -2282,9 +2320,12 @@ function updateGenerationProgress(done, total) {
 const GEN_ERROR_COPY = {
   AUTH: ['Buck cannot reach the AI right now.', 'API key invalid — check your DeepSeek settings.'],
   RATE: ['Buck got a little overwhelmed.', "We're being rate-limited. Let's try that again in a moment."],
+  RATE_LIMITED: ["You've made a lot of StudyPacks!", 'You have reached the limit for now. Try again a little later.'],
+  SIGNIN_REQUIRED: ['Sign in to keep going.', 'Your session has expired. Sign in again to keep creating StudyPacks.'],
+  GUARD_FAILED: ['Buck could not check your session.', 'Please try again in a moment.'],
   MODEL: ["Buck's AI model isn't available.", 'The configured model could not be found — check DEEPSEEK_MODEL (should be deepseek-flash).'],
   TIMEOUT: ['That took a little too long.', 'The request timed out — try generating fewer questions.'],
-  TOO_LARGE: ['That content is a bit heavy.', 'The PDF is too large for one request — try a smaller file or fewer questions.'],
+  TOO_LARGE: ['That content is a bit heavy.', 'The upload is too large for one request — try a smaller file or fewer pages.'],
   PARSE: ['Buck got a little tongue-tied.', 'The AI returned malformed data. Tap Try again and Buck will retry.'],
   EMPTY: ['Buck could not write questions this time.', 'The AI returned no usable questions. Give it another go?'],
   NETWORK: ['Buck lost the connection.', 'Check your internet connection and try again.'],
@@ -2302,7 +2343,7 @@ const GEN_ERROR_COPY = {
   NO_HEARTS: ['Buck is out of wings.', 'Wait for a wing to refill, then try again.'],
   INVALID_TYPE: ['Buck was not sure which question format to write.', 'Pick Multiple Choice, Enumeration, or Diagram Labeling and try again.'],
   INVALID_IMAGE: ["Buck couldn't read that image.", 'Try a PNG, JPG, or WebP — or a single-page PDF.'],
-  IMAGE_TOO_LARGE: ['That image is a bit heavy.', 'Try a smaller diagram — Buck can read up to about 9MB.'],
+  IMAGE_TOO_LARGE: ['That image is a bit heavy.', 'Try a smaller diagram — Buck can read images up to about 2.5MB.'],
   DETECT_FAILED: ["Buck couldn't read the labels on this diagram.", 'Try again, or mark the labels yourself in the review screen.'],
   UNKNOWN: ['Buck could not write questions this time.', 'Something unexpected happened. Try again, or reduce the count.'],
 };
@@ -2318,7 +2359,9 @@ function showGenerationError(err) {
   let title = copy[0];
   let msg = copy[1];
 
-  if (code === 'PARSE' && reason === 'truncated') {
+  if ((code === 'RATE_LIMITED' || code === 'SIGNIN_REQUIRED') && err.message) {
+    msg = err.message; // the server's copy says when to come back / what to do
+  } else if (code === 'PARSE' && reason === 'truncated') {
     msg = 'The AI response was cut off (hit the token limit). Try again, or reduce the question count.';
   } else if (code === 'PARSE' && reason === 'empty') {
     msg = 'The AI returned an empty response. Tap Try again — Buck will retry.';
@@ -2553,8 +2596,7 @@ async function runLiveWaves(target) {
     const existing = existingQuestions(packId);
     let settled;
     if (activeContent.images && activeContent.images.length) {
-      const groups = [];
-      for (let i = 0; i < activeContent.images.length; i += 4) groups.push(activeContent.images.slice(i, i + 4));
+      const groups = groupImagesForUpload(activeContent.images, 4);
       settled = await Promise.allSettled(groups.map((group) => callGenerateWithFallback(generationPayload({ images: group, existing }), per)));
     } else {
       const plan = planGeneration(activeContent.text, target);
