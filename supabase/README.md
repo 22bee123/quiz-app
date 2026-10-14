@@ -36,3 +36,60 @@ Nothing breaks. The client tries Storage first and, if the upload fails — no s
 demo mode, missing bucket, RLS rejection — it downsizes the image in the browser and
 stores it inline with the card instead, showing a small "stored on this device" note.
 Set the bucket up to move those images into Storage.
+
+## 4. Before going public: check Row Level Security
+
+The app talks to Supabase straight from the browser with the anon key, which is public by
+design. **Row Level Security (RLS) is the only thing stopping one user from reading or
+editing another user's data**, so every table the app uses must have it enabled.
+
+Only the `cards` changes live in `migrations/`; the tables below were created in the dashboard,
+so check them there. The client reads and writes:
+
+`profiles`, `quiz_history`, `events`, `friendships`, `messages`, `rooms`, `room_players`
+(plus `cards`, and the `avatars` and `diagrams` storage buckets).
+
+### Audit query
+
+Run this in the SQL editor. Every row should show `rls_enabled = true` and at least one policy:
+
+```sql
+select c.relname as table_name,
+       c.relrowsecurity as rls_enabled,
+       count(p.polname) as policies
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace
+left join pg_policy p on p.polrelid = c.oid
+where n.nspname = 'public' and c.relkind = 'r'
+group by c.relname, c.relrowsecurity
+order by c.relrowsecurity, c.relname;
+```
+
+To see what each policy actually allows:
+
+```sql
+select tablename, policyname, cmd, roles, qual, with_check
+from pg_policies where schemaname = 'public' order by tablename, cmd;
+```
+
+### What the policies should allow
+
+| Table | Read | Write |
+| --- | --- | --- |
+| `profiles` | signed-in users (needed for friend search) — never `anon` | only your own row (`id = auth.uid()`) |
+| `quiz_history`, `events` | only your own rows (`user_id = auth.uid()`) | only your own rows |
+| `friendships` | rows where you are either side | insert as yourself; update/delete rows you're part of |
+| `messages` | rows you sent or received | insert only with yourself as sender |
+| `rooms`, `room_players` | signed-in users | host manages the room; players manage their own `room_players` row |
+
+Red flags: a policy with `qual = true` for `insert`/`update`/`delete`, any policy granted to
+`anon` on these tables, or a table with `rls_enabled = false`. Enabling RLS on a table with no
+policies locks it completely, so add the policies in the same change.
+
+### Auth settings (Dashboard → Authentication)
+
+- **Sign In / Providers → Email:** turn on *Confirm email* so throwaway accounts can't be made
+  in bulk (each account gets its own AI rate limit).
+- **URL Configuration:** set *Site URL* to your production domain and add it (plus
+  `https://your-domain/app`) to *Redirect URLs*. Remove `localhost` entries you don't need.
+- **Rate Limits:** keep the defaults or lower them; they cap sign-up and email sends.

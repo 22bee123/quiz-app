@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const dns = require('dns').promises;
 const tidyQuestion = require('./public/question-tidy');
+const { guard, guardInfo } = require('./lib/guard');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -295,7 +296,7 @@ function systemPromptFor(questionType) {
 
 const DIAGRAM_MAX_LABELS = 40;      // more than this and the user should be reviewing, not Buck
 const DIAGRAM_MIN_LABELS = 2;       // below this we tell the client to offer manual marking
-const DIAGRAM_MAX_IMAGE_CHARS = 9 * 1024 * 1024; // ~6.7MB of base64 image data
+const DIAGRAM_MAX_IMAGE_CHARS = 3.8 * 1024 * 1024; // ~2.8MB of base64 image data (inside the 4MB body limit)
 
 const DIAGRAM_LABEL_SCHEMA =
   '{\n' +
@@ -800,7 +801,14 @@ async function generateTextChunk(ask, chunk, extraInstruction) {
   }
 }
 
-app.use(express.json({ limit: '25mb' }));
+// Rate limits / sign-in checks run before the body is parsed, so a rejected caller costs nothing.
+app.post(['/api/generate', '/api/analyze', '/api/grade', '/api/diagram/detect'], guard('ai'));
+app.post('/api/scrape', guard('scrape'));
+
+// Vercel rejects request bodies over 4.5MB before they reach this app, so a bigger limit here
+// would only make local runs accept uploads production can't. The client keeps payloads under it.
+const JSON_BODY_LIMIT = '4mb';
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Lightweight API access log so you can see what the server is actually receiving.
@@ -1129,7 +1137,7 @@ app.post('/api/diagram/detect', async (req, res) => {
         error: 'That image is a bit large for Buck to read. Try a smaller one.',
         code: 'IMAGE_TOO_LARGE',
         reason: 'image_too_large',
-        detail: 'image payload ' + mb + 'MB (limit ' + Math.round(DIAGRAM_MAX_IMAGE_CHARS / 1024 / 1024) + 'MB)',
+        detail: 'image payload ' + mb + 'MB (limit ' + (DIAGRAM_MAX_IMAGE_CHARS / 1024 / 1024).toFixed(1) + 'MB)',
       });
     }
     if (!VISION_ENABLED) {
@@ -1719,7 +1727,8 @@ app.get('/api/health', (req, res) => {
     genCacheEntries: genCache.size,
     questionTypes: QUESTION_TYPES,
     defaultQuestionType: DEFAULT_QUESTION_TYPE,
-    diagram: { maxLabels: DIAGRAM_MAX_LABELS, minLabels: DIAGRAM_MIN_LABELS, maxImageMB: Math.round(DIAGRAM_MAX_IMAGE_CHARS / 1024 / 1024) },
+    guard: guardInfo,
+    diagram: { maxLabels: DIAGRAM_MAX_LABELS, minLabels: DIAGRAM_MIN_LABELS, maxImageMB: (DIAGRAM_MAX_IMAGE_CHARS / 1024 / 1024).toFixed(1) },
     routes: [
       'GET /api/config',
       'GET /api/health',
@@ -1739,7 +1748,25 @@ app.all('/api/*', (req, res) =>
   res.status(404).json({ error: `No API route for ${req.method} ${req.originalUrl}`, code: 'ROUTE_MISSING' })
 );
 
+// Body-parser failures (oversized or malformed JSON) answer in JSON like every other API error.
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'That upload is too large for Buck. Try a smaller file.',
+      code: 'TOO_LARGE',
+      reason: 'body_too_large',
+      detail: 'request body over ' + JSON_BODY_LIMIT,
+    });
+  }
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'The request could not be read.', code: 'BAD_REQUEST' });
+  }
+  next(err);
+});
+
 app.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
+app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
+app.get('/terms', (req, res) => res.sendFile(path.join(__dirname, 'public', 'terms.html')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // Only bind a port when this file is run directly (`node server.js`). On Vercel the module is
