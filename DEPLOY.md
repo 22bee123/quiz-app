@@ -44,7 +44,7 @@ and redirect URLs to your production domain.
 
 ## 5. Before you announce it
 
-- Check `hello@bucktheduck.app` (used on the Privacy, Terms and footer links) is an inbox you
+- Check `hello@bucktheduck.site` (used on the Privacy, Terms and footer links) is an inbox you
   actually receive mail at, or replace it everywhere.
 - Read `public/privacy.html` and `public/terms.html` and adjust anything that doesn't match how
   you run the app (for example the 30-day deletion promise). They're a solid starting point,

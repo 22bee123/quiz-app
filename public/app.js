@@ -7962,7 +7962,7 @@ function installAuthGuard() {
 /* ---------------- Demo mode ---------------- */
 const DEMO_MS = 60 * 60 * 1000;        // 1 hour
 const DEMO_MAX_PACKS = 1;
-const DEMO_USER = { id: 'demo-user', email: 'demo@bucktheduck.app', user_metadata: { full_name: 'Demo Duck', username: 'demo', role: 'student' } };
+const DEMO_USER = { id: 'demo-user', email: 'demo@bucktheduck.site', user_metadata: { full_name: 'Demo Duck', username: 'demo', role: 'student' } };
 
 let demo = null;
 let demoTimer = null;
@@ -9121,7 +9121,7 @@ function wireProfile() {
 
   document.getElementById('pm-notifications').addEventListener('click', () => showToast('Notification settings are coming soon, Buck promises!', ''));
   document.getElementById('pm-plan').addEventListener('click', () => showToast('You are on the Free plan. Pro is on the way! ⭐', ''));
-  document.getElementById('pm-help').addEventListener('click', () => showToast('Need a wing? Reach us at hello@bucktheduck.app', ''));
+  document.getElementById('pm-help').addEventListener('click', () => showToast('Need a wing? Reach us at hello@bucktheduck.site', ''));
   document.getElementById('pm-theme').addEventListener('click', () => {
     const dark = document.documentElement.getAttribute('data-theme') === 'dark';
     if (dark) document.documentElement.removeAttribute('data-theme');
