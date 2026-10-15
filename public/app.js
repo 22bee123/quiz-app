@@ -3438,7 +3438,10 @@ async function hostCreateRoom(payload, name, questions) {
   }
 
   roomPlayers = [];
-  startRoomPlay();
+  // The host plays the questions just uploaded to the room. startRoomPlay() used to reuse
+  // whatever quiz was last loaded in memory, so the host got a stale deck (or a crash when
+  // none was loaded) while everyone who joined got the right one.
+  enterRoomPlay(questions);
   startRoomPoll();
 }
 
@@ -3485,13 +3488,6 @@ function enterRoomPlay(questions) {
     q && q.type === 'choice' && Array.isArray(q.options) ? Object.assign({}, q, { options: shuffle(q.options) }) : q);
   results = new Array(flashcards.length).fill(null);
   gradingPromises = {};
-  currentIndex = 0;
-  openRoomPlay();
-}
-
-function startRoomPlay() {
-  flashcards = flashcards.length ? flashcards : flashcards;
-  results = new Array(flashcards.length).fill(null);
   currentIndex = 0;
   openRoomPlay();
 }

@@ -3,6 +3,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const dns = require('dns').promises;
+const { AsyncLocalStorage } = require('async_hooks');
 const tidyQuestion = require('./public/question-tidy');
 const { guard, guardInfo } = require('./lib/guard');
 
@@ -81,6 +82,29 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Vercel stops a function at maxDuration (60s in vercel.json). A single AI call used to be able to
+// retry four times at up to 60s each, so the function was killed mid-retry: the user waited a
+// minute for a non-JSON error and the tokens were billed anyway. Every AI route now runs with a
+// deadline a little under the platform limit, and callDeepSeek never starts an attempt (or a
+// backoff) that can't finish inside it.
+const AI_BUDGET_MS = (() => {
+  const n = parseInt(process.env.AI_REQUEST_BUDGET_MS, 10);
+  return Number.isFinite(n) && n > 0 ? n : 50000;
+})();
+const MIN_AI_ATTEMPT_MS = 8000;
+const aiBudget = new AsyncLocalStorage();
+
+function aiTimeLeft() {
+  const store = aiBudget.getStore();
+  return store ? store.deadline - Date.now() : Infinity;
+}
+
+function aiTimeoutError() {
+  const e = new Error('The AI took too long to respond. Please try again.');
+  e.code = 'TIMEOUT';
+  return e;
+}
+
 function backoffDelay(attempt) {
   // exponential backoff with a little jitter: ~1s, 2s, 4s…
   return Math.min(15000, 1000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 300);
@@ -95,8 +119,10 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
   let lastErr;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const left = aiTimeLeft();
+    if (left < MIN_AI_ATTEMPT_MS) throw lastErr || aiTimeoutError();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, left));
     let response;
     try {
       const payload = {
@@ -117,8 +143,8 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
       });
     } catch (err) {
       clearTimeout(timer);
-      lastErr = err.name === 'AbortError' ? new Error('The AI took too long to respond. Please try again.') : err;
-      if (attempt < maxAttempts - 1) {
+      lastErr = err.name === 'AbortError' ? aiTimeoutError() : err;
+      if (attempt < maxAttempts - 1 && aiTimeLeft() - backoffDelay(attempt) >= MIN_AI_ATTEMPT_MS) {
         await sleep(backoffDelay(attempt));
         continue;
       }
@@ -131,7 +157,7 @@ async function callDeepSeek(messages, maxTokens = 2000, temperature = 0.3, timeo
       const errText = await response.text().catch(() => '');
       lastErr = new Error(`DeepSeek API error (${response.status}): ${errText}`);
       console.warn(`DeepSeek ${response.status}; retry ${attempt + 1}/${maxAttempts - 1} in ${Math.round(backoffDelay(attempt) / 1000)}s`);
-      if (attempt < maxAttempts - 1) {
+      if (attempt < maxAttempts - 1 && aiTimeLeft() - backoffDelay(attempt) >= MIN_AI_ATTEMPT_MS) {
         await sleep(backoffDelay(attempt));
         continue;
       }
@@ -567,7 +593,7 @@ function classifyError(err) {
   if (m.includes('authentication') || m.includes('invalid api key') || m.includes('401') || m.includes('api key')) return 'AUTH';
   if (m.includes('overwhelmed') || m.includes('429') || m.includes('rate limit')) return 'RATE';
   if (m.includes('model') && (m.includes('not exist') || m.includes('not found') || m.includes('invalid'))) return 'MODEL';
-  if (m.includes('timed out') || m.includes('timeout') || m.includes('aborted')) return 'TIMEOUT';
+  if (m.includes('timed out') || m.includes('timeout') || m.includes('aborted') || m.includes('took too long')) return 'TIMEOUT';
   if (m.includes('context') || m.includes('too long') || m.includes('maximum') || m.includes('413')) return 'TOO_LARGE';
   if (m.includes('empty')) return 'EMPTY';
   if (m.includes('json') || m.includes('parse')) return 'PARSE';
@@ -802,7 +828,7 @@ async function generateTextChunk(ask, chunk, extraInstruction) {
 }
 
 // Rate limits / sign-in checks run before the body is parsed, so a rejected caller costs nothing.
-app.post(['/api/generate', '/api/analyze', '/api/grade', '/api/diagram/detect'], guard('ai'));
+app.post(['/api/generate', '/api/analyze', '/api/diagram/detect'], guard('ai'));
 app.post('/api/scrape', guard('scrape'));
 
 // Vercel rejects request bodies over 4.5MB before they reach this app, so a bigger limit here
@@ -811,9 +837,13 @@ const JSON_BODY_LIMIT = '4mb';
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.post(['/api/generate', '/api/analyze', '/api/diagram/detect'], (req, res, next) => {
+  aiBudget.run({ deadline: Date.now() + AI_BUDGET_MS }, next);
+});
+
 // Lightweight API access log so you can see what the server is actually receiving.
 app.use((req, res, next) => {
-  if (req.method === 'POST' && ['/api/generate', '/api/analyze', '/api/estimate', '/api/scrape', '/api/grade', '/api/diagram/detect'].includes(req.path)) {
+  if (req.method === 'POST' && ['/api/generate', '/api/analyze', '/api/estimate', '/api/scrape', '/api/diagram/detect'].includes(req.path)) {
     const kb = Math.round((Number(req.headers['content-length']) || 0) / 1024);
     console.log(`[api] ${req.method} ${req.path} (~${kb}KB)`);
   }
@@ -1033,7 +1063,7 @@ app.post('/api/generate', async (req, res) => {
       // Any parse/shape/truncation problem → retry once with a smaller batch.
       const retryable = ['PARSE', 'EMPTY'].includes(classifyError(err));
       const smaller = Math.max(5, Math.floor(count / 2));
-      if (retryable && smaller < count) {
+      if (retryable && smaller < count && aiTimeLeft() >= MIN_AI_ATTEMPT_MS) {
         console.warn(`[generate] ${err.reason || 'parse'} failure; retrying with ${smaller} questions.`);
         cards = await generateOnce(text, images, smaller, existing, questionType);
       } else {
@@ -1652,49 +1682,6 @@ app.post('/api/scrape', async (req, res) => {
   }
 });
 
-app.post('/api/grade', async (req, res) => {
-  try {
-    const { question, correctAnswer, userAnswer } = req.body;
-    if (!question || !correctAnswer || !userAnswer) {
-      return res.status(400).json({ error: 'question, correctAnswer, and userAnswer are required.' });
-    }
-
-    const prompt = `You are a fair grading assistant. A student answered a quiz question that asks them to NAME or ENUMERATE specific items. Grade the answer as "correct", "partial", or "wrong".
-
-The correct answer is a short list of specific items. Grade by whether the student listed the required item(s):
-- "correct": they named ALL the required items (order and wording can differ; synonyms are fine).
-- "partial": they listed SOME of the items but missed one or more required items.
-- "wrong": they named none of the required items, or answered unrelated to the question.
-
-Rules for the response:
-- "feedback" must be VERY short and concise (e.g. "Not quite.", "Partly there.", "Correct."). NEVER include the correct answer in feedback.
-- "hint" is a short, concise clue that helps WITHOUT revealing the answer — for example the number of words, the starting letter, or a category (e.g. "2 words, starts with 'l'"). Never write the actual answer as the hint.
-
-Question: ${question}
-Correct answer (required items): ${correctAnswer}
-Student's answer: ${userAnswer}
-
-Reply with ONLY valid JSON: {"verdict": "correct"|"partial"|"wrong", "feedback": "short feedback", "hint": "short clue"}`;
-
-    const raw = await callDeepSeek([{ role: 'user', content: prompt }], 1000, 0.2);
-
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('AI did not return a valid grading JSON.');
-    const parsed = JSON.parse(match[0]);
-
-    const verdict = ['correct', 'partial', 'wrong'].includes(parsed.verdict) ? parsed.verdict : 'wrong';
-    const genericFeedback = verdict === 'correct' ? 'Correct.' : verdict === 'partial' ? 'Partly correct.' : 'Not quite.';
-
-    res.json({
-      verdict,
-      feedback: genericFeedback,
-    });
-  } catch (err) {
-    console.error('Grade error:', err.message);
-    res.status(500).json({ error: `Failed to grade answer: ${err.message}` });
-  }
-});
-
 app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public', 'buck-svg', 'favicon.svg')));
 app.get('/api/config', (req, res) => {
   const supabaseUrl = process.env.SUPABASE_URL || null;
@@ -1736,7 +1723,6 @@ app.get('/api/health', (req, res) => {
       'POST /api/generate',
       'POST /api/estimate',
       'POST /api/scrape',
-      'POST /api/grade',
       'POST /api/diagram/detect',
     ],
     time: new Date().toISOString(),
@@ -1776,8 +1762,19 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Buck the Duck running at http://localhost:${PORT}`);
     console.log(`Model: ${DEEPSEEK_MODEL} (fallback: ${DEEPSEEK_FALLBACK_MODEL}) | vision: ${VISION_ENABLED ? 'on' : 'off'}`);
-    console.log('API routes: GET /api/config · GET /api/health · POST /api/analyze · POST /api/generate · POST /api/estimate · POST /api/scrape · POST /api/grade · POST /api/diagram/detect');
+    console.log('API routes: GET /api/config · GET /api/health · POST /api/analyze · POST /api/generate · POST /api/estimate · POST /api/scrape · POST /api/diagram/detect');
   });
 }
+
+// Pure helpers, exposed only so test/ can pin down the bugs they once had.
+app._internals = {
+  normalizeFlashcards,
+  isPublicIp,
+  embeddedIpv4,
+  classifyError,
+  genMaxTokens,
+  extractJson,
+  splitTextIntoChunks,
+};
 
 module.exports = app;

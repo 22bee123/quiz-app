@@ -36,9 +36,10 @@ Never put the DeepSeek key or a Supabase **service role** key in anything under 
 
 ## 4. Supabase — security and auth
 
-Follow **"Before going public"** in [supabase/README.md](supabase/README.md): run the RLS audit
-query, fix any table without RLS, turn on email confirmation, and set the Site URL and
-redirect URLs to your production domain.
+Follow **"Before going public"** in [supabase/README.md](supabase/README.md): run
+`supabase/migrations/20261015000000_row_level_security.sql` in the SQL editor, run the audit
+query and drop any older policy that is wider, turn on email confirmation, and set the Site URL
+and redirect URLs to your production domain.
 
 ## 5. Before you announce it
 
@@ -51,3 +52,9 @@ redirect URLs to your production domain.
   remove/mark it "coming soon" or build billing before launch.
 - Try it on your phone: sign up, confirm email, make a StudyPack from a PDF, a link and a
   diagram.
+
+## 6. Before every deploy
+
+Run `npm test`. It checks the bugs that have already reached users once (answers always "A",
+junk "A3." cards, packs stopping short, words cut in half, empty AI answers being cached,
+timeouts reported as "file too large", the private-address bypass) without calling the real AI.

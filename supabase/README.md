@@ -49,6 +49,19 @@ so check them there. The client reads and writes:
 `profiles`, `quiz_history`, `events`, `friendships`, `messages`, `rooms`, `room_players`
 (plus `cards`, and the `avatars` and `diagrams` storage buckets).
 
+### Apply the policies
+
+`migrations/20261015000000_row_level_security.sql` turns RLS on for every table above and adds
+the policies in the table below. Paste it into the SQL editor and run it. It is safe to re-run,
+skips tables your project doesn't have, and only replaces its own `buck_*` policies. It was
+tested against tables shaped like the app's: users see only their own history, events and
+messages; can't send messages as someone else, accept their own friend request, or change
+another player's score; and signed-out visitors can't read any of it.
+
+Then run the audit below. Policies add up (they are OR-ed together), so any older policy that
+is wider than these, for example a dashboard default like "Enable read access for all users",
+still lets everyone in and must be dropped.
+
 ### Audit query
 
 Run this in the SQL editor. Every row should show `rls_enabled = true` and at least one policy:

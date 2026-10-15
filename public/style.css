@@ -2290,6 +2290,9 @@ html[data-theme='dark'] .ri-expected { background: #2f211a; border-color: rgba(2
 @media (max-width: 768px) {
   .sidebar-open-btn {
     display: flex;
+    /* Anchored to the top of the page rather than the screen: fixed, it floated over the
+       pack name and question text as soon as the quiz was scrolled. */
+    position: absolute;
   }
 
   .main {
