@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+# The study app and its API are behind sign-in; nothing there for search results.
+Disallow: /app
+Disallow: /api/
+
+Sitemap: https://www.bucktheduck.site/sitemap.xml

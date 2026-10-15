@@ -1753,7 +1753,9 @@ app.use((err, req, res, next) => {
 app.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
 app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
 app.get('/terms', (req, res) => res.sendFile(path.join(__dirname, 'public', 'terms.html')));
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+// Unknown pages still show the landing page, but as a 404: answering "200 OK" for every made-up
+// address looked to search engines like endless copies of the homepage.
+app.get('*', (req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // Only bind a port when this file is run directly (`node server.js`). On Vercel the module is
 // imported by the serverless runtime, which manages the socket itself — listening on a fixed
