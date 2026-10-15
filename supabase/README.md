@@ -49,6 +49,13 @@ so check them there. The client reads and writes:
 `profiles`, `quiz_history`, `events`, `friendships`, `messages`, `rooms`, `room_players`
 (plus `cards`, and the `avatars` and `diagrams` storage buckets).
 
+### Live rooms
+
+`migrations/20261015010000_live_rooms_progress.sql` adds `room_players.progress`,
+`room_players.finished_at` and `rooms.started_at`, which the live race uses to show each
+opponent's question number and to break podium ties by who finished first. Without it rooms
+still work, but opponents show "Answering…" instead of "Q3 of 10".
+
 ### Apply the policies
 
 `migrations/20261015000000_row_level_security.sql` turns RLS on for every table above and adds

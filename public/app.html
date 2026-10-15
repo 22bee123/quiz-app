@@ -717,16 +717,34 @@
           </div>
         </div>
 
+        <!-- One panel for the whole room: lobby before the start, standings while you wait. -->
         <div id="live-room" class="hidden">
-          <div class="room-head">
-            <span class="room-badge">Room code</span>
-            <span class="room-code" id="room-code">------</span>
-            <button class="room-copy" id="room-copy" title="Copy code">Copy</button>
-            <span class="room-wait" id="room-wait">Waiting for players&hellip;</span>
+          <div class="lobby-card" id="lobby-card">
+            <div class="lobby-code-block">
+              <span class="lobby-label">Room code</span>
+              <div class="lobby-code" id="room-code" aria-live="polite">------</div>
+              <button class="room-copy" id="room-copy" type="button" title="Copy code">Copy code</button>
+            </div>
+
+            <div class="lobby-status" id="lobby-status">
+              <span class="lobby-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span id="room-wait">Waiting for players&hellip;</span>
+            </div>
+
+            <div class="lobby-section-head">
+              <span id="lobby-players-title">Players</span>
+              <span class="lobby-count" id="lobby-count">0</span>
+            </div>
+            <div class="room-players" id="room-players"></div>
+
+            <div class="room-status hidden" id="room-status"></div>
+
+            <div class="lobby-actions">
+              <button id="room-start" class="btn btn-primary hidden" type="button">&#9654; Start game</button>
+              <button id="room-end" class="btn btn-primary hidden" type="button">&#127942; End game &amp; show podium</button>
+              <button id="room-leave" class="btn btn-secondary" type="button">Leave room</button>
+            </div>
           </div>
-          <div class="room-players" id="room-players"></div>
-          <div class="room-status hidden" id="room-status"></div>
-          <button id="room-leave" class="btn btn-secondary">Leave room</button>
         </div>
       </section>
 
@@ -1390,11 +1408,35 @@
     </div>
   </div>
 
+  <!-- Live room: 3-2-1 countdown shown on every player's screen at the same time -->
+  <div id="room-countdown" class="room-countdown hidden" aria-live="assertive">
+    <div class="rc-ring"></div>
+    <span class="rc-num" id="rc-num">3</span>
+    <span class="rc-sub">Get ready&hellip;</span>
+  </div>
+
+  <!-- Live room: podium when the game ends -->
+  <div id="podium-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="podium-title">
+    <div class="modal-backdrop" id="podium-backdrop"></div>
+    <div class="modal-card podium-card">
+      <span class="podium-badge">&#127942; Final results</span>
+      <h3 class="podium-title" id="podium-title">You placed 1st!</h3>
+      <p class="podium-sub" id="podium-sub"></p>
+      <div class="podium" id="podium"></div>
+      <ol class="podium-rest" id="podium-rest"></ol>
+      <div class="podium-actions">
+        <button id="podium-review" class="btn btn-secondary" type="button">See my answers</button>
+        <button id="podium-done" class="btn btn-primary" type="button">Back to Live</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/vendor/supabase.js"></script>
   <script src="question-tidy.js"></script>
   <script src="app.js"></script>
 
   <canvas id="confetti" aria-hidden="true"></canvas>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <!-- Demo mode pill -->

@@ -37,7 +37,8 @@ Never put the DeepSeek key or a Supabase **service role** key in anything under 
 ## 4. Supabase — security and auth
 
 Follow **"Before going public"** in [supabase/README.md](supabase/README.md): run
-`supabase/migrations/20261015000000_row_level_security.sql` in the SQL editor, run the audit
+`supabase/migrations/20261015000000_row_level_security.sql` and
+`supabase/migrations/20261015010000_live_rooms_progress.sql` in the SQL editor, run the audit
 query and drop any older policy that is wider, turn on email confirmation, and set the Site URL
 and redirect URLs to your production domain.
 

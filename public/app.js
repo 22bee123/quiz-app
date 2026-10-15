@@ -3381,106 +3381,417 @@ function genRoomCode() {
   return code;
 }
 
+/* ---------------- Live rooms ----------------
+   Host generates a pack → the room opens in the lobby (status 'open') and players pop in as
+   they join → the host presses Start (status 'playing') → every screen runs the same 3-2-1
+   countdown → the race: each answer pushes that player's progress and score, and a race panel
+   above the question shows every lane → finishers wait on the live standings → when everyone
+   is done, or the host ends it (status 'finished'), the podium opens for everyone. */
+
+const ROOM_POLL_MS = 1500;
+let roomIsHost = false;
+let roomHostUserId = null;
+let roomStatus = 'open';          // rooms.status: open (lobby) | playing | finished
+let roomPhase = 'idle';           // this screen: idle | lobby | countdown | playing | waiting | podium
+let roomQuestions = [];
+let roomLegacySchema = false;     // the live-rooms-progress migration hasn't been run yet
+let roomSeenPlayers = new Set();  // lobby avatars pop in once, not on every poll
+let roomCombo = 0;
+let roomFetching = false;
+
+// Players are shown by username. The old code used the start of their email address.
+function roomDisplayName() {
+  const p = getProfileData();
+  return String(p.username || p.name || 'Player').slice(0, 24);
+}
+
+function roomInitial(name) {
+  return ((String(name || 'P').trim()[0]) || 'P').toUpperCase();
+}
+
+function ordinal(n) {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return n + 'th';
+  return n + ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+}
+
+// Columns added by supabase/migrations/20261015010000_live_rooms_progress.sql. Until that runs,
+// writes retry without them and the room works on score alone (no question numbers).
+const ROOM_NEW_FIELDS = ['progress', 'finished_at', 'started_at'];
+
+function withoutNewRoomFields(fields) {
+  const out = Object.assign({}, fields);
+  ROOM_NEW_FIELDS.forEach((k) => { delete out[k]; });
+  return out;
+}
+
+async function roomUpdate(table, fields, column, value) {
+  if (!supabaseClient) return { error: null };
+  let res = await supabaseClient.from(table).update(roomLegacySchema ? withoutNewRoomFields(fields) : fields).eq(column, value);
+  if (res && res.error && !roomLegacySchema && /column|schema cache/i.test(res.error.message || '')) {
+    roomLegacySchema = true;
+    res = await supabaseClient.from(table).update(withoutNewRoomFields(fields)).eq(column, value);
+  }
+  return res || { error: null };
+}
+
+function updateMyRoomRow(fields) {
+  if (!roomCode || !myPlayerId) return Promise.resolve();
+  return roomUpdate('room_players', fields, 'id', myPlayerId).catch(() => {});
+}
+
+// Live rooms need an account. Checked up front: hosting used to let a demo visitor generate a
+// whole pack and only then say "Please sign in".
+function roomSignInCheck() {
+  if (supabaseClient && currentUser && !isDemo()) return true;
+  if (isDemo()) demoUpsellFeature('live');
+  else showAuthGate();
+  return false;
+}
+
+function myRoomStats() {
+  return {
+    answered: results.filter(Boolean).length,
+    score: results.filter((r) => r && r.verdict === 'correct').length,
+  };
+}
+
 function openLive() {
   if (!requireAuth()) return;
+  setActiveNav('live');
+  // Coming back to Live while still in a room shows that room, not the create/join cards.
+  if (roomCode && (roomPhase === 'lobby' || roomPhase === 'waiting')) {
+    showRoomPanel();
+    startRoomPoll();
+    return;
+  }
   stopRoomPoll();
-  roomPlayers = [];
+  liveScreen.classList.remove('in-room');
   document.getElementById('live-lobby').classList.remove('hidden');
   document.getElementById('live-room').classList.add('hidden');
   document.getElementById('live-code-input').value = '';
-  setActiveNav('live');
   showScreen(liveScreen);
 }
 
 async function hostCreateRoom(payload, name, questions) {
   if (!supabaseClient || !currentUser) {
-    alert('Please sign in to host a live competition.');
+    showToast('Sign in to host a live room.', 'wrong');
     return;
   }
-  if (!requireHearts()) return;
-  questions = questions || flashcards;
-
-  // create room, then it's ready to play (host starts immediately)
+  // The race is multiple choice only: everyone answers the same card the same way.
+  const deck = (Array.isArray(questions) ? questions : [])
+    .filter((q) => q && q.type === 'choice' && Array.isArray(q.options) && q.options.length >= 2);
+  if (!deck.length) {
+    showToast('Live rooms need multiple-choice questions.', 'wrong');
+    return;
+  }
   const code = genRoomCode();
   const { error } = await supabaseClient.from('rooms').insert({
     code,
     host_user_id: currentUser.id,
-    host_name: currentUser.email || 'Host',
+    host_name: roomDisplayName(),
     mode: 'choice',
-    questions,
+    questions: deck,
     status: 'open',
   });
   if (error) {
-    setStatus(uploadStatus, 'Could not create room: ' + error.message, 'error');
+    showToast('Could not create the room: ' + error.message, 'wrong');
     return;
   }
+  resetRoomState();
   roomCode = code;
   roomMode = true;
-  document.getElementById('room-code').textContent = code;
-  document.getElementById('live-lobby').classList.add('hidden');
-  document.getElementById('live-room').classList.remove('hidden');
-  document.getElementById('room-wait').textContent = 'Waiting for players\u2026';
-  document.getElementById('room-status').classList.add('hidden');
-
-  // host player row
-  roomPlayerName = (currentUser.email || 'Host').split('@')[0];
-  const { data: p, error: pErr } = await supabaseClient.from('room_players').insert({
-    room_code: code,
-    user_id: currentUser.id,
-    name: roomPlayerName,
-    score: 0,
-    done: false,
-  }).select().single();
-  if (pErr || !p) {
-    myPlayerId = null;
-  } else {
-    myPlayerId = p.id;
-  }
-
-  roomPlayers = [];
-  // The host plays the questions just uploaded to the room. startRoomPlay() used to reuse
-  // whatever quiz was last loaded in memory, so the host got a stale deck (or a crash when
-  // none was loaded) while everyone who joined got the right one.
-  enterRoomPlay(questions);
+  roomIsHost = true;
+  roomHostUserId = currentUser.id;
+  roomStatus = 'open';
+  roomQuestions = deck;
+  await claimMyRoomSeat();
+  roomPhase = 'lobby';
+  showRoomPanel();
   startRoomPoll();
 }
 
-async function joinRoom(code) {
-  if (!supabaseClient || !currentUser) {
-    alert('Please sign in to join a live competition.');
-    return;
-  }
-  code = (code || '').toUpperCase().trim();
-  const { data: room, error } = await supabaseClient.from('rooms').select('*').eq('code', code).maybeSingle();
-  if (error || !room) {
-    const st = document.getElementById('room-status');
-    st.textContent = 'Room not found. Check the code and try again.';
-    st.classList.remove('hidden');
-    return false;
-  }
-  roomCode = room.code;
-  roomMode = true;
-  roomPlayerName = (currentUser.email || 'Player').split('@')[0];
-  const { data: p, error: pErr } = await supabaseClient.from('room_players').insert({
-    room_code: room.code,
+// One row per player per room. Rejoining (a refresh, a second tab) reuses it instead of
+// listing the same person twice.
+async function claimMyRoomSeat() {
+  myPlayerId = null;
+  try {
+    const { data } = await supabaseClient.from('room_players').select('*')
+      .eq('room_code', roomCode).eq('user_id', currentUser.id).limit(1);
+    const existing = Array.isArray(data) ? data[0] : null;
+    if (existing && existing.id) {
+      myPlayerId = existing.id;
+      return existing;
+    }
+  } catch (e) { /* fall through to a fresh seat */ }
+  const { data: seat } = await supabaseClient.from('room_players').insert({
+    room_code: roomCode,
     user_id: currentUser.id,
-    name: roomPlayerName,
+    name: roomDisplayName(),
     score: 0,
     done: false,
   }).select().single();
-  if (!pErr && p) myPlayerId = p.id;
+  if (seat && seat.id) myPlayerId = seat.id;
+  return seat || null;
+}
 
-  document.getElementById('room-code').textContent = room.code;
-  document.getElementById('live-lobby').classList.add('hidden');
-  document.getElementById('live-room').classList.remove('hidden');
-  document.getElementById('room-wait').textContent = '';
-  document.getElementById('room-status').classList.add('hidden');
-
-  roomPlayers = [];
-  const questions = room.questions;
-  enterRoomPlay(questions);
+async function joinRoom(code) {
+  if (!roomSignInCheck()) return true; // the sign-in screen or upsell is already showing
+  code = (code || '').toUpperCase().trim();
+  const { data: room, error } = await supabaseClient.from('rooms').select('*').eq('code', code).maybeSingle();
+  if (error || !room) return false;
+  resetRoomState();
+  roomCode = room.code;
+  roomMode = true;
+  roomHostUserId = room.host_user_id;
+  roomIsHost = room.host_user_id === currentUser.id;
+  roomStatus = room.status || 'open';
+  roomQuestions = (Array.isArray(room.questions) ? room.questions : [])
+    .filter((q) => q && q.type === 'choice' && Array.isArray(q.options));
+  const seat = await claimMyRoomSeat();
+  await fetchRoomState();
+  if (seat && seat.done) {
+    roomPhase = 'waiting';          // you already finished this race
+    showRoomPanel();
+    checkRoomComplete();
+  } else if (roomStatus === 'finished') {
+    roomPhase = 'waiting';
+    showPodium();
+  } else if (roomStatus === 'playing') {
+    startRoomCountdown();           // joined mid-race: straight in
+  } else {
+    roomPhase = 'lobby';
+    showRoomPanel();
+  }
   startRoomPoll();
   return true;
+}
+
+// Lobby (before the start) and standings (after you finish) share one panel.
+function showRoomPanel() {
+  document.body.classList.remove('room-on');
+  showScreen(liveScreen);
+  setActiveNav('live');
+  document.getElementById('live-lobby').classList.add('hidden');
+  document.getElementById('live-room').classList.remove('hidden');
+  liveScreen.classList.add('in-room'); // the create/join pitch is noise once you're in a room
+  document.getElementById('room-code').textContent = roomCode || '------';
+  renderRoomPanel();
+}
+
+function renderRoomPanel() {
+  const wait = document.getElementById('room-wait');
+  const startBtn = document.getElementById('room-start');
+  const endBtn = document.getElementById('room-end');
+  const title = document.getElementById('lobby-players-title');
+  const count = document.getElementById('lobby-count');
+  const status = document.getElementById('lobby-status');
+  const others = roomPlayers.filter((p) => p.id !== myPlayerId);
+  const waiting = roomPhase === 'waiting';
+  if (waiting) {
+    const left = roomPlayers.filter((p) => !p.done).length;
+    wait.textContent = left ? 'You’re done! Waiting for ' + left + ' more…' : 'Everyone is done!';
+    if (endBtn) endBtn.classList.toggle('hidden', !roomIsHost || !left);
+    if (startBtn) startBtn.classList.add('hidden');
+    if (status) status.classList.toggle('is-idle', !left);
+  } else {
+    wait.textContent = roomIsHost
+      ? (others.length ? others.length + (others.length === 1 ? ' player is' : ' players are') + ' in. Start when everyone’s ready.' : 'Share the code. Players pop in here as they join.')
+      : 'Waiting for the host to start…';
+    if (startBtn) startBtn.classList.toggle('hidden', !roomIsHost);
+    if (endBtn) endBtn.classList.add('hidden');
+    if (status) status.classList.remove('is-idle');
+  }
+  if (title) title.textContent = waiting ? 'Standings' : 'Players';
+  if (count) count.textContent = roomPlayers.length;
+  renderRoomPlayers();
+}
+
+function laneProgressText(p) {
+  if (p.done) return 'Done ✓';
+  if (roomLegacySchema || p.progress == null) return 'Answering…';
+  const total = roomQuestions.length || flashcards.length || 0;
+  return 'Q' + Math.min((p.progress || 0) + 1, total || 1) + ' of ' + total;
+}
+
+function roomTime(t) {
+  const n = Date.parse(t || '');
+  return Number.isFinite(n) ? n : Infinity;
+}
+
+// Most correct first; on a tie, whoever finished, and earlier; then whoever is further along.
+function rankRoomPlayers(list) {
+  return list.slice().sort((a, b) =>
+    (b.score || 0) - (a.score || 0) ||
+    (b.done ? 1 : 0) - (a.done ? 1 : 0) ||
+    roomTime(a.finished_at) - roomTime(b.finished_at) ||
+    (b.progress || 0) - (a.progress || 0));
+}
+
+function renderRoomPlayers() {
+  const el = document.getElementById('room-players');
+  if (!el) return;
+  const waiting = roomPhase === 'waiting';
+  const list = waiting ? rankRoomPlayers(roomPlayers) : roomPlayers.slice();
+  if (!list.length) {
+    el.innerHTML = '<p class="room-empty">No players yet…</p>';
+    return;
+  }
+  el.innerHTML = list.map((p, i) => {
+    const me = p.id === myPlayerId;
+    const isNew = !roomSeenPlayers.has(p.id);
+    const host = p.user_id && p.user_id === roomHostUserId;
+    const state = waiting
+      ? '<span class="rp-state ' + (p.done ? 'done' : 'live') + '">' + escapeHtml(laneProgressText(p)) + '</span>'
+      : '<span class="rp-state ' + (host ? 'host' : 'ready') + '">' + (host ? '\u{1F451} Host' : 'Ready') + '</span>';
+    return '<div class="room-player' + (me ? ' me' : '') + (isNew ? ' pop-in' : '') + '" style="--i:' + i + '">' +
+      (waiting ? '<span class="rp-rank">' + (i + 1) + '</span>' : '') +
+      '<span class="rp-avatar">' + escapeHtml(roomInitial(p.name)) + '</span>' +
+      '<span class="rp-name">' + escapeHtml(p.name || 'Player') + (me ? ' <em>(you)</em>' : '') + '</span>' +
+      state +
+      (waiting ? '<span class="rp-score">' + (p.score || 0) + '</span>' : '') +
+      '</div>';
+  }).join('');
+  list.forEach((p) => roomSeenPlayers.add(p.id));
+}
+
+function startRoomPoll() {
+  stopRoomPoll();
+  roomPollTimer = setInterval(fetchRoomState, ROOM_POLL_MS);
+  fetchRoomState();
+}
+
+function stopRoomPoll() {
+  if (roomPollTimer) {
+    clearInterval(roomPollTimer);
+    roomPollTimer = null;
+  }
+}
+
+async function fetchRoomState() {
+  if (!roomCode || !supabaseClient || roomFetching) return;
+  roomFetching = true;
+  try {
+    const [players, room] = await Promise.all([
+      supabaseClient.from('room_players').select('*').eq('room_code', roomCode).order('score', { ascending: false }),
+      // Status only: the room row also holds every question, far too heavy to poll.
+      supabaseClient.from('rooms').select('status, host_user_id').eq('code', roomCode).maybeSingle(),
+    ]);
+    if (!roomCode) return;
+    if (players && !players.error) mergeRoomPlayers(players.data || []);
+    if (room && !room.error && !room.data && roomPhase === 'lobby') {
+      showToast('The host closed the room.', '');
+      await exitRoom();
+      openLive();
+      return;
+    }
+    if (room && !room.error && room.data) {
+      roomHostUserId = room.data.host_user_id || roomHostUserId;
+      onRoomStatus(room.data.status || 'open');
+    }
+    renderRoomViews();
+  } catch (e) {
+    /* a missed poll is retried on the next tick */
+  } finally {
+    roomFetching = false;
+  }
+}
+
+function mergeRoomPlayers(rows) {
+  roomPlayers = rows.slice();
+  if (roomPhase === 'playing' || roomPhase === 'waiting') {
+    // Your own lane moves the moment you answer, not a poll later.
+    const me = roomPlayers.find((p) => p.id === myPlayerId);
+    const s = myRoomStats();
+    if (me) {
+      me.score = s.score;
+      me.progress = s.answered;
+      if (roomPhase === 'waiting') me.done = true;
+    }
+  }
+}
+
+function onRoomStatus(status) {
+  roomStatus = status;
+  if (status === 'playing' && roomPhase === 'lobby') startRoomCountdown();
+  if (status === 'finished' && roomPhase !== 'podium' && roomPhase !== 'idle') {
+    if (roomPhase === 'playing' || roomPhase === 'countdown') finishRoomPlay({ ended: true });
+    showPodium();
+  }
+}
+
+function renderRoomViews() {
+  if (roomPhase === 'lobby' || roomPhase === 'waiting') renderRoomPanel();
+  if (roomPhase === 'playing') renderRaceTrack();
+  checkRoomComplete();
+}
+
+function checkRoomComplete() {
+  if (roomPhase !== 'waiting' || !roomPlayers.length) return;
+  if (!roomPlayers.every((p) => p.done)) return;
+  if (roomIsHost && roomStatus !== 'finished') {
+    roomStatus = 'finished';
+    roomUpdate('rooms', { status: 'finished' }, 'code', roomCode).catch(() => {});
+  }
+  showPodium();
+}
+
+async function hostStartRoom() {
+  if (!roomIsHost || roomPhase !== 'lobby') return;
+  const btn = document.getElementById('room-start');
+  if (btn) btn.disabled = true;
+  const { error } = await roomUpdate('rooms', { status: 'playing', started_at: new Date().toISOString() }, 'code', roomCode);
+  if (btn) btn.disabled = false;
+  if (error) {
+    showToast('Could not start the game: ' + error.message, 'wrong');
+    return;
+  }
+  roomStatus = 'playing';
+  startRoomCountdown();
+}
+
+async function hostEndRoom() {
+  if (!roomIsHost) return;
+  await roomUpdate('rooms', { status: 'finished' }, 'code', roomCode);
+  roomStatus = 'finished';
+  await fetchRoomState(); // freshest scores for the podium
+  showPodium();
+}
+
+// The same 3-2-1-GO on every screen: each client starts it when it sees status 'playing'.
+function startRoomCountdown() {
+  if (roomPhase === 'countdown' || roomPhase === 'playing') return;
+  roomPhase = 'countdown';
+  const overlay = document.getElementById('room-countdown');
+  const num = document.getElementById('rc-num');
+  const steps = ['3', '2', '1', 'GO!'];
+  let i = 0;
+  overlay.classList.remove('hidden');
+  const tick = () => {
+    if (roomPhase !== 'countdown') { overlay.classList.add('hidden'); return; }
+    const go = steps[i] === 'GO!';
+    num.textContent = steps[i];
+    num.classList.toggle('go', go);
+    num.classList.remove('rc-pop');
+    void num.offsetWidth;
+    num.classList.add('rc-pop');
+    beep(go ? [784, 1175] : [523], go ? 0.07 : 0, go ? 0.16 : 0.1, 'triangle');
+    i++;
+    if (i < steps.length) setTimeout(tick, 750);
+    else setTimeout(() => { overlay.classList.add('hidden'); beginRoomPlay(); }, 550);
+  };
+  tick();
+}
+
+function beginRoomPlay() {
+  if (roomPhase !== 'countdown') return;
+  roomPhase = 'playing';
+  roomCombo = 0;
+  lastPackQuizId = null; // results after a race must not offer "Study again" on some older pack
+  lastModuleName = 'Live room ' + roomCode;
+  document.body.classList.add('room-on');
+  enterRoomPlay(roomQuestions);
+  updateMyRoomRow({ score: 0, progress: 0, done: false, finished_at: null });
 }
 
 function enterRoomPlay(questions) {
@@ -3497,113 +3808,265 @@ function openRoomPlay() {
   attempted = [];
   renderHearts();
   renderProgress();
-  deckName.textContent = 'Live Competition';
+  deckName.textContent = 'Live room';
   renderLiveBar();
   renderQuestion();
 }
 
 function renderLiveBar() {
+  renderRaceTrack();
+}
+
+// Race panel above the question: one lane per player, ranked, with their question number,
+// a progress bar and score. Lanes slide to their new place when the order changes.
+function renderRaceTrack() {
   const bar = document.getElementById('live-bar-area');
-  if (!bar) return;
+  if (!bar || !roomMode) return;
+  if (!bar.querySelector('.race')) {
+    bar.innerHTML = '<div class="race"><div class="race-head"><span class="race-live">LIVE</span>' +
+      '<span class="race-code"></span><span class="race-meta"></span></div><div class="race-lanes"></div></div>';
+  }
+  const lanesEl = bar.querySelector('.race-lanes');
+  const list = roomPlayers.length ? roomPlayers : [{ id: myPlayerId || 'me', name: roomDisplayName(), score: 0, progress: 0 }];
+  const ranked = rankRoomPlayers(list);
+  const total = flashcards.length || roomQuestions.length || 1;
+  // At most 4 lanes so a big room doesn't push the question off a phone screen: the top 3,
+  // plus you if you're further down.
+  const MAX_LANES = 4;
+  let shown = ranked;
+  if (ranked.length > MAX_LANES) {
+    const meIdx = ranked.findIndex((p) => p.id === myPlayerId);
+    shown = meIdx >= MAX_LANES - 1 ? ranked.slice(0, MAX_LANES - 1).concat(ranked[meIdx]) : ranked.slice(0, MAX_LANES);
+  }
+  bar.querySelector('.race-code').textContent = roomCode || '';
+  bar.querySelector('.race-meta').textContent = ranked.length + (ranked.length === 1 ? ' player' : ' players');
+
+  const before = new Map(Array.from(lanesEl.children, (n) => [n.dataset.id, n.getBoundingClientRect().top]));
+  shown.forEach((p, i) => {
+    const id = String(p.id);
+    let lane = Array.from(lanesEl.children).find((n) => n.dataset.id === id);
+    if (!lane) {
+      lane = document.createElement('div');
+      lane.className = 'race-lane is-new';
+      lane.dataset.id = id;
+      lane.addEventListener('animationend', () => lane.classList.remove('is-new'), { once: true });
+      lane.innerHTML = '<span class="race-rank"></span><span class="race-avatar"></span>' +
+        '<div class="race-body"><div class="race-top"><span class="race-name"></span><span class="race-q"></span></div>' +
+        '<div class="race-track"><span class="race-fill"></span></div></div><span class="race-score"></span>';
+    }
+    const me = p.id === myPlayerId;
+    lane.classList.toggle('me', me);
+    lane.classList.toggle('done', !!p.done);
+    lane.querySelector('.race-rank').textContent = ranked.indexOf(p) + 1;
+    lane.querySelector('.race-avatar').textContent = roomInitial(p.name);
+    lane.querySelector('.race-name').textContent = (p.name || 'Player') + (me ? ' (you)' : '');
+    lane.querySelector('.race-q').textContent = laneProgressText(p);
+    const pct = p.done ? 100 : (roomLegacySchema || p.progress == null ? 0 : Math.min(100, ((p.progress || 0) / total) * 100));
+    lane.querySelector('.race-fill').style.width = pct + '%';
+    const scoreEl = lane.querySelector('.race-score');
+    const next = String(p.score || 0);
+    if (scoreEl.textContent !== next) {
+      const hadScore = scoreEl.textContent !== '';
+      scoreEl.textContent = next;
+      if (hadScore) {
+        scoreEl.classList.remove('bump');
+        void scoreEl.offsetWidth;
+        scoreEl.classList.add('bump');
+      }
+    }
+    // Move a lane only when its place changed: moving a node restarts its CSS animations, and
+    // re-appending every lane on every poll kept them stuck at the invisible first frame.
+    if (lanesEl.children[i] !== lane) lanesEl.insertBefore(lane, lanesEl.children[i] || null);
+  });
+  Array.from(lanesEl.children).forEach((n) => {
+    if (!shown.some((p) => String(p.id) === n.dataset.id)) n.remove();
+  });
+  Array.from(lanesEl.children).forEach((n) => {
+    const prev = before.get(n.dataset.id);
+    if (prev == null || !n.animate) return;
+    const dy = prev - n.getBoundingClientRect().top;
+    if (dy) n.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }], { duration: 450, easing: 'cubic-bezier(.2,.9,.3,1.25)' });
+  });
+}
+
+// Every answer in a room: move your lane right away and tell the others.
+function pushRoomProgress() {
+  if (!roomMode || roomPhase !== 'playing') return;
+  const s = myRoomStats();
   const me = roomPlayers.find((p) => p.id === myPlayerId);
-  bar.innerHTML = `<span class="live-bar-tag">&#127942; LIVE</span><span class="live-bar-code">${roomCode}</span><span class="live-bar-score">Your score: ${me ? me.score : 0}</span>`;
+  if (me) {
+    me.score = s.score;
+    me.progress = s.answered;
+  }
+  renderRaceTrack();
+  updateMyRoomRow({ score: s.score, progress: s.answered });
 }
 
-async function bumpRoomScore() {
-  if (!roomCode || !myPlayerId) return;
-  const current = results.filter((r) => r && r.verdict === 'correct').length;
-  try {
-    await supabaseClient.from('room_players').update({ score: current }).eq('id', myPlayerId);
-  } catch (e) {}
+function bumpRoomScore() {
+  pushRoomProgress();
 }
 
-function startRoomPoll() {
-  stopRoomPoll();
-  roomPollTimer = setInterval(fetchRoomPlayers, 2500);
-  fetchRoomPlayers();
-}
-
-function stopRoomPoll() {
-  if (roomPollTimer) {
-    clearInterval(roomPollTimer);
-    roomPollTimer = null;
+// Pops for the race: a burst on the card, a floating +1 and a combo bubble for streaks.
+function roomAnswerFx(verdict) {
+  if (!roomMode || roomPhase !== 'playing') return;
+  const card = document.getElementById('deck-card');
+  if (!card) return;
+  const hit = verdict === 'correct';
+  roomCombo = hit ? roomCombo + 1 : 0;
+  card.classList.remove('room-hit', 'room-miss');
+  void card.offsetWidth;
+  card.classList.add(hit ? 'room-hit' : 'room-miss');
+  if (hit) {
+    roomFloat('+1', 'plus');
+    if (roomCombo >= 2) setTimeout(() => roomFloat('\u{1F525} ' + roomCombo + ' in a row!', 'combo'), 160);
   }
 }
 
-async function fetchRoomPlayers() {
-  if (!roomCode) return;
-  try {
-    const { data, error } = await supabaseClient
-      .from('room_players')
-      .select('*')
-      .eq('room_code', roomCode)
-      .order('score', { ascending: false });
-    if (error) return;
-    roomPlayers = data || [];
-    renderRoomPlayers();
-  } catch (e) {}
+function roomFloat(text, kind) {
+  const card = document.getElementById('deck-card');
+  if (!card) return;
+  const el = document.createElement('span');
+  el.className = 'fx-float fx-' + kind;
+  el.textContent = text;
+  card.appendChild(el);
+  setTimeout(() => el.remove(), 1300);
 }
 
-function renderRoomPlayers() {
-  const el = document.getElementById('room-players');
-  if (!el) return;
+function finishRoomPlay(opts) {
+  if (!roomCode || roomPhase === 'waiting' || roomPhase === 'podium') return;
+  const s = myRoomStats();
+  const finishedAt = new Date().toISOString();
+  roomPhase = 'waiting';
+  document.body.classList.remove('room-on');
   const me = roomPlayers.find((p) => p.id === myPlayerId);
-  el.innerHTML = roomPlayers.length
-    ? roomPlayers.map((p) => `
-        <div class="room-player${p.id === myPlayerId ? ' me' : ''}">
-          <span class="rp-avatar">${escapeHtml((p.name || 'P')[0].toUpperCase())}</span>
-          <span class="rp-name">${escapeHtml(p.name)}${p.id === myPlayerId ? ' (you)' : ''}</span>
-          <span class="rp-score">${p.score}</span>
-        </div>`).join('')
-    : '<p class="room-empty">No players yet\u2026</p>';
-  const bar = document.getElementById('live-bar-area');
-  if (bar && me) bar.querySelector('.live-bar-score').textContent = `Your score: ${me.score}`;
+  if (me) Object.assign(me, { done: true, score: s.score, progress: s.answered, finished_at: finishedAt });
+  updateMyRoomRow({ score: s.score, progress: s.answered, done: true, finished_at: finishedAt });
+  if (!(opts && opts.ended)) showRoomPanel();
+  checkRoomComplete();
 }
 
-function finishRoomPlay() {
-  if (!roomCode) return;
-  const final = results.filter((r) => r && r.verdict === 'correct').length;
+// Olympic podium: 2nd | 1st | 3rd, the winner on the highest step. Steps rise, players drop on.
+function showPodium() {
+  if (roomPhase === 'podium') return;
+  roomPhase = 'podium';
+  stopRoomPoll();
+  document.body.classList.remove('room-on');
+  document.getElementById('room-countdown').classList.add('hidden');
+  const ranked = rankRoomPlayers(roomPlayers);
+  const myPlace = ranked.findIndex((p) => p.id === myPlayerId) + 1;
+  const solo = ranked.length < 2;
+
+  document.getElementById('podium-title').textContent = myPlace === 1
+    ? (solo ? 'You finished! \u{1F3C6}' : 'You won! \u{1F3C6}')
+    : myPlace ? 'You placed ' + ordinal(myPlace) + '!' : 'Final results';
+  const top = ranked[0];
+  const outOf = roomQuestions.length ? ' out of ' + roomQuestions.length : '';
+  let sub = '';
+  if (top && myPlace === 1) sub = 'You got ' + (top.score || 0) + ' correct' + outOf + '.';
+  else if (top) sub = (top.name || 'Player') + ' wins with ' + (top.score || 0) + ' correct' + outOf + '.';
+  document.getElementById('podium-sub').textContent = sub;
+
+  const slot = (place) => {
+    const p = ranked[place - 1];
+    const delay = { 1: 2, 2: 1, 3: 0 }[place];
+    if (!p) {
+      return '<div class="podium-col p' + place + ' empty" style="--d:' + delay + '"><div class="podium-player"></div>' +
+        '<div class="podium-step"><span class="podium-place">' + place + '</span></div></div>';
+    }
+    const me = p.id === myPlayerId;
+    return '<div class="podium-col p' + place + (me ? ' me' : '') + '" style="--d:' + delay + '">' +
+      '<div class="podium-player">' +
+        (place === 1 ? '<span class="podium-crown" aria-hidden="true">\u{1F451}</span>' : '') +
+        '<span class="podium-avatar">' + escapeHtml(roomInitial(p.name)) + '</span>' +
+        '<span class="podium-name">' + escapeHtml(p.name || 'Player') + (me ? ' (you)' : '') + '</span>' +
+        '<span class="podium-score">' + (p.score || 0) + ' pts</span>' +
+      '</div>' +
+      '<div class="podium-step"><span class="podium-place">' + place + '</span></div></div>';
+  };
+  document.getElementById('podium').innerHTML = slot(2) + slot(1) + slot(3);
+  document.getElementById('podium-rest').innerHTML = ranked.slice(3).map((p, i) =>
+    '<li class="' + (p.id === myPlayerId ? 'me' : '') + '" style="--i:' + i + '"><span class="pr-place">' + ordinal(i + 4) + '</span>' +
+    '<span class="pr-name">' + escapeHtml(p.name || 'Player') + (p.id === myPlayerId ? ' (you)' : '') + '</span>' +
+    '<span class="pr-score">' + (p.score || 0) + '</span></li>').join('');
+
+  document.getElementById('podium-modal').classList.remove('hidden');
+  setTimeout(() => launchConfetti(myPlace === 1 ? 3200 : 1600), 900);
+  if (myPlace === 1) setTimeout(() => beep([523, 659, 784, 1047], 0.09, 0.16, 'triangle'), 900);
+}
+
+function closePodium() {
+  document.getElementById('podium-modal').classList.add('hidden');
+}
+
+// Leave the room. Before the start your seat is removed (and a host closes the room); once
+// you've raced it stays, marked done, so everyone else's standings and podium still show you.
+async function exitRoom() {
+  const code = roomCode;
+  const id = myPlayerId;
+  const phase = roomPhase;
+  const host = roomIsHost;
+  const s = myRoomStats();
+  resetRoomState();
+  if (!code || !id || !supabaseClient) return;
   try {
-    supabaseClient.from('room_players').update({ score: final, done: true }).eq('id', myPlayerId);
-  } catch (e) {}
-  showScreen(liveScreen);
-  document.getElementById('live-lobby').classList.add('hidden');
-  document.getElementById('live-room').classList.remove('hidden');
-  document.getElementById('room-wait').textContent = 'Waiting for everyone to finish\u2026';
-  fetchRoomPlayers();
-  showRoomResult();
+    if (phase === 'lobby') {
+      await supabaseClient.from('room_players').delete().eq('id', id);
+      if (host) await supabaseClient.from('rooms').delete().eq('code', code);
+    } else if (phase === 'playing' || phase === 'countdown') {
+      await roomUpdate('room_players', { score: s.score, progress: s.answered, done: true, finished_at: new Date().toISOString() }, 'id', id);
+    }
+  } catch (e) { /* leaving never blocks on the network */ }
 }
 
-function showRoomResult() {
-  const el = document.getElementById('room-status');
-  if (!el) return;
-  const me = roomPlayers.find((p) => p.id === myPlayerId);
-  const top = Math.max(0, ...roomPlayers.map((p) => p.score));
-  let html = '<div class="room-result"><h3>Finished!</h3>';
-  if (me && me.score >= top && roomPlayers.length > 1) html += '<p class="rr-winner">You have the highest score! \u{1F3C6}</p>';
-  else if (roomPlayers.length > 1) html += `<p class="rr-loser">Top score: ${top}</p>`;
-  html += `<div class="rr-score">Your score: <strong>${me ? me.score : 0}</strong></div></div>`;
-  el.innerHTML = html;
-  el.classList.remove('hidden');
-}
-
-async function leaveRoom() {
-  try {
-    if (roomCode && myPlayerId) await supabaseClient.from('room_players').delete().eq('id', myPlayerId);
-  } catch (e) {}
+function resetRoomState() {
   stopRoomPoll();
   roomCode = null;
   roomMode = false;
   myPlayerId = null;
   roomPlayers = [];
+  roomIsHost = false;
+  roomHostUserId = null;
+  roomStatus = 'open';
+  roomPhase = 'idle';
+  roomQuestions = [];
+  roomSeenPlayers = new Set();
+  roomCombo = 0;
+  document.body.classList.remove('room-on');
+  const cd = document.getElementById('room-countdown');
+  if (cd) cd.classList.add('hidden');
+  const bar = document.getElementById('live-bar-area');
+  if (bar) bar.innerHTML = '';
+}
+
+async function leaveRoom() {
+  await exitRoom();
   openLive();
 }
 
 function wireLive() {
   document.getElementById('nav-live').addEventListener('click', openLive);
   document.getElementById('live-create').addEventListener('click', () => {
+    if (!roomSignInCheck()) return;
     hostingRoom = true;
     openCreate('pdf');
+  });
+  document.getElementById('room-start').addEventListener('click', hostStartRoom);
+  document.getElementById('room-end').addEventListener('click', hostEndRoom);
+  document.getElementById('podium-done').addEventListener('click', async () => {
+    closePodium();
+    await exitRoom();
+    openLive();
+  });
+  document.getElementById('podium-backdrop').addEventListener('click', async () => {
+    closePodium();
+    await exitRoom();
+    openLive();
+  });
+  // Your own answer sheet for the race (results, not the podium).
+  document.getElementById('podium-review').addEventListener('click', async () => {
+    closePodium();
+    await exitRoom();
+    showResults();
   });
   document.getElementById('live-join').addEventListener('click', async () => {
     const code = document.getElementById('live-code-input').value;
@@ -3626,10 +4089,12 @@ function wireLive() {
   });
   document.getElementById('room-copy').addEventListener('click', () => {
     const code = document.getElementById('room-code').textContent;
+    const btn = document.getElementById('room-copy');
     try {
       navigator.clipboard && navigator.clipboard.writeText(code);
-      document.getElementById('room-copy').textContent = 'Copied!';
-      setTimeout(() => (document.getElementById('room-copy').textContent = 'Copy'), 1500);
+      btn.textContent = 'Copied! \u2713';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'Copy code'; btn.classList.remove('copied'); }, 1500);
     } catch (e) {}
   });
   document.getElementById('room-leave').addEventListener('click', leaveRoom);
@@ -5781,6 +6246,10 @@ function markAnswered(index, verdict, userAnswer, correctAnswer, options, extra)
     feedback: '',
   }, extra || {});
   saveQuizSession();
+  if (roomMode) {
+    pushRoomProgress();
+    roomAnswerFx(verdict);
+  }
 }
 
 function renderQuestion() {
@@ -5789,6 +6258,8 @@ function renderQuestion() {
   const isEnum = item.type === 'enumeration';
   const isDiagram = item.type === 'diagram';
   attempted = [];
+  // Last answer's race effect must not override this card's slide-in animation.
+  deckCard.classList.remove('room-hit', 'room-miss');
 
   const lb = document.getElementById('live-bar-area');
   if (lb) lb.classList.toggle('hidden', !roomMode);
@@ -8882,6 +9353,7 @@ function closeSettings() {
 function updateFlashcardCountLabel() {}
 
 function resetToUpload() {
+  if (roomCode) exitRoom();
   stopRoomPoll();
   roomMode = false;
   hostingRoom = false;
