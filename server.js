@@ -1682,7 +1682,6 @@ app.post('/api/scrape', async (req, res) => {
   }
 });
 
-app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public', 'buck-svg', 'favicon.svg')));
 app.get('/api/config', (req, res) => {
   const supabaseUrl = process.env.SUPABASE_URL || null;
   const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || null;

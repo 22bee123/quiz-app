@@ -36,6 +36,27 @@ test('real pages answer 200; made-up addresses answer 404', async () => {
   assert.match(missing.body, /Buck the Duck/, 'still shows the landing page to people');
 });
 
+test('real icons for browsers and Google: favicon.ico, PNG app icons, manifest, preview image', async () => {
+  const ico = await get('/favicon.ico');
+  assert.equal(ico.status, 200);
+  assert.match(ico.type, /icon/, 'favicon.ico used to be the 913 KB SVG with an SVG type');
+  for (const path of ['/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/og-image.png']) {
+    const r = await get(path);
+    assert.equal(r.status, 200, path);
+    assert.match(r.type, /image\/png/, path);
+  }
+  assert.equal((await get('/site.webmanifest')).status, 200);
+});
+
+test('pages use the light mascot images, never the ~1 MB SVGs', () => {
+  const fs = require('fs');
+  const path = require('path');
+  for (const f of ['index.html', 'app.html', 'privacy.html', 'terms.html', 'app.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
+    assert.ok(!src.includes('/buck-svg/'), f + ' still loads a /buck-svg/ image; use /buck-img/*.webp');
+  }
+});
+
 test('the landing page names its canonical address; the app asks not to be indexed', async () => {
   assert.match((await get('/')).body, /<link rel="canonical" href="https:\/\/www\.bucktheduck\.site\/"/);
   assert.match((await get('/app')).body, /<meta name="robots" content="noindex"/);
