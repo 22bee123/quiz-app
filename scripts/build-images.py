@@ -7,6 +7,7 @@ each one exactly as the SVG draws it (same transform, same mask) and writes:
   public/buck-img/<name>.webp      512px mascots used by the pages
   public/favicon.ico               16/32/48px, for browsers and Google search results
   public/icon-192.png, icon-512.png   app/manifest icons (Google uses 48px multiples)
+  public/icon-maskable-192.png, -512.png   Android/Play icons: on cream, inside the safe zone
   public/apple-touch-icon.png      180px on the brand cream (iOS shows transparency as black)
   public/og-image.png              1200x630 preview for links shared on social apps
 
@@ -67,6 +68,22 @@ def font(size):
     return ImageFont.load_default()
 
 
+def maskable(logo, size):
+    """Android crops app icons to a circle, squircle or rounded square; only the centre circle
+    (80% of the width) is always shown. Scale Buck so every visible pixel lands inside it."""
+    alpha = logo.getchannel('A')
+    w, h = logo.size
+    cx, cy = w / 2, h / 2
+    px = alpha.load()
+    reach = max(((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+                for y in range(0, h, 2) for x in range(0, w, 2) if px[x, y] > 16)
+    side = round(w * (0.38 * w) / reach)  # 0.38 leaves a little air inside the 0.40 safe radius
+    side = side * size // w
+    icon = Image.new('RGBA', (size, size), CREAM)
+    icon.alpha_composite(logo.resize((side, side), Image.LANCZOS), ((size - side) // 2, (size - side) // 2))
+    return icon.convert('RGB')
+
+
 def main():
     OUT.mkdir(exist_ok=True)
     for svg in sorted(SRC.glob('*.svg')):
@@ -80,6 +97,8 @@ def main():
     on_background(logo, CREAM).resize((180, 180), Image.LANCZOS).convert('RGB').save(
         ROOT / 'public' / 'apple-touch-icon.png', optimize=True)
     logo.save(ROOT / 'public' / 'favicon.ico', sizes=[(16, 16), (32, 32), (48, 48)])
+    for size in (192, 512):
+        maskable(logo, size).save(ROOT / 'public' / f'icon-maskable-{size}.png', optimize=True)
 
     # Link preview: mascot on the left, name and promise on the right.
     og = Image.new('RGBA', (1200, 630), CREAM)
@@ -93,7 +112,8 @@ def main():
     draw.text((612, 455), 'bucktheduck.site', font=font(34), fill=(255, 255, 255, 255))
     og.convert('RGB').save(ROOT / 'public' / 'og-image.png', optimize=True)
 
-    for name in ('favicon.ico', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'og-image.png'):
+    for name in ('favicon.ico', 'icon-192.png', 'icon-512.png', 'icon-maskable-192.png',
+                 'icon-maskable-512.png', 'apple-touch-icon.png', 'og-image.png'):
         p = ROOT / 'public' / name
         print(f'public/{name}  {p.stat().st_size // 1024} KB')
 

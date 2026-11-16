@@ -48,6 +48,22 @@ test('real icons for browsers and Google: favicon.ico, PNG app icons, manifest, 
   assert.equal((await get('/site.webmanifest')).status, 200);
 });
 
+test('the manifest is ready for the Android app: stable id, maskable icons that exist', async () => {
+  const manifest = JSON.parse((await get('/site.webmanifest')).body);
+  assert.equal(manifest.id, '/app', 'changing the id makes Android treat it as a different app');
+  assert.equal(manifest.start_url, '/app');
+  assert.equal(manifest.scope, '/');
+  assert.equal(manifest.display, 'standalone');
+  const sizes = (purpose) => manifest.icons.filter((i) => i.purpose === purpose).map((i) => i.sizes).sort();
+  assert.deepEqual(sizes('any'), ['192x192', '512x512']);
+  assert.deepEqual(sizes('maskable'), ['192x192', '512x512'], 'Android crops non-maskable icons');
+  for (const icon of manifest.icons) {
+    const r = await get(icon.src);
+    assert.equal(r.status, 200, icon.src);
+    assert.match(r.type, /image\/png/, icon.src);
+  }
+});
+
 test('pages use the light mascot images, never the ~1 MB SVGs', () => {
   const fs = require('fs');
   const path = require('path');
