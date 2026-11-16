@@ -7761,6 +7761,7 @@ function initSupabase() {
         startMessagePolling();
         renderMessagesBadge();
         onAuthChangedCalendar();
+        resumeDeleteFromLink();
       };
       const onSignedOut = () => {
         hideHistory();
@@ -9133,6 +9134,59 @@ function wireProfile() {
     closeProfile();
     if (supabaseClient) await supabaseClient.auth.signOut();
   });
+  document.getElementById('pm-delete-account').addEventListener('click', deleteMyAccount);
+}
+
+/* ---------------- Account deletion ---------------- */
+
+// /delete-account links here as /app#delete-account. The flag survives the sign-in round trip
+// (a Google sign-in comes back to /app without the hash), and the dialog opens once signed in.
+const DELETE_LINK_FLAG = 'buckDeleteAfterSignIn';
+try {
+  if (window.location.hash === '#delete-account') {
+    sessionStorage.setItem(DELETE_LINK_FLAG, '1');
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
+} catch (e) {}
+
+function resumeDeleteFromLink() {
+  let pending = false;
+  try { pending = sessionStorage.getItem(DELETE_LINK_FLAG) === '1'; sessionStorage.removeItem(DELETE_LINK_FLAG); } catch (e) {}
+  if (pending && currentUser && !isDemo()) setTimeout(deleteMyAccount, 300);
+}
+
+let deletingAccount = false;
+async function deleteMyAccount() {
+  if (deletingAccount) return;
+  if (!supabaseClient || !currentUser || isDemo()) {
+    showToast('Sign in to the account you want to delete first.', 'wrong');
+    return;
+  }
+  const ok = await confirmDialog({
+    title: 'Delete your account?',
+    message: 'This permanently deletes your profile, quiz history, calendar events, friends, messages, live rooms and uploaded images. It cannot be undone. StudyPacks saved only on this device stay here until you delete them.',
+    confirmText: 'Delete my account',
+    cancelText: 'Keep my account',
+    danger: true,
+  });
+  if (!ok) return;
+
+  deletingAccount = true;
+  closeProfile();
+  showToast('Deleting your account…', '', 10000);
+  try {
+    const headers = await apiHeaders();
+    if (!headers.Authorization) throw Object.assign(new Error('Sign in again, then delete your account.'), { shown: true });
+    const res = await fetch('/api/account/delete', { method: 'POST', headers, body: JSON.stringify({ confirm: 'DELETE' }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.deleted) throw Object.assign(new Error(data.error || 'Buck could not delete your account just now.'), { shown: true });
+    try { await supabaseClient.auth.signOut({ scope: 'local' }); } catch (e) {}
+    showToast('Your account and its data have been deleted. Bye for now 👋', 'correct', 6000);
+  } catch (err) {
+    showToast(err && err.shown ? err.message : 'Buck could not delete your account just now. Check your connection and try again.', 'wrong', 7000);
+  } finally {
+    deletingAccount = false;
+  }
 }
 
 /* ---------------- Sidebar + Settings ---------------- */
@@ -9712,14 +9766,14 @@ function buildJumpItem({ name, meta, label, onClick, score, badge }) {
 
 /* ---------------- Motion: confetti, toasts, counters ---------------- */
 
-function showToast(message, type) {
+function showToast(message, type, duration) {
   const toast = document.getElementById('toast');
   toast.textContent = message;
   toast.className = 'toast show ' + (type || '');
   clearTimeout(toast._t);
   toast._t = setTimeout(() => {
     toast.className = 'toast';
-  }, 1800);
+  }, duration || 1800);
 }
 
 function showToastAction(message, actionLabel, onAction, duration) {

@@ -6,6 +6,7 @@ const dns = require('dns').promises;
 const { AsyncLocalStorage } = require('async_hooks');
 const tidyQuestion = require('./public/question-tidy');
 const { guard, guardInfo } = require('./lib/guard');
+const { deleteAccountRoute } = require('./lib/account');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1692,6 +1693,25 @@ app.get('/api/config', (req, res) => {
   });
 });
 
+// Deletes the signed-in user's account and all their data (required by Google Play).
+app.post('/api/account/delete', deleteAccountRoute);
+
+// Digital Asset Links: proves to Android that the Play Store app (a Trusted Web Activity) and
+// this site have the same owner, so the app opens full-screen with no browser address bar.
+// Set ANDROID_PACKAGE_NAME and ANDROID_SHA256_FINGERPRINTS (comma-separated; copy them from
+// Play Console → Test and release → App integrity → App signing). Without them this is a 404.
+app.get('/.well-known/assetlinks.json', (req, res) => {
+  const pkg = String(process.env.ANDROID_PACKAGE_NAME || '').trim();
+  const prints = String(process.env.ANDROID_SHA256_FINGERPRINTS || '')
+    .split(/[\s,]+/).map((f) => f.trim().toUpperCase()).filter((f) => /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(f));
+  if (!pkg || !prints.length) return res.status(404).json([]);
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json([{
+    relation: ['delegate_permission/common.handle_all_urls'],
+    target: { namespace: 'android_app', package_name: pkg, sha256_cert_fingerprints: prints },
+  }]);
+});
+
 // Health/version probe — lets you curl the deployed backend to confirm which routes exist.
 // Health probe. Deliberately public and minimal: model names, the fallback id and the
 // json-mode flag used to be listed here, which handily fingerprint which code path a server
@@ -1752,6 +1772,7 @@ app.use((err, req, res, next) => {
 app.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
 app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
 app.get('/terms', (req, res) => res.sendFile(path.join(__dirname, 'public', 'terms.html')));
+app.get('/delete-account', (req, res) => res.sendFile(path.join(__dirname, 'public', 'delete-account.html')));
 // Unknown pages still show the landing page, but as a 404: answering "200 OK" for every made-up
 // address looked to search engines like endless copies of the homepage.
 app.get('*', (req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'index.html')));

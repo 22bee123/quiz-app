@@ -27,12 +27,15 @@ Project → Settings → Environment Variables (Production):
 | --- | --- |
 | `DEEPSEEK_API_KEY` | your key |
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY` | from Supabase → Project Settings → API |
+| `SUPABASE_SERVICE_ROLE_KEY` | same page, `service_role` — powers **Delete account** (server only) |
+| `ANDROID_PACKAGE_NAME`, `ANDROID_SHA256_FINGERPRINTS` | only for the Play Store app; see section 7 |
 | `HEALTH_TOKEN` | a long random string (unlocks detailed `/api/health`) |
 | `REQUIRE_LOGIN_FOR_AI` | `true` to block AI use without an account (turns off demo mode's AI) |
 | `RATE_AI_PER_USER`, `RATE_AI_PER_IP`, … | optional; defaults are in `.env.example` |
 
 `NODE_ENV=production` is set by Vercel automatically, which turns off verbose AI logs.
 Never put the DeepSeek key or a Supabase **service role** key in anything under `public/`.
+Without the service role key, **Delete account** answers "email us" instead of deleting.
 
 ## 4. Supabase — security and auth
 
@@ -59,3 +62,18 @@ and redirect URLs to your production domain.
 Run `npm test`. It checks the bugs that have already reached users once (answers always "A",
 junk "A3." cards, packs stopping short, words cut in half, empty AI answers being cached,
 timeouts reported as "file too large", the private-address bypass) without calling the real AI.
+
+## 7. Google Play (Android app)
+
+The Android app is a Trusted Web Activity: a thin wrapper that opens the live site full-screen.
+
+1. Build the package with PWABuilder (pwabuilder.com → enter `https://www.bucktheduck.site` → Package for stores → Android) or
+   Bubblewrap, using package ID `site.bucktheduck.app` (or your own). Back up the signing key.
+2. Upload the `.aab` in Play Console, then copy the SHA-256 fingerprint from
+   Test and release → App integrity → App signing.
+3. Set `ANDROID_PACKAGE_NAME` and `ANDROID_SHA256_FINGERPRINTS` on Vercel and redeploy.
+   Check `https://www.bucktheduck.site/.well-known/assetlinks.json` shows them (use the `www`
+   address everywhere: Android does not follow redirects here). If it is wrong,
+   the app shows a Chrome address bar.
+4. In the store listing, use `https://www.bucktheduck.site/delete-account` as the account
+   deletion URL and `https://www.bucktheduck.site/privacy` as the privacy policy.
